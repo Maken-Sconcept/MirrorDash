@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MirrorDash</string>
+    <string name="notification_access_label">MirrorDash Notifications</string>
+    <string name="ptt_overlay_service_label">MirrorDash Walkie-Talkie</string>
+    <string name="ptt_overlay_service_description">Keeps the walkie-talkie push-to-talk button available as a small floating control while using other apps.</string>
+</resources>

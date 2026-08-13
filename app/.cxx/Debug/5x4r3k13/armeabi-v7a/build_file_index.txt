@@ -1,0 +1,2 @@
+C:\Users\Maken\Documents\GitHub\MirrorDash\app\src\main\cpp\CMakeLists.txt
+C:\Users\Maken\Documents\GitHub\MirrorDash\app\src\main\cpp\libplist-android\CMakeLists.txt

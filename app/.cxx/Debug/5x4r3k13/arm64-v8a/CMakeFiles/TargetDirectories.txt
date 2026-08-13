@@ -1,0 +1,9 @@
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/CMakeFiles/llhttp.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/CMakeFiles/playfair.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/CMakeFiles/airplay.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/CMakeFiles/airplay_jni.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/CMakeFiles/rebuild_cache.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/libplist-android/CMakeFiles/plist.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/libplist-android/CMakeFiles/edit_cache.dir
+C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a/libplist-android/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,115 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6.0"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				},
+				{
+					"build" : "libplist-android",
+					"jsonFile" : "directory-libplist-android-Debug-1d6e3b921bfa66d544b6.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6.0"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "libplist-android",
+					"targetIndexes" : 
+					[
+						4
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1
+					],
+					"name" : "berthieroptions_airplay",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "airplay::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-airplay-Debug-3eeae962b164e24f5fc0.json",
+					"name" : "airplay",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "airplay_jni::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-airplay_jni-Debug-4b01737fe755212c3938.json",
+					"name" : "airplay_jni",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "llhttp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-llhttp-Debug-85b62df549de1acfc618.json",
+					"name" : "llhttp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "playfair::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-playfair-Debug-3344586d631ea344c6c1.json",
+					"name" : "playfair",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "plist::@66b1d79deed2c8d862ef",
+					"jsonFile" : "target-plist-Debug-96150f53fbfe59a2a199.json",
+					"name" : "plist",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "C:/Users/Maken/Documents/GitHub/MirrorDash/app/.cxx/Debug/5x4r3k13/arm64-v8a",
+		"source" : "C:/Users/Maken/Documents/GitHub/MirrorDash/app/src/main/cpp"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}
