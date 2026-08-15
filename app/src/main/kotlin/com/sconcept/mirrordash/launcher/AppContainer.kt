@@ -2,6 +2,8 @@ package com.sconcept.mirrordash.launcher
 
 import android.content.Context
 import com.sconcept.mirrordash.airplay.AirPlayEngine
+import com.sconcept.mirrordash.iptv.IptvRecordingEngine
+import com.sconcept.mirrordash.iptv.IptvSessionCoordinator
 import com.sconcept.mirrordash.settings.SettingsRepository
 import com.sconcept.mirrordash.walkietalkie.WalkieTalkieEngine
 
@@ -14,6 +16,8 @@ class AppContainer private constructor(context: Context) {
     val settingsRepository = SettingsRepository(context)
     val walkieTalkieEngine by lazy { WalkieTalkieEngine.get(context, settingsRepository) }
     val airPlayEngine by lazy { AirPlayEngine.get(context, settingsRepository) }
+    val iptvSessionCoordinator by lazy { IptvSessionCoordinator.get() }
+    val iptvRecordingEngine by lazy { IptvRecordingEngine.get(context, settingsRepository, iptvSessionCoordinator) }
 
     companion object {
         @Volatile

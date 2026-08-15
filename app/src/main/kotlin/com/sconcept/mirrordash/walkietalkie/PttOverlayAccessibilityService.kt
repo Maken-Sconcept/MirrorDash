@@ -72,6 +72,7 @@ private fun OverlayPttContent(engine: WalkieTalkieEngine) {
     val state by engine.uiState.collectAsState()
     PttButton(
         isTransmitting = state.isTransmitting,
+        isSpeaking = state.activeIncomingPeerName != null,
         enabled = state.hasMicPermission,
         onPressStart = engine::pressToTalk,
         onPressEnd = engine::releaseToTalk,

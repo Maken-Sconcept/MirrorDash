@@ -52,3 +52,11 @@
 726	862	8082800153179974	libplist-android/libplist.a	5c7989a7b3cca3b1
 862	1005	8082800154601311	libairplay.a	8a4c52109f24d1ff
 1005	1162	8082800156167914	C:/Users/Maken/Documents/GitHub/MirrorDash/app/build/intermediates/cxx/Debug/5x4r3k13/obj/armeabi-v7a/libairplay_jni.so	de58a30b1a3491b6
+2	109	8084557319648661	CMakeFiles/airplay_jni.dir/jni-bridge/airplay_jni.c.o	77219107487f38b9
+109	306	8084557321557024	C:/Users/Maken/Documents/GitHub/MirrorDash/app/build/intermediates/cxx/Debug/5x4r3k13/obj/armeabi-v7a/libairplay_jni.so	de58a30b1a3491b6
+3	413	8084596108727114	CMakeFiles/airplay_jni.dir/jni-bridge/airplay_jni.c.o	77219107487f38b9
+414	693	8084596111509567	C:/Users/Maken/Documents/GitHub/MirrorDash/app/build/intermediates/cxx/Debug/5x4r3k13/obj/armeabi-v7a/libairplay_jni.so	de58a30b1a3491b6
+2	181	8084603863345902	CMakeFiles/airplay_jni.dir/jni-bridge/airplay_jni.c.o	77219107487f38b9
+182	342	8084603864993171	C:/Users/Maken/Documents/GitHub/MirrorDash/app/build/intermediates/cxx/Debug/5x4r3k13/obj/armeabi-v7a/libairplay_jni.so	de58a30b1a3491b6
+3	77	8084701792083527	CMakeFiles/airplay_jni.dir/jni-bridge/airplay_jni.c.o	77219107487f38b9
+77	194	8084701793130026	C:/Users/Maken/Documents/GitHub/MirrorDash/app/build/intermediates/cxx/Debug/5x4r3k13/obj/armeabi-v7a/libairplay_jni.so	de58a30b1a3491b6

@@ -69,10 +69,22 @@ fun LauncherGestureHost(
     notificationsContent: @Composable (progress: Float, close: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
     onFailsafeHoldTriggered: () -> Unit = {},
+    requestedPage: Int? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val pagerState = rememberPagerState(initialPage = initialPage) { pageCount }
+
+    // Lets a caller (e.g. an incoming AirPlay connection) drive the pager from outside without
+    // hoisting PagerState itself - each distinct non-null value is a fresh navigation request, so
+    // the same target page can be requested again later (a second AirPlay session after the user
+    // swiped away) and still take effect.
+    LaunchedEffect(requestedPage) {
+        val target = requestedPage ?: return@LaunchedEffect
+        if (target in 0 until pageCount) {
+            pagerState.animateScrollToPage(target)
+        }
+    }
 
     var interactionState by remember { mutableStateOf<LauncherInteractionState>(LauncherInteractionState.Ambient) }
     var lastInteractionAtMs by remember { mutableLongStateOf(0L) }

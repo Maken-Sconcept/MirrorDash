@@ -40,27 +40,39 @@ class WalkieTalkieAudio(private val context: Context) {
         private const val CHUNK_MS = 20
         private const val SPEAKER_BOOST_GAIN = 2f
         private const val INCOMING_CHIME_GAP_MS = 750L
-        private const val INCOMING_CHIME_VOLUME = 28
-        private const val INCOMING_CHIME_DURATION_MS = 70
     }
 
     private var receiveThread: Thread? = null
     private var receiveSocket: DatagramSocket? = null
     private val toneLock = Any()
     private var incomingChime: ToneGenerator? = null
+    private var incomingChimeVolume: Int? = null
 
     @Volatile
     private var receiving = false
 
     @Volatile
     private var lastIncomingPacketAtMs = 0L
+    @Volatile
+    private var incomingChimeEnabled = true
+    @Volatile
+    private var incomingChimeTone = DEFAULT_WALKIE_TALKIE_CHIME
 
     private var transmitThread: Thread? = null
 
     @Volatile
     private var transmitting = false
 
-    var onIncomingFrom: ((String) -> Unit)? = null
+    var onIncomingFrom: ((String, String) -> Unit)? = null
+
+    fun updateIncomingChime(enabled: Boolean, toneKey: String) {
+        incomingChimeEnabled = enabled
+        incomingChimeTone = toneKey
+    }
+
+    fun previewIncomingChime(toneKey: String) {
+        playIncomingChime(WalkieTalkieChimes.specFor(toneKey))
+    }
 
     fun hasMicPermission() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -103,8 +115,9 @@ class WalkieTalkieAudio(private val context: Context) {
                     val headerLen = 2 + nameLen
                     if (packet.length <= headerLen) continue
                     val senderName = String(packet.data, 2, nameLen, Charsets.UTF_8)
+                    val senderIp = packet.address?.hostAddress.orEmpty()
                     maybePlayIncomingChime()
-                    onIncomingFrom?.invoke(senderName)
+                    onIncomingFrom?.invoke(senderName, senderIp)
                     applyMicBoost(packet.data, packet.length, SPEAKER_BOOST_GAIN, startIndex = headerLen)
                     track.write(packet.data, headerLen, packet.length - headerLen)
                 }
@@ -205,20 +218,30 @@ class WalkieTalkieAudio(private val context: Context) {
     }
 
     private fun maybePlayIncomingChime() {
+        if (!incomingChimeEnabled) return
         val now = SystemClock.elapsedRealtime()
         val shouldPlay = now - lastIncomingPacketAtMs >= INCOMING_CHIME_GAP_MS
         lastIncomingPacketAtMs = now
         if (!shouldPlay) return
+        playIncomingChime(WalkieTalkieChimes.specFor(incomingChimeTone))
+    }
 
+    private fun playIncomingChime(spec: WalkieTalkieChimeSpec) {
         synchronized(toneLock) {
-            val tone = incomingChime ?: runCatching {
-                ToneGenerator(AudioManager.STREAM_NOTIFICATION, INCOMING_CHIME_VOLUME)
-            }.getOrNull()?.also {
-                incomingChime = it
+            val tone = if (incomingChime == null || incomingChimeVolume != spec.volume) {
+                incomingChime?.release()
+                runCatching {
+                    ToneGenerator(AudioManager.STREAM_NOTIFICATION, spec.volume)
+                }.getOrNull()?.also {
+                    incomingChime = it
+                    incomingChimeVolume = spec.volume
+                }
+            } else {
+                incomingChime
             } ?: return
 
             runCatching {
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP, INCOMING_CHIME_DURATION_MS)
+                tone.startTone(spec.tone, spec.durationMs)
             }
         }
     }
@@ -227,6 +250,7 @@ class WalkieTalkieAudio(private val context: Context) {
         synchronized(toneLock) {
             incomingChime?.release()
             incomingChime = null
+            incomingChimeVolume = null
         }
     }
 }

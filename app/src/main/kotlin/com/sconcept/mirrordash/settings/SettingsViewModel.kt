@@ -18,6 +18,7 @@ import com.sconcept.mirrordash.nas.model.SmbShare
 import com.sconcept.mirrordash.launcher.AppContainer
 import com.sconcept.mirrordash.launcher.display.DisplayOrientationMode
 import com.sconcept.mirrordash.launcher.display.storageKey
+import com.sconcept.mirrordash.walkietalkie.WalkieTalkieUiState
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkieDiscoveredPeer
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
 import com.sconcept.mirrordash.weather.WeatherRepository
@@ -50,6 +51,7 @@ data class SettingsUiState(
     val weatherResolving: Boolean = false,
     val weatherError: String? = null,
     val nearbyWalkieTalkiePeers: List<WalkieTalkieDiscoveredPeer> = emptyList(),
+    val walkieTalkieState: WalkieTalkieUiState = WalkieTalkieUiState(),
     val airPlayState: AirPlayUiState = AirPlayUiState(),
 )
 
@@ -71,10 +73,15 @@ class SettingsViewModel(application: Application, private val settingsRepository
     val uiState: StateFlow<SettingsUiState> = combine(
         settingsRepository.settings,
         _extra,
-        walkieTalkieEngine.uiState.map { it.discoveredPeers },
+        walkieTalkieEngine.uiState,
         airPlayEngine.uiState,
-    ) { settings, extra, nearby, airPlay ->
-        extra.copy(settings = settings, nearbyWalkieTalkiePeers = nearby, airPlayState = airPlay)
+    ) { settings, extra, walkieTalkie, airPlay ->
+        extra.copy(
+            settings = settings,
+            nearbyWalkieTalkiePeers = walkieTalkie.discoveredPeers,
+            walkieTalkieState = walkieTalkie,
+            airPlayState = airPlay,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
     // --- Device --------------------------------------------------------------------------------
@@ -281,8 +288,28 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { walkieTalkieMicBoostPercent = percent }
     }
 
+    fun setWalkieTalkieIncomingChimeEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { walkieTalkieIncomingChimeEnabled = enabled }
+    }
+
+    fun setWalkieTalkieIncomingChime(chime: String) = viewModelScope.launch {
+        settingsRepository.update { walkieTalkieIncomingChime = chime }
+    }
+
     fun setWalkieTalkieOverlayEnabled(enabled: Boolean) = viewModelScope.launch {
         settingsRepository.update { walkieTalkieOverlayEnabled = enabled }
+    }
+
+    fun pressToTalk(target: String) {
+        walkieTalkieEngine.pressToTalk(target)
+    }
+
+    fun releaseToTalk() {
+        walkieTalkieEngine.releaseToTalk()
+    }
+
+    fun previewWalkieTalkieIncomingChime(chime: String) {
+        walkieTalkieEngine.previewIncomingChime(chime)
     }
 
     fun addWalkieTalkiePeer(name: String, ip: String) = viewModelScope.launch {
@@ -294,6 +321,9 @@ class SettingsViewModel(application: Application, private val settingsRepository
     fun removeWalkieTalkiePeer(peer: WalkieTalkiePeer) = viewModelScope.launch {
         settingsRepository.update {
             walkieTalkiePeers = walkieTalkiePeers.filterNot { it.ip == peer.ip }
+            if (walkieTalkieTarget == peer.ip) {
+                walkieTalkieTarget = WALKIE_TALKIE_TARGET_ALL
+            }
         }
     }
 
@@ -323,6 +353,24 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { airplayShowClockWidget = show }
     }
 
+    // --- Browser -------------------------------------------------------------------------------
+
+    fun setBrowserEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { browserEnabled = enabled }
+    }
+
+    fun setBrowserHomeUrl(url: String) = viewModelScope.launch {
+        settingsRepository.update { browserHomeUrl = url }
+    }
+
+    fun setBrowserLastVisitedUrl(url: String) = viewModelScope.launch {
+        settingsRepository.update { browserLastVisitedUrl = url }
+    }
+
+    fun clearBrowserSession() = viewModelScope.launch {
+        settingsRepository.update { browserLastVisitedUrl = "" }
+    }
+
     // --- Home Assistant --------------------------------------------------------------------------
 
     fun setHomeAssistantEnabled(enabled: Boolean) = viewModelScope.launch {
@@ -331,6 +379,59 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setHomeAssistantUrl(url: String) = viewModelScope.launch {
         settingsRepository.update { homeAssistantUrl = url }
+    }
+
+    // --- IPTV ----------------------------------------------------------------------------------
+
+    fun setIptvEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { iptvEnabled = enabled }
+    }
+
+    fun setIptvPortalUrl(url: String) = viewModelScope.launch {
+        settingsRepository.update { iptvPortalUrl = url }
+    }
+
+    fun setIptvMacAddress(mac: String) = viewModelScope.launch {
+        settingsRepository.update { iptvMacAddress = mac }
+    }
+
+    /** Generates a fresh Infomir-range MAC rather than leaving the field blank by default - most
+     * portals identify/authorize a device by MAC, so a starting value the user can hand to their
+     * provider (or that already matches a value they register) is more useful than an empty box. */
+    fun regenerateIptvMac() = viewModelScope.launch {
+        settingsRepository.update { iptvMacAddress = com.sconcept.mirrordash.iptv.IptvMac.generateRandom() }
+    }
+
+    fun setIptvSleepTimeoutSeconds(seconds: Int) = viewModelScope.launch {
+        settingsRepository.update { iptvSleepTimeoutSeconds = seconds }
+    }
+
+    fun setIptvOpenMuted(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { iptvOpenMuted = enabled }
+    }
+
+    fun setIptvRecordingPortalUrl(url: String) = viewModelScope.launch {
+        settingsRepository.update { iptvRecordingPortalUrl = url }
+    }
+
+    fun setIptvRecordingMacAddress(mac: String) = viewModelScope.launch {
+        settingsRepository.update { iptvRecordingMacAddress = mac }
+    }
+
+    fun regenerateIptvRecordingMac() = viewModelScope.launch {
+        settingsRepository.update { iptvRecordingMacAddress = com.sconcept.mirrordash.iptv.IptvMac.generateRandom() }
+    }
+
+    fun setIptvRecordingDestination(mode: com.sconcept.mirrordash.iptv.RecordingDestinationMode) = viewModelScope.launch {
+        settingsRepository.update { iptvRecordingDestination = mode.storageKey }
+    }
+
+    fun setIptvRecordingSmbFolder(folder: String) = viewModelScope.launch {
+        settingsRepository.update { iptvRecordingSmbFolder = folder }
+    }
+
+    fun setIptvRecordingLocalCapMb(mb: Int) = viewModelScope.launch {
+        settingsRepository.update { iptvRecordingLocalCapMb = mb }
     }
 
     // --- Launcher ------------------------------------------------------------------------------

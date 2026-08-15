@@ -61,6 +61,22 @@ fun AirPlayMirrorSurface(modifier: Modifier = Modifier) {
                 override fun onPinRequested(pin: String) = Unit
             }
             bridge.addListener(listener)
+            // The one-time onVideoFormatChanged event (native only announces once per session,
+            // gated by its own format_announced flag) fires as soon as the sender's SETUP
+            // negotiates codec+size - typically *before* hasActiveVideo flips true and this
+            // surface ever mounts, since that requires a frame to have already arrived. A
+            // listener registered this late would otherwise never learn the codec and could
+            // never configure a decoder, no matter how long the session runs - so prime it here
+            // from the bridge's already-known snapshot instead of only waiting for a live event.
+            // Metadata alone isn't enough - MediaCodec also needs a sample containing the actual
+            // SPS/PPS NAL units, which the sender only ever transmits once per session (see
+            // AirPlayNsdBridge.cachedFirstFrame's doc). Replay it here too, or a late-mounting
+            // decoder has metadata but nothing it can actually configure with.
+            val snapshot = bridge.snapshot()
+            if (snapshot.codec != 0) {
+                decoder.onVideoFormatChanged(snapshot.codec, snapshot.videoWidth, snapshot.videoHeight)
+                bridge.cachedFirstFrameOrNull()?.let { (data, ptsUs) -> decoder.onVideoFrame(data, ptsUs) }
+            }
             onDispose {
                 bridge.removeListener(listener)
                 decoder.release()

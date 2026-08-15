@@ -67,7 +67,9 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-private val EDGE_INSET = 56.dp
+// Matches BerthierOptions' PhotoClockView.OVERLAY_SAFE_INSET_DP - just enough margin to keep a
+// dragged widget from clipping off-screen, not a "keep away from the corners" restriction.
+private val EDGE_INSET = 18.dp
 
 /**
  * The default Home surface (brief section 11). The clock and weather clusters are freely
@@ -97,7 +99,11 @@ fun ClockScreen(
     // screen - unconditional on the (separate) idle-state status-chip setting, since the point
     // is mirroring actually being visible at all, not an opt-in indicator. Falls back to the
     // regular clock automatically once hasActiveVideo goes stale (see AirPlayEngine's ticker).
-    Crossfade(targetState = airPlayStatus?.hasActiveVideo == true, label = "clockAirPlayTakeover", modifier = modifier.fillMaxSize()) { isMirroring ->
+    val isMirroringTarget = airPlayStatus?.hasActiveVideo == true
+    LaunchedEffect(isMirroringTarget) {
+        android.util.Log.i("ClockScreen", "hasActiveVideo target -> $isMirroringTarget")
+    }
+    Crossfade(targetState = isMirroringTarget, label = "clockAirPlayTakeover", modifier = modifier.fillMaxSize()) { isMirroring ->
         if (isMirroring) {
             AirPlayMirrorSurface(modifier = Modifier.fillMaxSize())
         } else {

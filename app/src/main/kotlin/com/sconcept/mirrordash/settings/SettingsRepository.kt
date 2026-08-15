@@ -10,10 +10,13 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.iptv.RecordingDestinationMode
+import com.sconcept.mirrordash.iptv.ScheduledRecording
 import com.sconcept.mirrordash.nas.model.SmbShare
 import com.sconcept.mirrordash.security.SecureCredentialStore
 import com.sconcept.mirrordash.security.SessionCredentialHolder
 import com.sconcept.mirrordash.ui.theme.DEFAULT_CLOCK_FONT_SIZE_SP
+import com.sconcept.mirrordash.walkietalkie.DEFAULT_WALKIE_TALKIE_CHIME
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -40,6 +43,16 @@ const val DEFAULT_DEVICE_NAME = "MirrorDash"
 
 const val BRIGHTNESS_DIM_TARGET_WHOLE_SCREEN = "WHOLE_SCREEN"
 const val BRIGHTNESS_DIM_TARGET_TEXT_ONLY = "TEXT_ONLY"
+const val BROWSER_EMPTY_START_PAGE_URL = "about:blank"
+
+/** "Shut off completely (no memory) when not in view for more than 2 min" from the brief -
+ * parametrable via [MirrorDashSettings.iptvSleepTimeoutSeconds], this is just the shipped default. */
+const val DEFAULT_IPTV_SLEEP_TIMEOUT_SECONDS = 120
+
+/** The local recording fallback's cap, not a target - only ~2.8GB is free on the reference
+ * hardware, so this default leaves the OS/app plenty of headroom rather than trying to use all
+ * of it. Oldest local recordings are deleted first once this is exceeded. */
+const val DEFAULT_RECORDING_LOCAL_CAP_MB = 500
 
 /** Bottom-start, matching the visual layout the Clock page ships with before anyone drags
  * anything - the single, only default (see the plan's note on why BerthierOptions' clock
@@ -95,6 +108,8 @@ data class MirrorDashSettings(
     val walkieTalkieTarget: String = WALKIE_TALKIE_TARGET_ALL,
     val walkieTalkiePort: Int = DEFAULT_WALKIE_TALKIE_PORT,
     val walkieTalkieMicBoostPercent: Int = 100,
+    val walkieTalkieIncomingChimeEnabled: Boolean = true,
+    val walkieTalkieIncomingChime: String = DEFAULT_WALKIE_TALKIE_CHIME,
     val walkieTalkieOverlayEnabled: Boolean = false,
     val walkieTalkiePttAnchorX: Float = 0.92f,
     val walkieTalkiePttAnchorY: Float = 0.82f,
@@ -108,9 +123,43 @@ data class MirrorDashSettings(
     val airplayAllowHevc: Boolean = false,
     val airplayShowClockWidget: Boolean = false,
 
+    // Browser
+    val browserEnabled: Boolean = false,
+    val browserHomeUrl: String = "",
+    val browserLastVisitedUrl: String = "",
+
     // Home Assistant
     val homeAssistantEnabled: Boolean = false,
     val homeAssistantUrl: String = "",
+
+    // IPTV (Stalker/Ministra portal - see the iptv package)
+    val iptvEnabled: Boolean = false,
+    val iptvPortalUrl: String = "",
+    val iptvMacAddress: String = "",
+    val iptvSleepTimeoutSeconds: Int = DEFAULT_IPTV_SLEEP_TIMEOUT_SECONDS,
+    // Remembered across app restarts so reopening the tab resumes where it left off, rather than
+    // always full volume / the first channel - see IptvViewModel's connect flow.
+    val iptvVolume: Float = 1f,
+    val iptvLastChannelId: String = "",
+    // "Always open on mute first" - overrides iptvVolume as the *starting* volume on connect
+    // without touching the remembered value itself, so muting-by-default doesn't clobber what
+    // gets restored the next time this is turned back off.
+    val iptvOpenMuted: Boolean = false,
+    // Recording (see IptvRecordingEngine). Both destinations are always implemented - this only
+    // picks which is tried first, the other is the automatic fallback if it fails to open.
+    //
+    // This portal allows exactly one active session per MAC (confirmed live: a second handshake
+    // silently kills the first) - so recording a different channel than what's live needs a MAC
+    // of its own to avoid contending for that one slot. Blank means no second connection exists;
+    // recording then shares the live-view session (IptvSessionCoordinator) and, if it must, takes
+    // it over. A blank recording portal URL means "same portal as live viewing", only the MAC
+    // differs - most providers issue extra MACs on the same portal, not a whole second portal.
+    val iptvRecordingPortalUrl: String = "",
+    val iptvRecordingMacAddress: String = "",
+    val iptvRecordingDestination: String = RecordingDestinationMode.SMB_PRIMARY.storageKey,
+    val iptvRecordingSmbFolder: String = "MirrorDash Recordings",
+    val iptvRecordingLocalCapMb: Int = DEFAULT_RECORDING_LOCAL_CAP_MB,
+    val iptvScheduledRecordings: List<ScheduledRecording> = emptyList(),
 
     // Launcher
     val launcherFavoriteApps: List<String> = emptyList(),
@@ -215,6 +264,10 @@ class SettingsRepository(context: Context) {
         val textWidgets = textWidgetsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<CustomTextWidget>>(raw) }.getOrDefault(emptyList())
         } ?: emptyList()
+        val scheduledRecordingsRaw = this[Keys.IPTV_SCHEDULED_RECORDINGS]
+        val scheduledRecordings = scheduledRecordingsRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<ScheduledRecording>>(raw) }.getOrDefault(emptyList())
+        } ?: emptyList()
 
         return MirrorDashSettings(
             deviceName = this[Keys.DEVICE_NAME] ?: defaults.deviceName,
@@ -249,6 +302,8 @@ class SettingsRepository(context: Context) {
             walkieTalkieTarget = this[Keys.WALKIE_TALKIE_TARGET] ?: defaults.walkieTalkieTarget,
             walkieTalkiePort = this[Keys.WALKIE_TALKIE_PORT] ?: defaults.walkieTalkiePort,
             walkieTalkieMicBoostPercent = this[Keys.WALKIE_TALKIE_MIC_BOOST] ?: defaults.walkieTalkieMicBoostPercent,
+            walkieTalkieIncomingChimeEnabled = this[Keys.WALKIE_TALKIE_INCOMING_CHIME_ENABLED] ?: defaults.walkieTalkieIncomingChimeEnabled,
+            walkieTalkieIncomingChime = this[Keys.WALKIE_TALKIE_INCOMING_CHIME] ?: defaults.walkieTalkieIncomingChime,
             walkieTalkieOverlayEnabled = this[Keys.WALKIE_TALKIE_OVERLAY_ENABLED] ?: defaults.walkieTalkieOverlayEnabled,
             walkieTalkiePttAnchorX = this[Keys.WALKIE_TALKIE_PTT_ANCHOR_X] ?: defaults.walkieTalkiePttAnchorX,
             walkieTalkiePttAnchorY = this[Keys.WALKIE_TALKIE_PTT_ANCHOR_Y] ?: defaults.walkieTalkiePttAnchorY,
@@ -259,8 +314,24 @@ class SettingsRepository(context: Context) {
             airplayMirrorPreset = this[Keys.AIRPLAY_MIRROR_PRESET] ?: defaults.airplayMirrorPreset,
             airplayAllowHevc = this[Keys.AIRPLAY_ALLOW_HEVC] ?: defaults.airplayAllowHevc,
             airplayShowClockWidget = this[Keys.AIRPLAY_SHOW_CLOCK_WIDGET] ?: defaults.airplayShowClockWidget,
+            browserEnabled = this[Keys.BROWSER_ENABLED] ?: defaults.browserEnabled,
+            browserHomeUrl = this[Keys.BROWSER_HOME_URL] ?: defaults.browserHomeUrl,
+            browserLastVisitedUrl = this[Keys.BROWSER_LAST_VISITED_URL] ?: defaults.browserLastVisitedUrl,
             homeAssistantEnabled = this[Keys.HOME_ASSISTANT_ENABLED] ?: defaults.homeAssistantEnabled,
             homeAssistantUrl = this[Keys.HOME_ASSISTANT_URL] ?: defaults.homeAssistantUrl,
+            iptvEnabled = this[Keys.IPTV_ENABLED] ?: defaults.iptvEnabled,
+            iptvPortalUrl = this[Keys.IPTV_PORTAL_URL] ?: defaults.iptvPortalUrl,
+            iptvMacAddress = this[Keys.IPTV_MAC_ADDRESS] ?: defaults.iptvMacAddress,
+            iptvSleepTimeoutSeconds = this[Keys.IPTV_SLEEP_TIMEOUT_SECONDS] ?: defaults.iptvSleepTimeoutSeconds,
+            iptvVolume = this[Keys.IPTV_VOLUME] ?: defaults.iptvVolume,
+            iptvLastChannelId = this[Keys.IPTV_LAST_CHANNEL_ID] ?: defaults.iptvLastChannelId,
+            iptvOpenMuted = this[Keys.IPTV_OPEN_MUTED] ?: defaults.iptvOpenMuted,
+            iptvRecordingPortalUrl = this[Keys.IPTV_RECORDING_PORTAL_URL] ?: defaults.iptvRecordingPortalUrl,
+            iptvRecordingMacAddress = this[Keys.IPTV_RECORDING_MAC_ADDRESS] ?: defaults.iptvRecordingMacAddress,
+            iptvRecordingDestination = this[Keys.IPTV_RECORDING_DESTINATION] ?: defaults.iptvRecordingDestination,
+            iptvRecordingSmbFolder = this[Keys.IPTV_RECORDING_SMB_FOLDER] ?: defaults.iptvRecordingSmbFolder,
+            iptvRecordingLocalCapMb = this[Keys.IPTV_RECORDING_LOCAL_CAP_MB] ?: defaults.iptvRecordingLocalCapMb,
+            iptvScheduledRecordings = scheduledRecordings,
             launcherFavoriteApps = favorites,
             launcherHiddenApps = this[Keys.LAUNCHER_HIDDEN_APPS] ?: defaults.launcherHiddenApps,
             lastVisitedPageIndex = this[Keys.LAST_VISITED_PAGE_INDEX] ?: defaults.lastVisitedPageIndex,
@@ -308,6 +379,8 @@ class SettingsRepository(context: Context) {
         val WALKIE_TALKIE_TARGET = stringPreferencesKey("walkie_talkie_target")
         val WALKIE_TALKIE_PORT = intPreferencesKey("walkie_talkie_port")
         val WALKIE_TALKIE_MIC_BOOST = intPreferencesKey("walkie_talkie_mic_boost_percent")
+        val WALKIE_TALKIE_INCOMING_CHIME_ENABLED = booleanPreferencesKey("walkie_talkie_incoming_chime_enabled")
+        val WALKIE_TALKIE_INCOMING_CHIME = stringPreferencesKey("walkie_talkie_incoming_chime")
         val WALKIE_TALKIE_OVERLAY_ENABLED = booleanPreferencesKey("walkie_talkie_overlay_enabled")
         val WALKIE_TALKIE_PTT_ANCHOR_X = floatPreferencesKey("walkie_talkie_ptt_anchor_x")
         val WALKIE_TALKIE_PTT_ANCHOR_Y = floatPreferencesKey("walkie_talkie_ptt_anchor_y")
@@ -320,8 +393,26 @@ class SettingsRepository(context: Context) {
         val AIRPLAY_ALLOW_HEVC = booleanPreferencesKey("airplay_allow_hevc")
         val AIRPLAY_SHOW_CLOCK_WIDGET = booleanPreferencesKey("airplay_show_clock_widget")
 
+        val BROWSER_ENABLED = booleanPreferencesKey("browser_enabled")
+        val BROWSER_HOME_URL = stringPreferencesKey("browser_home_url")
+        val BROWSER_LAST_VISITED_URL = stringPreferencesKey("browser_last_visited_url")
+
         val HOME_ASSISTANT_ENABLED = booleanPreferencesKey("home_assistant_enabled")
         val HOME_ASSISTANT_URL = stringPreferencesKey("home_assistant_url")
+
+        val IPTV_ENABLED = booleanPreferencesKey("iptv_enabled")
+        val IPTV_PORTAL_URL = stringPreferencesKey("iptv_portal_url")
+        val IPTV_MAC_ADDRESS = stringPreferencesKey("iptv_mac_address")
+        val IPTV_SLEEP_TIMEOUT_SECONDS = intPreferencesKey("iptv_sleep_timeout_seconds")
+        val IPTV_VOLUME = floatPreferencesKey("iptv_volume")
+        val IPTV_LAST_CHANNEL_ID = stringPreferencesKey("iptv_last_channel_id")
+        val IPTV_OPEN_MUTED = booleanPreferencesKey("iptv_open_muted")
+        val IPTV_RECORDING_PORTAL_URL = stringPreferencesKey("iptv_recording_portal_url")
+        val IPTV_RECORDING_MAC_ADDRESS = stringPreferencesKey("iptv_recording_mac_address")
+        val IPTV_RECORDING_DESTINATION = stringPreferencesKey("iptv_recording_destination")
+        val IPTV_RECORDING_SMB_FOLDER = stringPreferencesKey("iptv_recording_smb_folder")
+        val IPTV_RECORDING_LOCAL_CAP_MB = intPreferencesKey("iptv_recording_local_cap_mb")
+        val IPTV_SCHEDULED_RECORDINGS = stringPreferencesKey("iptv_scheduled_recordings_json")
 
         val CUSTOM_TEXT_WIDGETS = stringPreferencesKey("custom_text_widgets_json")
 
@@ -372,6 +463,8 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var walkieTalkieTarget: String by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_TARGET, prefs, defaults.walkieTalkieTarget)
     var walkieTalkiePort: Int by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_PORT, prefs, defaults.walkieTalkiePort)
     var walkieTalkieMicBoostPercent: Int by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_MIC_BOOST, prefs, defaults.walkieTalkieMicBoostPercent)
+    var walkieTalkieIncomingChimeEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_INCOMING_CHIME_ENABLED, prefs, defaults.walkieTalkieIncomingChimeEnabled)
+    var walkieTalkieIncomingChime: String by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_INCOMING_CHIME, prefs, defaults.walkieTalkieIncomingChime)
     var walkieTalkieOverlayEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_OVERLAY_ENABLED, prefs, defaults.walkieTalkieOverlayEnabled)
     var walkieTalkiePttAnchorX: Float by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_PTT_ANCHOR_X, prefs, defaults.walkieTalkiePttAnchorX)
     var walkieTalkiePttAnchorY: Float by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_PTT_ANCHOR_Y, prefs, defaults.walkieTalkiePttAnchorY)
@@ -384,8 +477,25 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var airplayAllowHevc: Boolean by PrefDelegate(SettingsRepository.Keys.AIRPLAY_ALLOW_HEVC, prefs, defaults.airplayAllowHevc)
     var airplayShowClockWidget: Boolean by PrefDelegate(SettingsRepository.Keys.AIRPLAY_SHOW_CLOCK_WIDGET, prefs, defaults.airplayShowClockWidget)
 
+    var browserEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.BROWSER_ENABLED, prefs, defaults.browserEnabled)
+    var browserHomeUrl: String by PrefDelegate(SettingsRepository.Keys.BROWSER_HOME_URL, prefs, defaults.browserHomeUrl)
+    var browserLastVisitedUrl: String by PrefDelegate(SettingsRepository.Keys.BROWSER_LAST_VISITED_URL, prefs, defaults.browserLastVisitedUrl)
+
     var homeAssistantEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_ENABLED, prefs, defaults.homeAssistantEnabled)
     var homeAssistantUrl: String by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_URL, prefs, defaults.homeAssistantUrl)
+
+    var iptvEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_ENABLED, prefs, defaults.iptvEnabled)
+    var iptvPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_PORTAL_URL, prefs, defaults.iptvPortalUrl)
+    var iptvMacAddress: String by PrefDelegate(SettingsRepository.Keys.IPTV_MAC_ADDRESS, prefs, defaults.iptvMacAddress)
+    var iptvSleepTimeoutSeconds: Int by PrefDelegate(SettingsRepository.Keys.IPTV_SLEEP_TIMEOUT_SECONDS, prefs, defaults.iptvSleepTimeoutSeconds)
+    var iptvVolume: Float by PrefDelegate(SettingsRepository.Keys.IPTV_VOLUME, prefs, defaults.iptvVolume)
+    var iptvLastChannelId: String by PrefDelegate(SettingsRepository.Keys.IPTV_LAST_CHANNEL_ID, prefs, defaults.iptvLastChannelId)
+    var iptvOpenMuted: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_OPEN_MUTED, prefs, defaults.iptvOpenMuted)
+    var iptvRecordingPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_PORTAL_URL, prefs, defaults.iptvRecordingPortalUrl)
+    var iptvRecordingMacAddress: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_MAC_ADDRESS, prefs, defaults.iptvRecordingMacAddress)
+    var iptvRecordingDestination: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_DESTINATION, prefs, defaults.iptvRecordingDestination)
+    var iptvRecordingSmbFolder: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_SMB_FOLDER, prefs, defaults.iptvRecordingSmbFolder)
+    var iptvRecordingLocalCapMb: Int by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_LOCAL_CAP_MB, prefs, defaults.iptvRecordingLocalCapMb)
 
     var launcherHiddenApps: Set<String> by PrefDelegate(SettingsRepository.Keys.LAUNCHER_HIDDEN_APPS, prefs, defaults.launcherHiddenApps)
     var lastVisitedPageIndex: Int by PrefDelegate(SettingsRepository.Keys.LAST_VISITED_PAGE_INDEX, prefs, defaults.lastVisitedPageIndex)
@@ -417,6 +527,14 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
             .orEmpty()
         set(value) {
             prefs[SettingsRepository.Keys.CUSTOM_TEXT_WIDGETS] = json.encodeToString(value)
+        }
+
+    var iptvScheduledRecordings: List<com.sconcept.mirrordash.iptv.ScheduledRecording>
+        get() = prefs[SettingsRepository.Keys.IPTV_SCHEDULED_RECORDINGS]
+            ?.let { runCatching { json.decodeFromString<List<com.sconcept.mirrordash.iptv.ScheduledRecording>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.IPTV_SCHEDULED_RECORDINGS] = json.encodeToString(value)
         }
 }
 

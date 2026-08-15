@@ -33,6 +33,7 @@ class AirPlayVideoDecoder(
     private val handler = Handler(thread.looper)
     private val queuedFrames = ArrayDeque<Frame>()
     private val drainScheduled = AtomicBoolean(false)
+    private val released = AtomicBoolean(false)
 
     @Volatile
     private var surface: Surface? = null
@@ -52,8 +53,19 @@ class AirPlayVideoDecoder(
         }
     }
 
+    /** [release] quits [thread] - a stray [SurfaceHolder.Callback] delivery (or a queued frame
+     * still arriving) after that must never touch [handler] again, since posting to an already-
+     * quit `HandlerThread` throws internally and Android just drops the work silently (visible
+     * only as a "sending message to a Handler on a dead thread" logcat warning) - previously this
+     * meant an already-released decoder could eat real frames/callbacks with no visible failure
+     * beyond that easy-to-miss warning. */
+    private fun postIfAlive(block: () -> Unit) {
+        if (released.get()) return
+        handler.post(block)
+    }
+
     fun onVideoFormatChanged(codec: Int, width: Int, height: Int) {
-        handler.post {
+        postIfAlive {
             val next = PendingFormat(codec, max(width, 16), max(height, 16))
             if (pendingFormat != next) {
                 pendingFormat = next
@@ -63,6 +75,7 @@ class AirPlayVideoDecoder(
     }
 
     fun onVideoFrame(data: ByteArray, ptsUs: Long) {
+        if (released.get()) return
         synchronized(queuedFrames) {
             if (queuedFrames.size >= MAX_PENDING_FRAMES) {
                 queuedFrames.removeFirst()
@@ -73,7 +86,7 @@ class AirPlayVideoDecoder(
     }
 
     fun resetSession() {
-        handler.post {
+        postIfAlive {
             synchronized(queuedFrames) {
                 queuedFrames.clear()
             }
@@ -85,6 +98,8 @@ class AirPlayVideoDecoder(
     }
 
     fun release() {
+        if (!released.compareAndSet(false, true)) return
+        surfaceView.holder.removeCallback(this)
         handler.post {
             synchronized(queuedFrames) {
                 queuedFrames.clear()
@@ -108,12 +123,13 @@ class AirPlayVideoDecoder(
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         surface = null
-        handler.post { releaseCodec() }
+        postIfAlive { releaseCodec() }
     }
 
     private fun scheduleDrain() {
+        if (released.get()) return
         if (drainScheduled.compareAndSet(false, true)) {
-            handler.post(::drainFrames)
+            postIfAlive(::drainFrames)
         }
     }
 

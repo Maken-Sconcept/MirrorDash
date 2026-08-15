@@ -48,6 +48,12 @@ data class AirPlayUiState(
             lastError != null -> lastError
             else -> "Starting…"
         }
+
+    /** Mirrors [AirPlayNsdBridge.SessionSnapshot.isSessionActive] - a PIN prompt or a connected
+     * client both mean there's something on the Clock page's [AirPlayStatusWidget]/mirror surface
+     * worth seeing, even before video traffic actually starts flowing. */
+    val isSessionActive: Boolean
+        get() = pairingPin.isNotBlank() || clientLabel.isNotBlank() || hasActiveVideo
 }
 
 /**
@@ -80,6 +86,12 @@ class AirPlayEngine private constructor(context: Context, private val settingsRe
     private val bridge = AirPlaySessionRegistry.getBridge(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /** Process-wide like [bridge] itself and this engine's own [bridgeListener] - audio has no
+     * on-screen surface to mount/unmount around the way [AirPlayMirrorSurface] does for video, so
+     * it's simplest to just always be listening, matching how [AirPlayReceiverService] expects
+     * this engine to own the receiver's Android-side lifecycle for as long as the process runs. */
+    private val audioDecoder = AirPlayAudioDecoder(onError = { message -> Log.e(TAG, message) })
+
     private val _sessionSnapshot = MutableStateFlow(bridge.snapshot())
     private val _lastError = MutableStateFlow<String?>(null)
 
@@ -101,7 +113,12 @@ class AirPlayEngine private constructor(context: Context, private val settingsRe
 
         override fun onVideoFrame(data: ByteArray, ptsUs: Long) = Unit
 
+        override fun onAudioFrame(data: ByteArray, ptsUs: Long) {
+            audioDecoder.onAudioFrame(data, ptsUs)
+        }
+
         override fun onVideoSessionEnded() {
+            audioDecoder.resetSession()
             _sessionSnapshot.value = bridge.snapshot()
         }
 

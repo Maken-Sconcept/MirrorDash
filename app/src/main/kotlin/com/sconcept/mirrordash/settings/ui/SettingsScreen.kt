@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Cloud
@@ -58,7 +60,9 @@ private enum class SettingsSection(val title: String, val subtitle: String) {
     PHOTORAMA("Photorama", "NAS connection and slideshow folder"),
     WALKIE_TALKIE("Walkie-Talkie", "Peers, target, and floating button"),
     AIRPLAY("AirPlay", "Receiver name, pairing, and mirror quality"),
+    BROWSER("Browser", "Optional quick web tab inside MirrorDash"),
     HOME_ASSISTANT("Home Assistant", "Dashboard address and the tab it lives on"),
+    IPTV("IPTV", "Portal address, MAC address, and the tab it lives on"),
     LAUNCHER("Launcher", "Default Home app and notification access"),
 }
 
@@ -106,7 +110,9 @@ fun SettingsScreen(
                 SettingsSection.PHOTORAMA -> SectionScaffold(section.title) { PhotoramaSettingsContent(uiState, viewModel) }
                 SettingsSection.WALKIE_TALKIE -> SectionScaffold(section.title) { WalkieTalkieSettingsContent(uiState, viewModel) }
                 SettingsSection.AIRPLAY -> SectionScaffold(section.title) { AirPlaySettingsContent(uiState, viewModel) }
+                SettingsSection.BROWSER -> SectionScaffold(section.title) { BrowserSettingsContent(uiState, viewModel) }
                 SettingsSection.HOME_ASSISTANT -> SectionScaffold(section.title) { HomeAssistantSettingsContent(uiState, viewModel) }
+                SettingsSection.IPTV -> SectionScaffold(section.title) { IptvSettingsContent(uiState, viewModel) }
                 SettingsSection.LAUNCHER -> SectionScaffold(section.title) {
                     LauncherSettingsContent(
                         uiState = uiState,
@@ -177,7 +183,9 @@ private fun sectionIcon(section: SettingsSection) = when (section) {
     SettingsSection.PHOTORAMA -> Icons.Filled.Photo
     SettingsSection.WALKIE_TALKIE -> Icons.Filled.Podcasts
     SettingsSection.AIRPLAY -> Icons.Filled.Cast
+    SettingsSection.BROWSER -> Icons.Filled.Language
     SettingsSection.HOME_ASSISTANT -> Icons.Filled.Home
+    SettingsSection.IPTV -> Icons.Filled.LiveTv
     SettingsSection.LAUNCHER -> Icons.Filled.Info
 }
 

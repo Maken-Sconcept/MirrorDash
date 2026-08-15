@@ -21,6 +21,12 @@
 #define LOG_TAG "AirPlayNative"
 #define CODEC_H264 1
 #define CODEC_H265 2
+/* AirPlay mirroring's audio compression type (raop_rtp.c's `ct`): always 8 (AAC-ELD 44.1kHz/2ch)
+ * in practice - confirmed against a real iOS sender and matches upstream UxPlay's own
+ * audio_renderer.c, which only ever wires up decoders for ct 8 (AAC-ELD) and ct 2 (ALAC, used for
+ * non-mirroring "Audio Only" AirPlay, not mirroring). Kept as its own constant (rather than a
+ * CODEC_* remap like video's) since it's already the stable wire value, not a uxplay-internal enum. */
+#define AUDIO_CODEC_AAC_ELD 8
 
 typedef struct receiver_state_s {
     dnssd_t *dnssd;
@@ -192,6 +198,29 @@ static void call_video_frame(const unsigned char *data, int len, uint64_t pts_us
 
     jclass cls = NULL;
     jmethodID method = get_bridge_method(env, bridge, "onVideoFrame", "([BJ)V", &cls);
+    if (method) {
+        jbyteArray frame = (*env)->NewByteArray(env, len);
+        if (frame) {
+            (*env)->SetByteArrayRegion(env, frame, 0, len, (const jbyte *) data);
+            (*env)->CallVoidMethod(env, bridge, method, frame, (jlong) pts_us);
+            clear_pending_exception(env);
+            (*env)->DeleteLocalRef(env, frame);
+        }
+    }
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    jni_globals_release_env();
+}
+
+static void call_audio_frame(const unsigned char *data, int len, uint64_t pts_us)
+{
+    JNIEnv *env = NULL;
+    jobject bridge = get_bridge(&env);
+    if (!bridge || !data || len <= 0) {
+        return;
+    }
+
+    jclass cls = NULL;
+    jmethodID method = get_bridge_method(env, bridge, "onAudioFrame", "([BJ)V", &cls);
     if (method) {
         jbyteArray frame = (*env)->NewByteArray(env, len);
         if (frame) {
@@ -380,7 +409,20 @@ static void audio_process(void *cls, raop_ntp_t *ntp, audio_decode_struct *data)
 {
     (void) cls;
     (void) ntp;
-    (void) data;
+    if (!data || !data->data || data->data_len <= 0) {
+        return;
+    }
+    if (data->ct != AUDIO_CODEC_AAC_ELD) {
+        /* ALAC ("Audio Only" AirPlay, ct=2) and anything else isn't decoded on the Android side
+         * yet - screen mirroring (this app's use case) always negotiates AAC-ELD in practice. */
+        static int warned_ct = -1;
+        if (data->ct != warned_ct) {
+            __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "Dropping unsupported audio compression type ct=%d", data->ct);
+            warned_ct = data->ct;
+        }
+        return;
+    }
+    call_audio_frame(data->data, data->data_len, data->ntp_time_remote / 1000ULL);
 }
 
 static void video_process(void *cls, raop_ntp_t *ntp, video_decode_struct *data)
@@ -466,11 +508,12 @@ static void audio_get_format(
     uint64_t *audio_format
 ) {
     (void) cls;
-    (void) ct;
-    (void) spf;
-    (void) using_screen;
-    (void) is_media;
-    (void) audio_format;
+    __android_log_print(
+        ANDROID_LOG_INFO, LOG_TAG,
+        "audio_get_format: ct=%d spf=%d usingScreen=%d isMedia=%d audioFormat=0x%llx",
+        ct ? *ct : -1, spf ? *spf : -1, using_screen ? *using_screen : -1,
+        is_media ? *is_media : -1, audio_format ? (unsigned long long) *audio_format : 0
+    );
 }
 
 static void video_report_size(void *cls, float *width_source, float *height_source, float *width, float *height)

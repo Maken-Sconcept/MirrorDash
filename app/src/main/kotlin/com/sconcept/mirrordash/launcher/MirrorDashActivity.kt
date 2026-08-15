@@ -35,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sconcept.mirrordash.airplay.AirPlayReceiverService
+import com.sconcept.mirrordash.browser.BrowserScreen
 import com.sconcept.mirrordash.brightness.BRIGHTNESS_FAILSAFE_HOLD_MS
 import com.sconcept.mirrordash.brightness.BRIGHTNESS_FAILSAFE_WARNING_LEAD_MS
 import com.sconcept.mirrordash.brightness.BacklightController
@@ -45,6 +46,9 @@ import com.sconcept.mirrordash.clock.ClockBackground
 import com.sconcept.mirrordash.clock.ClockScreen
 import com.sconcept.mirrordash.clock.ClockViewModel
 import com.sconcept.mirrordash.homeassistant.HomeAssistantScreen
+import com.sconcept.mirrordash.iptv.IptvScreen
+import com.sconcept.mirrordash.iptv.IptvViewModel
+import com.sconcept.mirrordash.jellyfin.JellyfinScreen
 import com.sconcept.mirrordash.launcher.apps.AppDrawerScreen
 import com.sconcept.mirrordash.launcher.display.DisplayOrientationController
 import com.sconcept.mirrordash.launcher.display.DisplayOrientationMode
@@ -85,6 +89,9 @@ class MirrorDashActivity : ComponentActivity() {
     private val settingsViewModel: SettingsViewModel by viewModels {
         SettingsViewModel.factory(application, container.settingsRepository)
     }
+    private val iptvViewModel: IptvViewModel by viewModels {
+        IptvViewModel.factory(application, container.settingsRepository, container.iptvSessionCoordinator)
+    }
 
     private val requestMicPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val requestNotificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -109,6 +116,14 @@ class MirrorDashActivity : ComponentActivity() {
         }
 
         photoramaViewModel.ensureStarted()
+
+        // Safety net alongside ScheduledRecordingReceiver's own BOOT_COMPLETED handling - covers
+        // the case where the app was installed/updated after the last boot (which never fires
+        // BOOT_COMPLETED for a freshly-installed receiver) leaving armed alarms that were never
+        // actually set. Idempotent: re-arming an already-armed alarm is a harmless no-op.
+        lifecycleScope.launch {
+            container.iptvRecordingEngine.rearmPendingRecordings()
+        }
 
         lifecycleScope.launch {
             container.settingsRepository.settings
@@ -159,6 +174,7 @@ class MirrorDashActivity : ComponentActivity() {
                     photoramaViewModel = photoramaViewModel,
                     appDrawerViewModel = appDrawerViewModel,
                     settingsViewModel = settingsViewModel,
+                    iptvViewModel = iptvViewModel,
                     onRequestHomeRole = { requestHomeRole.launch(HomeRoleHelper.requestHomeRoleIntent(this)) },
                     onRequestNotificationAccess = {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -229,6 +245,7 @@ private fun MirrorDashRoot(
     photoramaViewModel: PhotoramaViewModel,
     appDrawerViewModel: AppDrawerViewModel,
     settingsViewModel: SettingsViewModel,
+    iptvViewModel: IptvViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
@@ -249,15 +266,48 @@ private fun MirrorDashRoot(
     val pageIndex = initialPageIndex ?: return
     // Photorama drops out while doubling as the Clock's own background (a standalone page
     // repeating the exact photos already showing behind the clock would just be a redundant
-    // swipe); Home Assistant is opt-in entirely - "each tab can be enabled or disabled in the
-    // settings, but the clock and settings must always remain" (see LauncherPages' doc comment).
-    val orderedPages = remember(clockAppearance.background, settingsUiState.settings.homeAssistantEnabled) {
+    // swipe); Browser/Jellyfin/Home Assistant/IPTV are opt-in entirely - "each tab can be
+    // enabled or disabled in the settings, but the clock and settings must always remain" (see
+    // LauncherPages' doc comment).
+    val orderedPages = remember(
+        clockAppearance.background,
+        settingsUiState.settings.browserEnabled,
+        settingsUiState.settings.jellyfinEnabled,
+        settingsUiState.settings.homeAssistantEnabled,
+        settingsUiState.settings.iptvEnabled,
+    ) {
         LauncherPages.ordered(
             includePhotoramaPage = clockAppearance.background !is ClockBackground.Photorama,
+            includeBrowserPage = settingsUiState.settings.browserEnabled,
+            includeJellyfinPage = settingsUiState.settings.jellyfinEnabled,
             includeHomeAssistantPage = settingsUiState.settings.homeAssistantEnabled,
+            includeIptvPage = settingsUiState.settings.iptvEnabled,
         )
     }
     var currentPageIndex by remember { mutableStateOf(pageIndex) }
+
+    // An AirPlay connection should be visible regardless of which tab the user happens to be on
+    // when it comes in - not just when they're already sitting on the Clock page, where the
+    // mirror surface/status widget actually live (see ClockScreen). requestedPage flips back to
+    // null once the session ends so the next session's rising edge is a fresh, distinct value the
+    // pager will act on again (see LauncherGestureHost's requestedPage doc).
+    val airPlayEngine = remember { AppContainer.get(context).airPlayEngine }
+    val airPlayUiState by airPlayEngine.uiState.collectAsStateWithLifecycle()
+    val clockPageIndex = remember(orderedPages) { orderedPages.indexOf(LauncherPage.Clock).takeIf { it >= 0 } }
+    var requestedPage by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(airPlayUiState.isSessionActive) {
+        requestedPage = clockPageIndex.takeIf { airPlayUiState.isSessionActive }
+    }
+
+    // The IPTV tab's whole sleep/off lifecycle (brief: "sleeping state when not active" / "shut
+    // off completely ... when not in view") hangs off this one signal - see IptvViewModel's doc
+    // comment. Driven from here rather than the page's own composable lifecycle because
+    // HorizontalPager disposes off-screen pages almost immediately, which would lose track of
+    // "still within the sleep timeout" the moment the user swipes away.
+    val isIptvPageActive = orderedPages.getOrNull(currentPageIndex) == LauncherPage.Iptv
+    LaunchedEffect(isIptvPageActive) {
+        iptvViewModel.setActive(isIptvPageActive)
+    }
 
     val isClockPageActive = orderedPages.getOrNull(currentPageIndex) == LauncherPage.Clock
     val textOnlyDim = settingsUiState.settings.brightnessDimTarget == BRIGHTNESS_DIM_TARGET_TEXT_ONLY && isClockPageActive
@@ -284,10 +334,13 @@ private fun MirrorDashRoot(
             pageContent = { index, _ ->
                 LauncherPageContent(
                     page = orderedPages.getOrElse(index) { LauncherPage.Clock },
+                    isJellyfinPageActive = orderedPages.getOrNull(currentPageIndex) == LauncherPage.Jellyfin &&
+                        orderedPages.getOrElse(index) { LauncherPage.Clock } == LauncherPage.Jellyfin,
                     clockViewModel = clockViewModel,
                     weatherViewModel = weatherViewModel,
                     photoramaViewModel = photoramaViewModel,
                     settingsViewModel = settingsViewModel,
+                    iptvViewModel = iptvViewModel,
                     onRequestHomeRole = onRequestHomeRole,
                     onRequestNotificationAccess = onRequestNotificationAccess,
                     onRequestWriteSettingsAccess = onRequestWriteSettingsAccess,
@@ -296,6 +349,7 @@ private fun MirrorDashRoot(
                 )
             },
             onFailsafeHoldTriggered = onRequestBrightnessFailsafe,
+            requestedPage = requestedPage,
             appDrawerContent = { _, close ->
                 val drawerState by appDrawerViewModel.uiState.collectAsStateWithLifecycle()
                 BackHandler(onBack = close)
@@ -304,6 +358,7 @@ private fun MirrorDashRoot(
                     onQueryChange = appDrawerViewModel::onQueryChange,
                     onLaunch = { app -> appDrawerViewModel.launch(app); close() },
                     onLongPress = appDrawerViewModel::openAppInfo,
+                    onClose = close,
                 )
             },
             notificationsContent = { _, close ->
@@ -352,10 +407,12 @@ private fun MirrorDashRoot(
 @Composable
 private fun LauncherPageContent(
     page: LauncherPage,
+    isJellyfinPageActive: Boolean,
     clockViewModel: ClockViewModel,
     weatherViewModel: WeatherViewModel,
     photoramaViewModel: PhotoramaViewModel,
     settingsViewModel: SettingsViewModel,
+    iptvViewModel: IptvViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
@@ -386,9 +443,31 @@ private fun LauncherPageContent(
             val state by photoramaViewModel.uiState.collectAsStateWithLifecycle()
             PhotoramaScreen(state = state)
         }
+        LauncherPage.Browser -> {
+            val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+            BrowserScreen(
+                homeUrl = settingsState.settings.browserHomeUrl,
+                persistedUrl = settingsState.settings.browserLastVisitedUrl,
+                onPersistCurrentUrl = settingsViewModel::setBrowserLastVisitedUrl,
+            )
+        }
+        LauncherPage.Jellyfin -> {
+            val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+            JellyfinScreen(
+                serverUrl = settingsState.settings.jellyfinServerUrl,
+                startPath = settingsState.settings.jellyfinStartPath,
+                desktopMode = settingsState.settings.jellyfinDesktopMode,
+                reloadOnOpen = settingsState.settings.jellyfinReloadOnOpen,
+                openExternalLinks = settingsState.settings.jellyfinOpenExternalLinks,
+                isActive = isJellyfinPageActive,
+            )
+        }
         LauncherPage.HomeAssistant -> {
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
             HomeAssistantScreen(url = settingsState.settings.homeAssistantUrl)
+        }
+        LauncherPage.Iptv -> {
+            IptvScreen(viewModel = iptvViewModel)
         }
         LauncherPage.Settings -> {
             SettingsScreen(
@@ -411,6 +490,7 @@ private fun InAppPttOverlay(context: android.content.Context) {
     Box(modifier = Modifier.fillMaxSize()) {
         PttButton(
             isTransmitting = state.isTransmitting,
+            isSpeaking = state.activeIncomingPeerName != null,
             enabled = state.hasMicPermission,
             onPressStart = engine::pressToTalk,
             onPressEnd = engine::releaseToTalk,

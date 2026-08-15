@@ -24,22 +24,45 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
     private val _initialPageIndex = MutableStateFlow<Int?>(null)
     val initialPageIndex: StateFlow<Int?> = _initialPageIndex
 
-    private data class PageAvailability(val includePhotorama: Boolean, val includeHomeAssistant: Boolean)
+    private data class PageAvailability(
+        val includePhotorama: Boolean,
+        val includeBrowser: Boolean,
+        val includeJellyfin: Boolean,
+        val includeHomeAssistant: Boolean,
+        val includeIptv: Boolean,
+    )
 
     // Settings is always the last page regardless of how many pages exist, so "is this the last
     // page" is all onPageSettled needs - tracked here rather than looked up by page identity,
     // since the page list's length itself changes as optional pages toggle on/off.
-    private var currentPageCount = LauncherPages.ordered(includePhotoramaPage = true, includeHomeAssistantPage = true).size
+    private var currentPageCount = LauncherPages.ordered(
+        includePhotoramaPage = true,
+        includeBrowserPage = true,
+        includeJellyfinPage = true,
+        includeHomeAssistantPage = true,
+        includeIptvPage = true,
+    ).size
 
     init {
         viewModelScope.launch {
             settingsRepository.settings
-                .map { PageAvailability(it.clockBackgroundMode != CLOCK_BACKGROUND_MODE_PHOTORAMA, it.homeAssistantEnabled) }
+                .map {
+                    PageAvailability(
+                        includePhotorama = it.clockBackgroundMode != CLOCK_BACKGROUND_MODE_PHOTORAMA,
+                        includeBrowser = it.browserEnabled,
+                        includeJellyfin = it.jellyfinEnabled,
+                        includeHomeAssistant = it.homeAssistantEnabled,
+                        includeIptv = it.iptvEnabled,
+                    )
+                }
                 .distinctUntilChanged()
                 .collect { availability ->
                     currentPageCount = LauncherPages.ordered(
                         includePhotoramaPage = availability.includePhotorama,
+                        includeBrowserPage = availability.includeBrowser,
+                        includeJellyfinPage = availability.includeJellyfin,
                         includeHomeAssistantPage = availability.includeHomeAssistant,
+                        includeIptvPage = availability.includeIptv,
                     ).size
                     if (_initialPageIndex.value == null) {
                         val stored = settingsRepository.settings.first().lastVisitedPageIndex

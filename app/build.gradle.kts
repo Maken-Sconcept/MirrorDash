@@ -106,6 +106,13 @@ dependencies {
     implementation("eu.agno3.jcifs:jcifs-ng:2.1.10")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // IPTV tab's player - HLS/TS live streams off a Stalker/Ministra portal (see the iptv
+    // package). Not used by AirPlay, which decodes its own H.264/H.265 mirror stream natively.
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
+    implementation("androidx.webkit:webkit:1.16.0")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

@@ -32,8 +32,9 @@ object RootShell {
     }
 
     private fun tryRun(commandLine: List<String>, timeoutMs: Long): Boolean {
+        var process: Process? = null
         return try {
-            val process = ProcessBuilder(commandLine).redirectErrorStream(true).start()
+            process = ProcessBuilder(commandLine).redirectErrorStream(true).start()
             val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
             if (!finished) {
                 process.destroy()
@@ -44,6 +45,17 @@ object RootShell {
         } catch (e: Exception) {
             Log.w(TAG, "root command failed via $commandLine", e)
             false
+        } finally {
+            // Process.start() opens real pipe file descriptors for stdin/stdout(/stderr) that are
+            // only closed by GC finalization otherwise - on an 8+ candidate x 2-form fallback list
+            // (see [run]), a settings change that needs root can spawn a dozen+ of these per call,
+            // and leaked FDs accumulate over a long-running session instead of being reclaimed
+            // promptly.
+            process?.let {
+                runCatching { it.outputStream.close() }
+                runCatching { it.inputStream.close() }
+                runCatching { it.errorStream.close() }
+            }
         }
     }
 }

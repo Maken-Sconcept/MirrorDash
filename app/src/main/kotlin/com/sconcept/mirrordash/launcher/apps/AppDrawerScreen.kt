@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,10 +36,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sconcept.mirrordash.ui.theme.MDTheme
+
+private val CLOSE_DRAG_THRESHOLD = 56.dp
 
 /**
  * Swipe-up-from-bottom app drawer (brief section 24-26). Deliberately minimal: search,
@@ -52,6 +56,7 @@ fun AppDrawerScreen(
     onQueryChange: (String) -> Unit,
     onLaunch: (LauncherAppInfo) -> Unit,
     onLongPress: (LauncherAppInfo) -> Unit,
+    onClose: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -60,19 +65,46 @@ fun AppDrawerScreen(
             .background(MDTheme.colors.backgroundElevated)
             .padding(top = 28.dp, start = 40.dp, end = 40.dp, bottom = 24.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Apps, contentDescription = null, tint = MDTheme.colors.textSecondary)
-            Spacer(Modifier.size(12.dp))
-            Text("Apps", style = MDTheme.type.sectionTitle, color = MDTheme.colors.textPrimary)
+        // The drawer opens via swipe-up-from-bottom, but nothing closed it the reverse way -
+        // back gesture/button is the only other exit, easy to miss on a screen with no visible
+        // nav affordance. Scoped to the header (title + search), not the whole drawer, since the
+        // grid below is its own vertical scrollable - a drag-to-close covering that area would
+        // fight scrolling the exact way the page-swipe fought the brightness slider.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(onClose) {
+                    val thresholdPx = CLOSE_DRAG_THRESHOLD.toPx()
+                    var totalDy = 0f
+                    var triggered = false
+                    detectVerticalDragGestures(
+                        onDragStart = { totalDy = 0f; triggered = false },
+                        onDragEnd = { totalDy = 0f; triggered = false },
+                        onDragCancel = { totalDy = 0f; triggered = false },
+                    ) { change, dragAmount ->
+                        change.consume()
+                        totalDy += dragAmount
+                        if (!triggered && totalDy > thresholdPx) {
+                            triggered = true
+                            onClose()
+                        }
+                    }
+                },
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Apps, contentDescription = null, tint = MDTheme.colors.textSecondary)
+                Spacer(Modifier.size(12.dp))
+                Text("Apps", style = MDTheme.type.sectionTitle, color = MDTheme.colors.textPrimary)
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            SearchField(
+                query = state.query,
+                onQueryChange = onQueryChange,
+                resultCount = state.visibleApps.size,
+            )
         }
-
-        Spacer(Modifier.height(20.dp))
-
-        SearchField(
-            query = state.query,
-            onQueryChange = onQueryChange,
-            resultCount = state.visibleApps.size,
-        )
 
         Spacer(Modifier.height(20.dp))
 

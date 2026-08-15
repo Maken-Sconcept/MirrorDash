@@ -55,6 +55,10 @@ class AirPlayNsdBridge(context: Context) {
         fun onVideoFrame(data: ByteArray, ptsUs: Long)
         fun onVideoSessionEnded()
         fun onPinRequested(pin: String)
+
+        /** AAC-ELD (see [AirPlayNsdBridge.onAudioFrame]'s doc) - default no-op since most
+         * listeners (e.g. [AirPlayMirrorSurface]) only care about video. */
+        fun onAudioFrame(data: ByteArray, ptsUs: Long) = Unit
     }
 
     companion object {
@@ -116,6 +120,21 @@ class AirPlayNsdBridge(context: Context) {
     @Volatile
     private var bitrateMbps: Double = 0.0
 
+    /** The SPS/PPS parameter-set NAL units are sent by the sender exactly once per session -
+     * prepended to the next encrypted IDR packet right after [onVideoFormatChanged] fires (see
+     * raop_rtp_mirror.c's prepend_sps_pps comment) - never repeated unless the format changes
+     * again. A decoder that starts listening even one frame late (e.g. [AirPlayMirrorSurface]
+     * mounting only once [SessionSnapshot.hasActiveVideo] is already true) would otherwise never
+     * get another chance to configure MediaCodec for the rest of the session. Caching that one
+     * frame here - reset each time the format (re)announces, captured on the very next frame -
+     * lets a late-mounting listener catch up, the same way [snapshot] already lets it catch up
+     * on the codec/width/height metadata. */
+    @Volatile
+    private var cachedFirstFrame: ByteArray? = null
+
+    @Volatile
+    private var cachedFirstFramePtsUs: Long = 0L
+
     fun addListener(listener: Listener) {
         listeners.add(listener)
     }
@@ -123,6 +142,13 @@ class AirPlayNsdBridge(context: Context) {
     fun removeListener(listener: Listener) {
         listeners.remove(listener)
     }
+
+    /** Paired with [snapshot] for a newly-mounted [AirPlayMirrorSurface]: the metadata alone
+     * (already carried on [SessionSnapshot]) isn't enough to configure a decoder, since
+     * `MediaCodec` also needs an actual sample containing the SPS/PPS NAL units - see
+     * [cachedFirstFrame]'s doc for why this is otherwise unrecoverable mid-session. */
+    fun cachedFirstFrameOrNull(): Pair<ByteArray, Long>? =
+        cachedFirstFrame?.let { it to cachedFirstFramePtsUs }
 
     fun snapshot(): SessionSnapshot {
         val liveBitrate = synchronized(stateLock) {
@@ -229,17 +255,32 @@ class AirPlayNsdBridge(context: Context) {
         videoCodec = codec
         videoWidth = width
         videoHeight = height
+        cachedFirstFrame = null
         listeners.forEach { it.onVideoFormatChanged(codec, width, height) }
     }
 
     fun onVideoFrame(data: ByteArray, ptsUs: Long) {
         recordFrameSize(data.size)
+        if (cachedFirstFrame == null) {
+            cachedFirstFrame = data
+            cachedFirstFramePtsUs = ptsUs
+        }
         listeners.forEach { it.onVideoFrame(data, ptsUs) }
     }
 
     fun onVideoSessionEnded() {
         clearSessionState(clearClient = true)
         listeners.forEach { it.onVideoSessionEnded() }
+    }
+
+    /** Called from dnssd_android.c's... no - from airplay_jni.c's audio_process(), already
+     * filtered there to AAC-ELD (`ct` 8) only, the only compression type screen mirroring
+     * actually negotiates in practice. Unlike video's SPS/PPS, AAC-ELD's codec-specific-data is a
+     * fixed constant rather than something the stream announces once, so there's no equivalent
+     * "missed the one-time config packet" hazard here - no caching/priming needed for a
+     * late-mounting listener. */
+    fun onAudioFrame(data: ByteArray, ptsUs: Long) {
+        listeners.forEach { it.onAudioFrame(data, ptsUs) }
     }
 
     fun onPinRequested(pin: String) {
@@ -253,6 +294,7 @@ class AirPlayNsdBridge(context: Context) {
         videoWidth = 0
         videoHeight = 0
         lastFrameAtMs = 0L
+        cachedFirstFrame = null
         synchronized(stateLock) {
             bitrateWindow.clear()
             bitrateMbps = 0.0

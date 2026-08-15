@@ -72,4 +72,30 @@ object SmbClient {
         val context = buildContext(share)
         return SmbFile(url, context).inputStream
     }
+
+    /** Opens a writable stream for a new file at [path] (relative to the share root, e.g.
+     * `"MirrorDash Recordings/2026-08-15_edge-bz.ts"`), creating any missing parent folders
+     * first - used for recording IPTV streams straight to the NAS. Overwrites if the file
+     * already exists, same as [java.io.FileOutputStream]'s default. */
+    @Throws(Exception::class)
+    fun openOutputStream(share: SmbShare, path: String): java.io.OutputStream {
+        val context = buildContext(share)
+        val segments = SmbPaths.segments(path)
+        require(segments.isNotEmpty()) { "Path has no file name" }
+        val dirPath = segments.dropLast(1).joinToString("/")
+        if (dirPath.isNotBlank()) {
+            val dir = SmbFile(share.rootUrl() + dirPath + "/", context)
+            if (!dir.exists()) dir.mkdirs()
+        }
+        return SmbFile(share.rootUrl() + segments.joinToString("/"), context).outputStream
+    }
+
+    /** Bytes free on the share's filesystem - queried on the share root, since free space is a
+     * property of the whole volume, not any one file/folder within it. Used to guard against
+     * writing a NAS out of space the same way local writes are guarded via `StatFs`. */
+    @Throws(Exception::class)
+    fun freeSpaceBytes(share: SmbShare): Long {
+        val context = buildContext(share)
+        return SmbFile(share.rootUrl(), context).diskFreeSpace
+    }
 }

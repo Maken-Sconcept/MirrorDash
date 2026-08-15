@@ -55,6 +55,12 @@ class SmbRepository(context: Context) {
     @Throws(Exception::class)
     fun openStream(share: SmbShare, url: String): InputStream = SmbClient.openStream(share, url)
 
+    @Throws(Exception::class)
+    fun openOutputStream(share: SmbShare, path: String): java.io.OutputStream = SmbClient.openOutputStream(share, path)
+
+    @Throws(Exception::class)
+    fun freeSpaceBytes(share: SmbShare): Long = SmbClient.freeSpaceBytes(share)
+
     private fun <T> runCatching(share: SmbShare, block: () -> T): SmbResult<T> {
         if (!isNetworkAvailable()) {
             return SmbResult.Failure(

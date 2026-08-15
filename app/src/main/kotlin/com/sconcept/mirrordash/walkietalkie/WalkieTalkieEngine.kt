@@ -10,11 +10,34 @@ import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkieDiscoveredPeer
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+
+/** Just the fields the NSD-registration/receive-socket collector below actually reads, so
+ * [kotlinx.coroutines.flow.distinctUntilChanged] can tell "irrelevant settings write elsewhere in
+ * the app" apart from "something walkie-talkie actually cares about changed". */
+private data class RelevantWalkieSettings(
+    val deviceName: String,
+    val port: Int,
+    val enabled: Boolean,
+    val chimeEnabled: Boolean,
+    val chimeToneKey: String,
+) {
+    constructor(settings: MirrorDashSettings) : this(
+        deviceName = settings.deviceName,
+        port = settings.walkieTalkiePort,
+        enabled = settings.walkieTalkieEnabled,
+        chimeEnabled = settings.walkieTalkieIncomingChimeEnabled,
+        chimeToneKey = settings.walkieTalkieIncomingChime,
+    )
+}
 
 data class WalkieTalkieUiState(
     val enabled: Boolean = false,
@@ -25,6 +48,9 @@ data class WalkieTalkieUiState(
     val target: String = WALKIE_TALKIE_TARGET_ALL,
     val isTransmitting: Boolean = false,
     val lastIncomingFrom: String? = null,
+    val activeIncomingPeerIp: String? = null,
+    val activeIncomingPeerName: String? = null,
+    val activeTransmitTarget: String? = null,
     val overlayEnabled: Boolean = false,
     val pttAnchorX: Float = 0.92f,
     val pttAnchorY: Float = 0.82f,
@@ -46,7 +72,11 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
 
     private val _isTransmitting = MutableStateFlow(false)
     private val _lastIncomingFrom = MutableStateFlow<String?>(null)
+    private val _activeIncomingPeerIp = MutableStateFlow<String?>(null)
+    private val _activeIncomingPeerName = MutableStateFlow<String?>(null)
+    private val _activeTransmitTarget = MutableStateFlow<String?>(null)
     private val _discoveredPeers = MutableStateFlow<List<WalkieTalkieDiscoveredPeer>>(emptyList())
+    private var activeIncomingClearJob: Job? = null
 
     private var latestSettings = MirrorDashSettings()
 
@@ -60,7 +90,16 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
     }
 
     init {
-        audio.onIncomingFrom = { sender -> _lastIncomingFrom.value = sender }
+        audio.onIncomingFrom = { senderName, senderIp ->
+            _lastIncomingFrom.value = senderName
+            _activeIncomingPeerName.value = senderName
+            _activeIncomingPeerIp.value = senderIp.ifBlank { null }
+            activeIncomingClearJob?.cancel()
+            activeIncomingClearJob = scope.launch {
+                delay(280)
+                clearActiveIncomingPeer()
+            }
+        }
         discovery.addListener(discoveryListener)
 
         scope.launch {
@@ -68,8 +107,19 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
                 settingsRepository.settings,
                 _isTransmitting,
                 _lastIncomingFrom,
+                _activeIncomingPeerIp,
+                _activeIncomingPeerName,
+                _activeTransmitTarget,
                 _discoveredPeers,
-            ) { settings, transmitting, lastIncoming, discovered ->
+            ) { values ->
+                val settings = values[0] as MirrorDashSettings
+                val transmitting = values[1] as Boolean
+                val lastIncoming = values[2] as String?
+                val activeIncomingIp = values[3] as String?
+                val activeIncomingName = values[4] as String?
+                val activeTransmitTarget = values[5] as String?
+                @Suppress("UNCHECKED_CAST")
+                val discovered = values[6] as List<WalkieTalkieDiscoveredPeer>
                 latestSettings = settings
                 WalkieTalkieUiState(
                     enabled = settings.walkieTalkieEnabled,
@@ -80,6 +130,9 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
                     target = settings.walkieTalkieTarget,
                     isTransmitting = transmitting,
                     lastIncomingFrom = lastIncoming,
+                    activeIncomingPeerIp = activeIncomingIp,
+                    activeIncomingPeerName = activeIncomingName,
+                    activeTransmitTarget = activeTransmitTarget,
                     overlayEnabled = settings.walkieTalkieOverlayEnabled,
                     pttAnchorX = settings.walkieTalkiePttAnchorX,
                     pttAnchorY = settings.walkieTalkiePttAnchorY,
@@ -88,27 +141,39 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
         }
 
         scope.launch {
-            settingsRepository.settings.collect { settings ->
-                discovery.updateAdvertisedInfo(
-                    settings.deviceName.ifBlank { DeviceNameHelper.defaultDeviceName(appContext) },
-                    settings.walkieTalkiePort,
-                )
-                discovery.setActive(settings.walkieTalkieEnabled)
-                if (settings.walkieTalkieEnabled) {
-                    audio.startReceiving(settings.walkieTalkiePort)
-                } else {
-                    audio.stopReceiving()
-                    audio.stopTransmitting()
-                    _isTransmitting.value = false
+            // Scoped to only what this block actually reads, with distinctUntilChanged - without
+            // it, this ran on *every* settings write app-wide (volume, last channel, anything),
+            // not just walkie-talkie ones, each one doing a full NSD unregister+register cycle on
+            // Main.immediate. On this hardware a burst of those (e.g. several unrelated settings
+            // writes landing close together) was enough to visibly freeze the screen - confirmed
+            // live via logcat showing rapid NsdManager register/unregister churn during a freeze.
+            settingsRepository.settings
+                .map { RelevantWalkieSettings(it) }
+                .distinctUntilChanged()
+                .collect { settings ->
+                    discovery.updateAdvertisedInfo(
+                        settings.deviceName.ifBlank { DeviceNameHelper.defaultDeviceName(appContext) },
+                        settings.port,
+                    )
+                    audio.updateIncomingChime(enabled = settings.chimeEnabled, toneKey = settings.chimeToneKey)
+                    discovery.setActive(settings.enabled)
+                    if (settings.enabled) {
+                        audio.startReceiving(settings.port)
+                    } else {
+                        audio.stopReceiving()
+                        audio.stopTransmitting()
+                        _isTransmitting.value = false
+                        _activeTransmitTarget.value = null
+                        clearActiveIncomingPeer()
+                    }
                 }
-            }
         }
     }
 
-    fun pressToTalk() {
+    fun pressToTalk(target: String = _uiState.value.target) {
         val state = _uiState.value
         if (!state.enabled || !state.hasMicPermission) return
-        val targetIps = resolveTargetIps(state)
+        val targetIps = resolveTargetIps(state.peers, target)
         if (targetIps.isEmpty()) return
 
         audio.startTransmitting(
@@ -118,19 +183,32 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
             micBoostPercent = latestSettings.walkieTalkieMicBoostPercent,
         )
         _isTransmitting.value = true
+        _activeTransmitTarget.value = target
     }
 
     fun releaseToTalk() {
         audio.stopTransmitting()
         _isTransmitting.value = false
+        _activeTransmitTarget.value = null
     }
 
-    private fun resolveTargetIps(state: WalkieTalkieUiState): List<String> {
-        return if (state.target == WALKIE_TALKIE_TARGET_ALL) {
-            state.peers.map { it.ip }
+    fun previewIncomingChime(toneKey: String) {
+        audio.previewIncomingChime(toneKey)
+    }
+
+    private fun resolveTargetIps(peers: List<WalkieTalkiePeer>, target: String): List<String> {
+        return if (target == WALKIE_TALKIE_TARGET_ALL) {
+            peers.map { it.ip }
         } else {
-            state.peers.filter { it.ip == state.target }.map { it.ip }
+            peers.filter { it.ip == target }.map { it.ip }
         }
+    }
+
+    private fun clearActiveIncomingPeer() {
+        activeIncomingClearJob?.cancel()
+        activeIncomingClearJob = null
+        _activeIncomingPeerIp.value = null
+        _activeIncomingPeerName.value = null
     }
 
     companion object {
