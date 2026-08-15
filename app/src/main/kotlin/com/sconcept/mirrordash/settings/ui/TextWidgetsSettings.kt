@@ -53,7 +53,11 @@ import com.sconcept.mirrordash.ui.theme.MDTheme
  * the same control surface.
  */
 @Composable
-fun TextWidgetsSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) {
+fun TextWidgetsSettingsContent(
+    uiState: SettingsUiState,
+    viewModel: SettingsViewModel,
+    showDragHint: Boolean = true,
+) {
     val widgets = uiState.settings.customTextWidgets
     var editingId by remember { mutableStateOf<String?>(null) }
     val editing = widgets.firstOrNull { it.id == editingId }
@@ -71,12 +75,14 @@ fun TextWidgetsSettingsContent(uiState: SettingsUiState, viewModel: SettingsView
         return
     }
 
-    Text(
-        "Long-press and drag any text on the Clock page to move it, same as the clock and weather.",
-        style = MDTheme.type.settingSubtitle,
-        color = MDTheme.colors.textSecondary,
-    )
-    Spacer(Modifier.height(20.dp))
+    if (showDragHint) {
+        Text(
+            "Long-press and drag any text on the Clock page to move it.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(20.dp))
+    }
 
     if (widgets.isEmpty()) {
         Text(

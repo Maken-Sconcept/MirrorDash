@@ -20,7 +20,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.sconcept.mirrordash.iptv.DEFAULT_PARENTAL_CONTROL_PIN
 import com.sconcept.mirrordash.iptv.IptvMac
+import com.sconcept.mirrordash.iptv.MAX_PARENTAL_CONTROL_PIN_LENGTH
+import com.sconcept.mirrordash.iptv.ParentalControlMode
 import com.sconcept.mirrordash.iptv.RecordingDestinationMode
 import com.sconcept.mirrordash.settings.SettingsUiState
 import com.sconcept.mirrordash.settings.SettingsViewModel
@@ -129,6 +132,59 @@ fun IptvSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) 
             checked = settings.iptvOpenMuted,
             onCheckedChange = viewModel::setIptvOpenMuted,
             colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+        )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Parental control") {
+        Text(
+            "Gates whatever this portal itself flags as adult content - the portal never checks " +
+                "any PIN on its own, so this is enforced entirely here, in the app.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        val currentMode = ParentalControlMode.fromStorageKey(settings.parentalControlMode)
+        listOf(
+            ParentalControlMode.DISABLED to "Disabled (open)",
+            ParentalControlMode.ONCE_PER_SESSION to "Ask once per session",
+            ParentalControlMode.EVERY_REJOIN to "Ask every time the tab is left and rejoined",
+        ).forEach { (mode, label) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            ) {
+                RadioButton(
+                    selected = currentMode == mode,
+                    onClick = { viewModel.setParentalControlMode(mode) },
+                    colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
+                )
+                Text(label, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("PIN", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            BufferedTextField(
+                persistedValue = settings.parentalControlPin,
+                onValueChange = viewModel::setParentalControlPin,
+                placeholder = { Text(DEFAULT_PARENTAL_CONTROL_PIN) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(12.dp))
+            TextButton(onClick = viewModel::resetParentalControlPin) {
+                Text("Reset to default", color = MDTheme.colors.accent)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Up to $MAX_PARENTAL_CONTROL_PIN_LENGTH digits, default $DEFAULT_PARENTAL_CONTROL_PIN.",
+            style = MDTheme.type.caption,
+            color = MDTheme.colors.textTertiary,
         )
     }
 

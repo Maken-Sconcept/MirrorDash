@@ -22,20 +22,35 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AirplanemodeActive
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 
 /**
  * Swipe-down-from-top notification panel (brief section 27-28). Built on
@@ -51,14 +66,47 @@ fun NotificationsScreen(
     onDismiss: (MirrorDashNotification) -> Unit,
     onClearAll: () -> Unit,
     onGrantAccess: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val timeText by rememberClockTicker()
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MDTheme.colors.backgroundElevated)
             .padding(top = 28.dp, start = 40.dp, end = 40.dp, bottom = 24.dp),
     ) {
+        // Landscape-width layout throughout, matching every other panel here (App Drawer,
+        // Settings): time/date and the gear sit side by side rather than stacked, and the four
+        // toggles below span the row evenly instead of the narrow single-column stack a phone's
+        // status bar dropdown uses.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column {
+                Text(timeText, style = MDTheme.type.sectionTitle, color = MDTheme.colors.textPrimary)
+                Text(todayLabel(), style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+            }
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(MDTheme.colors.surface)
+                    .clickable(onClick = onOpenSettings)
+                    .padding(12.dp),
+            ) {
+                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = MDTheme.colors.textSecondary, modifier = Modifier.size(22.dp))
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        QuickSettingsRow()
+
+        Spacer(Modifier.height(24.dp))
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -177,6 +225,95 @@ private fun NotificationRow(notification: MirrorDashNotification, onOpen: () -> 
         }
     }
 }
+
+/** Wi-Fi / Bluetooth / Do Not Disturb / Airplane mode, evenly spaced across the panel's full
+ * width - see [QuickSettingsController] for what each tap actually does. Re-reads state after
+ * every tap and once on first show, since a prior session could have left Wi-Fi/Bluetooth/DND/
+ * Airplane in a different state than whatever this composable last knew about - plus a slow
+ * background poll while the panel is open, since e.g. Wi-Fi actually powering down after
+ * `setWifiEnabled(false)` returns isn't instant, and re-reading state immediately after the call
+ * can still observe the old value for a moment. */
+@Composable
+private fun QuickSettingsRow() {
+    val context = LocalContext.current
+    var states by remember { mutableStateOf(QuickSettingsController.currentStates(context)) }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                states = QuickSettingsController.currentStates(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1500)
+            states = QuickSettingsController.currentStates(context)
+        }
+    }
+
+    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+        states.forEach { state ->
+            QuickSettingTile(
+                state = state,
+                onClick = {
+                    val toggled = QuickSettingsController.toggle(context, state.kind, !state.enabled)
+                    if (!toggled) {
+                        runCatching { context.startActivity(QuickSettingsController.settingsIntentFor(state.kind)) }
+                    }
+                    states = QuickSettingsController.currentStates(context)
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickSettingTile(state: QuickSettingState, onClick: () -> Unit) {
+    val (icon, label) = when (state.kind) {
+        QuickSettingKind.WIFI -> Icons.Filled.Wifi to "Wi-Fi"
+        QuickSettingKind.BLUETOOTH -> Icons.Filled.Bluetooth to "Bluetooth"
+        QuickSettingKind.DND -> Icons.Filled.DoNotDisturbOn to "Do Not Disturb"
+        QuickSettingKind.AIRPLANE -> Icons.Filled.AirplanemodeActive to "Airplane mode"
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(if (state.enabled) MDTheme.colors.accent else MDTheme.colors.surface)
+                .clickable(enabled = state.available, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = if (state.enabled) MDTheme.colors.onAccent else MDTheme.colors.textSecondary,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(label, style = MDTheme.type.caption, color = MDTheme.colors.textSecondary)
+    }
+}
+
+@Composable
+private fun rememberClockTicker() = produceState(initialValue = formatTime()) {
+    while (true) {
+        value = formatTime()
+        val now = java.util.Calendar.getInstance()
+        val msToNextMinute = 60_000L - (now.get(java.util.Calendar.SECOND) * 1000L + now.get(java.util.Calendar.MILLISECOND))
+        kotlinx.coroutines.delay(msToNextMinute.coerceAtLeast(1000L))
+    }
+}
+
+private fun formatTime(): String = SimpleDateFormat("H:mm", Locale.getDefault()).format(Date())
+
+private fun todayLabel(): String = SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date())
 
 @Composable
 private fun DrawableThumbnail(drawable: Drawable, sizeDp: Int) {

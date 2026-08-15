@@ -105,13 +105,13 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
 
     SettingGroup(title = "Position") {
         Text(
-            "Long-press and drag the clock or weather on the Clock page to move them.",
+            "Long-press and drag the clock or any widget on the Clock page to move it.",
             style = MDTheme.type.settingSubtitle,
             color = MDTheme.colors.textSecondary,
         )
         Spacer(Modifier.height(10.dp))
         androidx.compose.material3.TextButton(onClick = viewModel::resetClockLayout) {
-            Text("Reset position", color = MDTheme.colors.accent)
+            Text("Reset clock position", color = MDTheme.colors.accent)
         }
     }
 }

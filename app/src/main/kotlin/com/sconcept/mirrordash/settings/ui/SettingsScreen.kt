@@ -27,15 +27,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.NightlightRound
 import androidx.compose.material.icons.filled.Photo
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Podcasts
-import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -53,14 +53,14 @@ import com.sconcept.mirrordash.settings.SettingsViewModel
 import com.sconcept.mirrordash.ui.theme.MDTheme
 
 private enum class SettingsSection(val title: String, val subtitle: String) {
-    APPEARANCE("Appearance", "Clock font size, color, and background"),
+    CLOCK("Clock", "Time, background, and draggable widgets"),
     BRIGHTNESS("Brightness", "Backlight level, extra dim layer, and failsafes"),
-    TEXT_WIDGETS("Text Widgets", "Add and style custom text on the Clock page"),
-    WEATHER("Weather", "Location, units, and refresh"),
+    NIGHT_CLOCK("Night Clock", "The hidden dark clock tab's own dimmer brightness"),
     PHOTORAMA("Photorama", "NAS connection and slideshow folder"),
     WALKIE_TALKIE("Walkie-Talkie", "Peers, target, and floating button"),
     AIRPLAY("AirPlay", "Receiver name, pairing, and mirror quality"),
     BROWSER("Browser", "Optional quick web tab inside MirrorDash"),
+    JELLYFIN("Jellyfin", "Media server address and playback-focused web tab"),
     HOME_ASSISTANT("Home Assistant", "Dashboard address and the tab it lives on"),
     IPTV("IPTV", "Portal address, MAC address, and the tab it lives on"),
     LAUNCHER("Launcher", "Default Home app and notification access"),
@@ -103,14 +103,14 @@ fun SettingsScreen(
         ) { section ->
             when (section) {
                 null -> SettingsList(onSelect = { selectedSection = it })
-                SettingsSection.APPEARANCE -> SectionScaffold(section.title) { AppearanceSettingsContent(uiState, viewModel) }
+                SettingsSection.CLOCK -> SectionScaffold(section.title) { ClockSettingsContent(uiState, viewModel) }
                 SettingsSection.BRIGHTNESS -> SectionScaffold(section.title) { BrightnessSettingsContent(uiState, viewModel, onRequestWriteSettingsAccess) }
-                SettingsSection.TEXT_WIDGETS -> SectionScaffold(section.title) { TextWidgetsSettingsContent(uiState, viewModel) }
-                SettingsSection.WEATHER -> SectionScaffold(section.title) { WeatherSettingsContent(uiState, viewModel) }
+                SettingsSection.NIGHT_CLOCK -> SectionScaffold(section.title) { NightClockSettingsContent(uiState, viewModel) }
                 SettingsSection.PHOTORAMA -> SectionScaffold(section.title) { PhotoramaSettingsContent(uiState, viewModel) }
                 SettingsSection.WALKIE_TALKIE -> SectionScaffold(section.title) { WalkieTalkieSettingsContent(uiState, viewModel) }
                 SettingsSection.AIRPLAY -> SectionScaffold(section.title) { AirPlaySettingsContent(uiState, viewModel) }
                 SettingsSection.BROWSER -> SectionScaffold(section.title) { BrowserSettingsContent(uiState, viewModel) }
+                SettingsSection.JELLYFIN -> SectionScaffold(section.title) { JellyfinSettingsContent(uiState, viewModel) }
                 SettingsSection.HOME_ASSISTANT -> SectionScaffold(section.title) { HomeAssistantSettingsContent(uiState, viewModel) }
                 SettingsSection.IPTV -> SectionScaffold(section.title) { IptvSettingsContent(uiState, viewModel) }
                 SettingsSection.LAUNCHER -> SectionScaffold(section.title) {
@@ -176,14 +176,14 @@ private fun SettingsRow(section: SettingsSection, onClick: () -> Unit) {
 }
 
 private fun sectionIcon(section: SettingsSection) = when (section) {
-    SettingsSection.APPEARANCE -> Icons.Filled.Palette
+    SettingsSection.CLOCK -> Icons.Filled.AccessTime
     SettingsSection.BRIGHTNESS -> Icons.Filled.Brightness6
-    SettingsSection.TEXT_WIDGETS -> Icons.Filled.TextFields
-    SettingsSection.WEATHER -> Icons.Filled.Cloud
+    SettingsSection.NIGHT_CLOCK -> Icons.Filled.NightlightRound
     SettingsSection.PHOTORAMA -> Icons.Filled.Photo
     SettingsSection.WALKIE_TALKIE -> Icons.Filled.Podcasts
     SettingsSection.AIRPLAY -> Icons.Filled.Cast
     SettingsSection.BROWSER -> Icons.Filled.Language
+    SettingsSection.JELLYFIN -> Icons.Filled.Movie
     SettingsSection.HOME_ASSISTANT -> Icons.Filled.Home
     SettingsSection.IPTV -> Icons.Filled.LiveTv
     SettingsSection.LAUNCHER -> Icons.Filled.Info

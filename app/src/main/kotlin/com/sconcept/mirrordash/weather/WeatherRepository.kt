@@ -8,6 +8,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -19,7 +20,8 @@ class WeatherRepository {
     companion object {
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 10_000
-        private const val FORECAST_DAYS = 4
+        private const val FORECAST_DAYS = 6
+        private const val FORECAST_HOURS = 24
     }
 
     fun resolveLocation(input: String): Result<WeatherLocation> = runCatching {
@@ -59,6 +61,8 @@ class WeatherRepository {
             append("latitude=${location.latitude}")
             append("&longitude=${location.longitude}")
             append("&current=temperature_2m,weather_code,is_day")
+            append("&hourly=temperature_2m,weather_code,is_day")
+            append("&forecast_hours=$FORECAST_HOURS")
             append("&daily=weather_code,temperature_2m_max,temperature_2m_min")
             append("&forecast_days=$FORECAST_DAYS")
             append("&timezone=auto")
@@ -74,39 +78,11 @@ class WeatherRepository {
             location = location,
             currentTemperature = current.getDouble("temperature_2m"),
             weatherCode = weatherCode,
-            condition = mapWeatherCode(weatherCode),
+            condition = weatherConditionForCode(weatherCode),
             isDay = isDay,
+            hourlyForecast = parseHourlyForecast(response.getJSONObject("hourly")),
             forecast = parseForecast(daily),
         )
-    }
-
-    fun mapWeatherCode(code: Int): WeatherCondition = when (code) {
-        0 -> WeatherCondition.CLEAR
-        1, 2, 3 -> WeatherCondition.CLOUDY
-        45, 48 -> WeatherCondition.FOG
-        51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82 -> WeatherCondition.RAIN
-        71, 73, 75, 77, 85, 86 -> WeatherCondition.SNOW
-        95, 96, 99 -> WeatherCondition.THUNDER
-        else -> WeatherCondition.CLOUDY
-    }
-
-    fun conditionLabel(code: Int, isDay: Boolean): String = when (code) {
-        0 -> if (isDay) "Clear" else "Clear night"
-        1 -> "Mainly clear"
-        2 -> "Partly cloudy"
-        3 -> "Overcast"
-        45, 48 -> "Fog"
-        51, 53, 55 -> "Drizzle"
-        56, 57 -> "Freezing drizzle"
-        61, 63, 65 -> "Rain"
-        66, 67 -> "Freezing rain"
-        71, 73, 75 -> "Snow"
-        77 -> "Snow grains"
-        80, 81, 82 -> "Showers"
-        85, 86 -> "Snow showers"
-        95 -> "Thunderstorm"
-        96, 99 -> "Storm with hail"
-        else -> "Weather"
     }
 
     private fun parseForecast(daily: JSONObject): List<WeatherDayForecast> {
@@ -123,9 +99,32 @@ class WeatherRepository {
                 WeatherDayForecast(
                     dayLabel = formatter.format(date),
                     weatherCode = code,
-                    condition = mapWeatherCode(code),
+                    condition = weatherConditionForCode(code),
                     maxTemperature = maxTemps.getDouble(index),
                     minTemperature = minTemps.getDouble(index),
+                ),
+            )
+        }
+        return items
+    }
+
+    private fun parseHourlyForecast(hourly: JSONObject): List<WeatherHourForecast> {
+        val times = hourly.getJSONArray("time")
+        val codes = hourly.getJSONArray("weather_code")
+        val temps = hourly.getJSONArray("temperature_2m")
+        val isDayValues = hourly.getJSONArray("is_day")
+        val formatter = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+        val items = ArrayList<WeatherHourForecast>()
+        for (index in 0 until minOf(times.length(), FORECAST_HOURS)) {
+            val dateTime = LocalDateTime.parse(times.getString(index))
+            val code = codes.getInt(index)
+            items.add(
+                WeatherHourForecast(
+                    timeLabel = formatter.format(dateTime),
+                    weatherCode = code,
+                    condition = weatherConditionForCode(code),
+                    temperature = temps.getDouble(index),
+                    isDay = isDayValues.optInt(index, 1) == 1,
                 ),
             )
         }

@@ -45,6 +45,8 @@ import com.sconcept.mirrordash.brightness.BrightnessMath
 import com.sconcept.mirrordash.clock.ClockBackground
 import com.sconcept.mirrordash.clock.ClockScreen
 import com.sconcept.mirrordash.clock.ClockViewModel
+import com.sconcept.mirrordash.clock.NightClockScreen
+import com.sconcept.mirrordash.clock.OverlayAnchor
 import com.sconcept.mirrordash.homeassistant.HomeAssistantScreen
 import com.sconcept.mirrordash.iptv.IptvScreen
 import com.sconcept.mirrordash.iptv.IptvViewModel
@@ -70,6 +72,8 @@ import com.sconcept.mirrordash.walkietalkie.PttButton
 import com.sconcept.mirrordash.weather.WeatherViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -92,6 +96,11 @@ class MirrorDashActivity : ComponentActivity() {
     private val iptvViewModel: IptvViewModel by viewModels {
         IptvViewModel.factory(application, container.settingsRepository, container.iptvSessionCoordinator)
     }
+
+    // Bridges the Compose-side "is the hidden Night Clock tab currently showing" signal (from
+    // LauncherGestureHost's onNightClockActiveChanged) into the plain lifecycleScope brightness
+    // collectors below, which run outside Compose and read settingsRepository.settings directly.
+    private val isNightClockActive = MutableStateFlow(false)
 
     private val requestMicPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val requestNotificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -149,18 +158,19 @@ class MirrorDashActivity : ComponentActivity() {
         // tracks every emission live as the slider drags. The root layer shells out (several
         // su spawns per candidate path/syntax), which is slow enough that applying it on every
         // intermediate value during a drag falls badly behind - debounced so only the value the
-        // user actually settles on gets written there.
+        // user actually settles on gets written there. Both switch to the Night Clock tab's own,
+        // separately-controlled level while that hidden tab is showing (see isNightClockActive).
+        val effectiveBrightnessLevel255 = combine(container.settingsRepository.settings, isNightClockActive) { settings, nightActive ->
+            if (nightActive) settings.nightClockBrightnessLevel255 else settings.brightnessLevel255
+        }.distinctUntilChanged()
+
         lifecycleScope.launch {
-            container.settingsRepository.settings
-                .map { it.brightnessLevel255 }
-                .distinctUntilChanged()
+            effectiveBrightnessLevel255
                 .collect { level -> BacklightController.applyWindowBrightness(this@MirrorDashActivity, level) }
         }
 
         lifecycleScope.launch {
-            container.settingsRepository.settings
-                .map { it.brightnessLevel255 }
-                .distinctUntilChanged()
+            effectiveBrightnessLevel255
                 .debounce(250)
                 .collect { level -> BacklightController.applyRootLayer(this@MirrorDashActivity, level) }
         }
@@ -192,6 +202,7 @@ class MirrorDashActivity : ComponentActivity() {
                     onRequestBrightnessFailsafe = {
                         BrightnessFailsafe.trigger(this@MirrorDashActivity, lifecycleScope, container.settingsRepository)
                     },
+                    onNightClockActiveChanged = { active -> isNightClockActive.value = active },
                 )
             }
         }
@@ -251,6 +262,7 @@ private fun MirrorDashRoot(
     onRequestWriteSettingsAccess: () -> Unit,
     onRequestOverlayAccess: () -> Unit,
     onRequestBrightnessFailsafe: () -> Unit,
+    onNightClockActiveChanged: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val initialPageIndex by launcherViewModel.initialPageIndex.collectAsStateWithLifecycle()
@@ -349,7 +361,19 @@ private fun MirrorDashRoot(
                 )
             },
             onFailsafeHoldTriggered = onRequestBrightnessFailsafe,
+            onNightClockActiveChanged = onNightClockActiveChanged,
             requestedPage = requestedPage,
+            nightClockContent = {
+                val nightWeather by weatherViewModel.uiState.collectAsStateWithLifecycle()
+                NightClockScreen(
+                    textDimPercent = settingsUiState.settings.nightClockTextDimPercent,
+                    weather = nightWeather,
+                    clockAnchor = OverlayAnchor(settingsUiState.settings.nightClockAnchorX, settingsUiState.settings.nightClockAnchorY),
+                    weatherAnchor = OverlayAnchor(settingsUiState.settings.nightClockWeatherAnchorX, settingsUiState.settings.nightClockWeatherAnchorY),
+                    onClockAnchorChange = clockViewModel::setNightClockAnchor,
+                    onWeatherAnchorChange = clockViewModel::setNightClockWeatherAnchor,
+                )
+            },
             appDrawerContent = { _, close ->
                 val drawerState by appDrawerViewModel.uiState.collectAsStateWithLifecycle()
                 BackHandler(onBack = close)
@@ -375,6 +399,10 @@ private fun MirrorDashRoot(
                     onDismiss = { NotificationRepository.dismiss(it.key) },
                     onClearAll = NotificationRepository::clearAll,
                     onGrantAccess = onRequestNotificationAccess,
+                    onOpenSettings = {
+                        requestedPage = orderedPages.indexOf(LauncherPage.Settings).takeIf { it >= 0 }
+                        close()
+                    },
                 )
             },
         )
@@ -432,7 +460,7 @@ private fun LauncherPageContent(
                 weather = weather,
                 showEdgeAffordance = true,
                 onClockAnchorChange = clockViewModel::setClockAnchor,
-                onWeatherAnchorChange = clockViewModel::setWeatherAnchor,
+                onWeatherWidgetAnchorChange = clockViewModel::setWeatherWidgetAnchor,
                 photoramaBackground = photorama.currentPhoto,
                 airPlayStatus = airPlay.takeIf { it.showClockWidget },
                 onTextWidgetAnchorChange = clockViewModel::setTextWidgetAnchor,

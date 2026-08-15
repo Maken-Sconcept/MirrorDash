@@ -4,6 +4,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,12 +25,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
@@ -62,6 +66,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
@@ -171,6 +176,110 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                     )
                 }
             }
+        }
+
+        uiState.pendingPinChallenge?.let { _ ->
+            ParentalPinDialog(
+                pinError = uiState.pinError,
+                onSubmit = viewModel::submitParentalPin,
+                onDismiss = viewModel::dismissPinChallenge,
+            )
+        }
+    }
+}
+
+/** Numeric keypad, not a raw text field - this device is touch-driven (see this file's doc
+ * comment), but a PIN is still much faster to tap out on dedicated number keys than to hunt for
+ * digits on a full software keyboard. PIN length is 0-6 digits (see [MAX_PARENTAL_CONTROL_PIN_LENGTH])
+ * with no fixed target, so submission is an explicit checkmark tap rather than auto-submitting
+ * once some assumed length is reached.
+ */
+@Composable
+private fun ParentalPinDialog(pinError: Boolean, onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
+    var digits by remember { mutableStateOf("") }
+    // A wrong PIN clears the field so the next attempt starts clean, rather than piling more
+    // digits onto an already-wrong entry.
+    LaunchedEffect(pinError) { if (pinError) digits = "" }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.72f))
+            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }, onClick = onDismiss),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .clip(RoundedCornerShape(24.dp))
+                .background(MDTheme.colors.surfaceElevated)
+                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}
+                .padding(28.dp)
+                .width(300.dp),
+        ) {
+            Icon(Icons.Filled.Lock, contentDescription = null, tint = MDTheme.colors.accent, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.height(10.dp))
+            Text("Parental PIN", style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (pinError) "Incorrect PIN" else "This channel is age-restricted",
+                style = MDTheme.type.caption,
+                color = if (pinError) MDTheme.colors.danger else MDTheme.colors.textSecondary,
+            )
+            Spacer(Modifier.height(18.dp))
+            Text(
+                if (digits.isEmpty()) " " else "•".repeat(digits.length),
+                style = MDTheme.type.settingTitle,
+                color = MDTheme.colors.textPrimary,
+                letterSpacing = 6.sp,
+            )
+            Spacer(Modifier.height(18.dp))
+            val rows = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"))
+            rows.forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    row.forEach { digit ->
+                        PinKey(label = digit) {
+                            if (digits.length < MAX_PARENTAL_CONTROL_PIN_LENGTH) digits += digit
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                PinKey(icon = Icons.AutoMirrored.Filled.Backspace, contentDescription = "Delete digit") {
+                    digits = digits.dropLast(1)
+                }
+                PinKey(label = "0") {
+                    if (digits.length < MAX_PARENTAL_CONTROL_PIN_LENGTH) digits += "0"
+                }
+                PinKey(icon = Icons.Filled.Check, contentDescription = "Submit PIN", tint = MDTheme.colors.accent) {
+                    onSubmit(digits)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PinKey(
+    label: String? = null,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    contentDescription: String? = null,
+    tint: Color = Color.White,
+    onClick: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(52.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.1f))
+            .clickable(onClick = onClick),
+    ) {
+        if (label != null) {
+            Text(label, style = MDTheme.type.settingTitle, color = Color.White)
+        } else if (icon != null) {
+            Icon(icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size(20.dp))
         }
     }
 }

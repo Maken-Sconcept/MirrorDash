@@ -84,7 +84,7 @@ fun ClockScreen(
     weather: WeatherUiState,
     showEdgeAffordance: Boolean,
     onClockAnchorChange: (OverlayAnchor) -> Unit,
-    onWeatherAnchorChange: (OverlayAnchor) -> Unit,
+    onWeatherWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     modifier: Modifier = Modifier,
     photoramaBackground: File? = null,
     airPlayStatus: AirPlayUiState? = null,
@@ -112,7 +112,7 @@ fun ClockScreen(
                 weather = weather,
                 showEdgeAffordance = showEdgeAffordance,
                 onClockAnchorChange = onClockAnchorChange,
-                onWeatherAnchorChange = onWeatherAnchorChange,
+                onWeatherWidgetAnchorChange = onWeatherWidgetAnchorChange,
                 photoramaBackground = photoramaBackground,
                 airPlayStatus = airPlayStatus,
                 onTextWidgetAnchorChange = onTextWidgetAnchorChange,
@@ -131,7 +131,7 @@ private fun ClockContent(
     weather: WeatherUiState,
     showEdgeAffordance: Boolean,
     onClockAnchorChange: (OverlayAnchor) -> Unit,
-    onWeatherAnchorChange: (OverlayAnchor) -> Unit,
+    onWeatherWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     photoramaBackground: File?,
     airPlayStatus: AirPlayUiState?,
     onTextWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
@@ -175,15 +175,17 @@ private fun ClockContent(
             }
         }
 
-        DraggableAnchor(
-            anchor = appearance.weatherAnchor,
-            parentWidthPx = parentWidthPx,
-            parentHeightPx = parentHeightPx,
-            insetPx = insetPx,
-            onAnchorChange = onWeatherAnchorChange,
-        ) {
-            Box(Modifier.alpha(1f - contentDimAlpha)) {
-                WeatherLine(weather = weather, textColor = appearance.textColor)
+        appearance.weatherWidgets.forEach { widget ->
+            DraggableAnchor(
+                anchor = OverlayAnchor(widget.anchorX, widget.anchorY),
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                onAnchorChange = { onWeatherWidgetAnchorChange(widget.id, it) },
+            ) {
+                Box(Modifier.alpha(1f - contentDimAlpha)) {
+                    WeatherWidgetSurface(widget = widget, weather = weather, textColor = appearance.textColor)
+                }
             }
         }
 
@@ -261,9 +263,10 @@ private fun PhotoramaBackdrop(file: File?) {
 /** A long-press-then-drag positioned element, backed by a single [OverlayAnchor]. Shows a
  * quiet outline only while actively being dragged - otherwise indistinguishable from a
  * normal, fixed piece of UI, so dragging never feels like a discoverability puzzle nor a
- * constant visual distraction. */
+ * constant visual distraction. Internal (not private) so [NightClockScreen] can reuse the exact
+ * same drag mechanics instead of re-deriving them. */
 @Composable
-private fun DraggableAnchor(
+internal fun DraggableAnchor(
     anchor: OverlayAnchor,
     parentWidthPx: Int,
     parentHeightPx: Int,
@@ -501,7 +504,7 @@ private fun rememberTypewriterText(fullText: String) = produceState(initialValue
     }
 }
 
-private fun weatherGlyph(condition: WeatherCondition): String = when (condition) {
+internal fun weatherGlyph(condition: WeatherCondition): String = when (condition) {
     WeatherCondition.CLEAR -> "☀"
     WeatherCondition.CLOUDY -> "☁"
     WeatherCondition.FOG -> "〰"

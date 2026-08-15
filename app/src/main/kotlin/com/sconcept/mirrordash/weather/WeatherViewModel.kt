@@ -47,6 +47,7 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
     private var lastKnownCondition: WeatherCondition? = null
     private var lastKnownTemperature: Int? = null
     private var lastKnownLabel: String? = null
+    private var lastKnownSnapshot: WeatherSnapshot? = null
 
     init {
         viewModelScope.launch {
@@ -83,11 +84,13 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
                 lastKnownCondition = snapshot.condition
                 lastKnownTemperature = snapshot.currentTemperature.roundToInt()
                 lastKnownLabel = config.label.ifBlank { null }
+                lastKnownSnapshot = snapshot
                 _uiState.value = WeatherUiState(
                     isLoading = false,
                     temperature = lastKnownTemperature,
                     condition = lastKnownCondition,
                     locationLabel = lastKnownLabel,
+                    snapshot = snapshot,
                     isStale = false,
                     isConfigured = true,
                 )
@@ -98,6 +101,7 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
                     temperature = lastKnownTemperature,
                     condition = lastKnownCondition,
                     locationLabel = lastKnownLabel,
+                    snapshot = lastKnownSnapshot,
                     isStale = lastKnownTemperature != null,
                     errorMessage = error.message,
                     isConfigured = true,

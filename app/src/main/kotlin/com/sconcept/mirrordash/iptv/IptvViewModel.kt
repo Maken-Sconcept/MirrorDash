@@ -21,6 +21,13 @@ import kotlinx.coroutines.launch
 
 enum class IptvPageState { OFF, CONNECTING, READY, SLEEPING, ERROR }
 
+/** What triggered the parental-PIN dialog - so a correct PIN can carry out the action that was
+ * blocked, instead of just unlocking with nothing happening. */
+sealed class PinChallenge {
+    data class Channel(val channelId: String) : PinChallenge()
+    data class Genre(val genreId: String) : PinChallenge()
+}
+
 data class IptvUiState(
     val configured: Boolean = false,
     val pageState: IptvPageState = IptvPageState.OFF,
@@ -38,6 +45,9 @@ data class IptvUiState(
      * screen knows to re-fetch it from [IptvViewModel.currentPlayer] and rebind its PlayerView -
      * the player itself can't live in Compose state, it's a plain mutable Android object. */
     val playerEpoch: Int = 0,
+    /** Non-null shows the PIN dialog - see [PinChallenge] and [IptvViewModel.submitParentalPin]. */
+    val pendingPinChallenge: PinChallenge? = null,
+    val pinError: Boolean = false,
 ) {
     val currentChannel: StalkerChannel? get() = channels.getOrNull(currentChannelIndex)
 
@@ -86,6 +96,14 @@ class IptvViewModel(
     private var sleepTimeoutJob: Job? = null
     private var volumePersistJob: Job? = null
 
+    // Parental control - kept fresh from Settings without distinctUntilChanged (cheap field
+    // assignment, not a WalkieTalkieEngine-style expensive side effect, so no debounce needed).
+    // [adultUnlocked] itself is deliberately never persisted - it's a live-session flag, reset per
+    // [ParentalControlMode]'s rules in [enterSleep]/[tearDown], not a setting.
+    private var parentalMode: ParentalControlMode = ParentalControlMode.DISABLED
+    private var parentalPin: String = DEFAULT_PARENTAL_CONTROL_PIN
+    private var adultUnlocked = false
+
     /** Per-channel EPG, fetched lazily as the Guide's rows scroll into view (see
      * [com.sconcept.mirrordash.iptv.IptvGuideScreen]) rather than for the whole channel list up
      * front - with channel lists running into the thousands, prefetching everyone's schedule
@@ -115,6 +133,13 @@ class IptvViewModel(
                         if (isActive) beginConnect()
                     }
                 }
+        }
+
+        viewModelScope.launch {
+            settingsRepository.settings.collect { settings ->
+                parentalPin = settings.parentalControlPin
+                parentalMode = ParentalControlMode.fromStorageKey(settings.parentalControlMode)
+            }
         }
     }
 
@@ -161,7 +186,61 @@ class IptvViewModel(
     }
 
     fun selectGenre(genreId: String) {
+        val genre = _uiState.value.genres.firstOrNull { it.id == genreId }
+        if (genre?.censored == true && isLocked()) {
+            _uiState.update { it.copy(pendingPinChallenge = PinChallenge.Genre(genreId), pinError = false) }
+            return
+        }
+        applyGenreSelection(genreId)
+    }
+
+    private fun applyGenreSelection(genreId: String) {
         _uiState.update { it.copy(selectedGenreId = genreId) }
+        loadCensoredGenreChannelsIfNeeded(genreId)
+    }
+
+    /** [StalkerPortalClient.fetchChannels] silently excludes every censored genre's channels -
+     * see that function's doc comment - so the first time one is actually unlocked/opened, its
+     * channels have to be fetched separately and merged in. A no-op once already fetched (or for
+     * a non-censored genre, where [StalkerPortalClient.fetchChannels] already covered it). */
+    private fun loadCensoredGenreChannelsIfNeeded(genreId: String) {
+        val genre = _uiState.value.genres.firstOrNull { it.id == genreId } ?: return
+        if (!genre.censored) return
+        if (_uiState.value.channels.any { it.genreId == genreId }) return
+        val session = client ?: return
+        viewModelScope.launch {
+            session.fetchCensoredGenreChannels(genreId).onSuccess { fetched ->
+                _uiState.update { state -> state.copy(channels = state.channels + fetched) }
+            }
+        }
+    }
+
+    private fun isLocked(): Boolean = parentalMode != ParentalControlMode.DISABLED && !adultUnlocked
+
+    /** Checked against [parentalPin] - on a match, unlocks for the rest of this session (or until
+     * [ParentalControlMode.EVERY_REJOIN] re-locks it, see [enterSleep]) and carries out whatever
+     * selection the PIN prompt interrupted; on a mismatch, just flags [IptvUiState.pinError] so
+     * the dialog can show it without dropping the challenge. */
+    fun submitParentalPin(pin: String) {
+        if (pin != parentalPin) {
+            _uiState.update { it.copy(pinError = true) }
+            return
+        }
+        adultUnlocked = true
+        val challenge = _uiState.value.pendingPinChallenge
+        _uiState.update { it.copy(pendingPinChallenge = null, pinError = false) }
+        when (challenge) {
+            is PinChallenge.Channel -> {
+                val index = _uiState.value.channels.indexOfFirst { it.id == challenge.channelId }
+                if (index >= 0) applyChannelSelection(index)
+            }
+            is PinChallenge.Genre -> applyGenreSelection(challenge.genreId)
+            null -> Unit
+        }
+    }
+
+    fun dismissPinChallenge() {
+        _uiState.update { it.copy(pendingPinChallenge = null, pinError = false) }
     }
 
     fun togglePlayPause() {
@@ -215,6 +294,15 @@ class IptvViewModel(
     fun selectChannel(index: Int) {
         val channels = _uiState.value.channels
         if (index !in channels.indices) return
+        val channel = channels[index]
+        if (channel.censored && isLocked()) {
+            _uiState.update { it.copy(pendingPinChallenge = PinChallenge.Channel(channel.id), pinError = false) }
+            return
+        }
+        applyChannelSelection(index)
+    }
+
+    private fun applyChannelSelection(index: Int) {
         _uiState.update { it.copy(currentChannelIndex = index, showChannelList = false, showGuide = false) }
         playCurrentChannel()
     }
@@ -227,11 +315,19 @@ class IptvViewModel(
     fun nextChannel() = stepChannel(1)
     fun previousChannel() = stepChannel(-1)
 
+    /** Deliberately doesn't route through [applyChannelSelection] on the unlocked path - channel
+     * up/down from a remote shouldn't close an open channel list/Guide the way explicitly picking
+     * a channel from one does. */
     private fun stepChannel(delta: Int) {
         val channels = _uiState.value.channels
         if (channels.isEmpty()) return
         val current = _uiState.value.currentChannelIndex
         val next = ((if (current < 0) 0 else current + delta) % channels.size + channels.size) % channels.size
+        val channel = channels[next]
+        if (channel.censored && isLocked()) {
+            _uiState.update { it.copy(pendingPinChallenge = PinChallenge.Channel(channel.id), pinError = false) }
+            return
+        }
         _uiState.update { it.copy(currentChannelIndex = next) }
         playCurrentChannel()
     }
@@ -306,7 +402,12 @@ class IptvViewModel(
 
     private fun enterSleep() {
         releasePlayer()
-        _uiState.update { it.copy(pageState = IptvPageState.SLEEPING, isPlaying = false) }
+        // The stricter of the two enabled modes re-locks on every departure, not just a full
+        // teardown - "ask every time the tab is left and rejoined" means what it says.
+        if (parentalMode == ParentalControlMode.EVERY_REJOIN) adultUnlocked = false
+        _uiState.update {
+            it.copy(pageState = IptvPageState.SLEEPING, isPlaying = false, pendingPinChallenge = null, pinError = false)
+        }
         sleepTimeoutJob = viewModelScope.launch {
             val timeoutSeconds = settingsRepository.settings.first().iptvSleepTimeoutSeconds
             kotlinx.coroutines.delay(timeoutSeconds * 1000L)
@@ -323,6 +424,10 @@ class IptvViewModel(
         if (client != null) sessionCoordinator.release()
         client = null
         epgCache.clear()
+        // A full teardown always re-locks, regardless of mode - "once per session" means for as
+        // long as this session (this portal connection) is actually alive, and this is where it
+        // ends.
+        adultUnlocked = false
         _uiState.update {
             IptvUiState(configured = it.configured, pageState = IptvPageState.OFF, playerEpoch = it.playerEpoch, volume = it.volume)
         }

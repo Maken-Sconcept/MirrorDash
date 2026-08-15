@@ -65,6 +65,7 @@ class AirPlayVideoDecoder(
     }
 
     fun onVideoFormatChanged(codec: Int, width: Int, height: Int) {
+        Log.i(TAG, "onVideoFormatChanged codec=$codec ${width}x$height")
         postIfAlive {
             val next = PendingFormat(codec, max(width, 16), max(height, 16))
             if (pendingFormat != next) {
@@ -136,6 +137,18 @@ class AirPlayVideoDecoder(
     private fun drainFrames() {
         try {
             while (true) {
+                // Not ready to configure yet (surface/format still pending): leave whatever's
+                // queued in place rather than popping-and-discarding it below. That queue can
+                // hold the one-time SPS/PPS-bearing sample AirPlayMirrorSurface primes at mount
+                // (see AirPlayNsdBridge.cachedFirstFrame's doc) - discarding it here just because
+                // the surface raced a few milliseconds behind meant falling back to whatever the
+                // live stream happened to send next (an ordinary non-IDR frame, per the nalTypes
+                // this surfaced in testing), leaving the decoder stuck until the sender's next
+                // incidental keyframe - anywhere from a few seconds to, in one observed case, 47
+                // seconds. surfaceCreated()/onVideoFormatChanged() reschedule a drain once ready.
+                if (codec == null && (surface == null || pendingFormat == null)) {
+                    return
+                }
                 val frame = synchronized(queuedFrames) {
                     if (queuedFrames.isEmpty()) null else queuedFrames.removeFirst()
                 } ?: break
@@ -150,21 +163,41 @@ class AirPlayVideoDecoder(
         } finally {
             drainScheduled.set(false)
             synchronized(queuedFrames) {
-                if (queuedFrames.isNotEmpty()) {
+                if (queuedFrames.isNotEmpty() && (codec != null || (surface != null && pendingFormat != null))) {
                     scheduleDrain()
                 }
             }
         }
     }
 
+    private var lastSurfaceWaitLogAtMs = 0L
+    private var lastConfigWaitLogAtMs = 0L
+
     private fun ensureCodecConfigured(sample: ByteArray): Boolean {
         if (codec != null) {
             return true
         }
 
-        val targetSurface = surface ?: return false
-        val format = pendingFormat ?: return false
-        val codecConfig = parseCodecConfig(format.codec, sample) ?: return false
+        val targetSurface = surface
+        val format = pendingFormat
+        if (targetSurface == null || format == null) {
+            val now = System.currentTimeMillis()
+            if (now - lastSurfaceWaitLogAtMs > 1000) {
+                lastSurfaceWaitLogAtMs = now
+                Log.w(TAG, "ensureCodecConfigured: waiting - surface=${targetSurface != null} format=${format != null}")
+            }
+            return false
+        }
+        val codecConfig = parseCodecConfig(format.codec, sample)
+        if (codecConfig == null) {
+            val now = System.currentTimeMillis()
+            if (now - lastConfigWaitLogAtMs > 1000) {
+                lastConfigWaitLogAtMs = now
+                val nalTypes = findAnnexBNalUnits(sample).map { it[4].toInt() and 0x1F }
+                Log.w(TAG, "ensureCodecConfigured: waiting - no SPS/PPS in sample (codec=${format.codec} size=${sample.size} nalTypes=$nalTypes)")
+            }
+            return false
+        }
         val mime = when (format.codec) {
             AirPlayNative.CODEC_H264 -> MIME_AVC
             AirPlayNative.CODEC_H265 -> MIME_HEVC
@@ -317,11 +350,15 @@ class AirPlayVideoDecoder(
         val codecInfos = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
             .filter { !it.isEncoder && it.supportedTypes.any { type -> type.equals(mime, ignoreCase = true) } }
 
-        val preferredSoftware = codecInfos.firstOrNull { info ->
-            info.isSoftwareOnlyCompat() || info.name.startsWith("OMX.google.", ignoreCase = true)
-        }
-        if (preferredSoftware != null) {
-            return preferredSoftware.name
+        // Prefer a real hardware decoder over OMX.google.*/c2.android.* software ones: decode-to-
+        // Surface for a software AVC decoder goes through the platform's generic SoftwareRenderer
+        // YUV->RGB blit rather than a vendor overlay path, and that blit has a long-documented
+        // solid-green-frame bug on some devices/driver combos for non-16-aligned dimensions -
+        // exactly what AirPlay mirroring produces (e.g. 1080 height, or a portrait-cropped 498
+        // width). A vendor hardware decoder writes directly to the Surface without that step.
+        val preferredHardware = codecInfos.firstOrNull { info -> !info.isSoftwareOnlyCompat() }
+        if (preferredHardware != null) {
+            return preferredHardware.name
         }
 
         return codecInfos.firstOrNull()?.name

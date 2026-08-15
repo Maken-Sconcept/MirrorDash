@@ -13,11 +13,16 @@ data class StalkerChannel(
      * same idea, sourced the same way most portal software does it: one genre list, every
      * channel tagged with one genre id). */
     val genreId: String,
+    /** The portal's own `censored` flag - confirmed live against edge.bz that this is purely
+     * advisory: `create_link` resolves a stream for a censored channel with no PIN check at all,
+     * server-side. Real STB firmware enforces it locally before ever calling `create_link`; so
+     * does MirrorDash's own parental-control gate (see [ParentalControlMode]). */
+    val censored: Boolean = false,
 )
 
 /** One category from `get_genres` - the portal's own grouping, not something MirrorDash invents.
  * The portal always includes an "All" entry with [ALL_GENRES_ID] as its id. */
-data class StalkerGenre(val id: String, val title: String)
+data class StalkerGenre(val id: String, val title: String, val censored: Boolean = false)
 
 const val ALL_GENRES_ID = "*"
 

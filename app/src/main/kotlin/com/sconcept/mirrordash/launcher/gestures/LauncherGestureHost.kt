@@ -49,6 +49,19 @@ private enum class EdgeZone { NONE, TOP, BOTTOM }
 private val EDGE_ZONE_HEIGHT = 48.dp
 private val OPEN_DRAG_THRESHOLD_FRACTION = 0.32f
 
+// Ambient -> Travel used to fire on the very first touch-down anywhere on screen, which meant an
+// ordinary tap or drag on other content (a button, a page's own view) always dragged the whole
+// launcher through the Travel shrink/inset animation as a side effect. Requiring a still, held
+// touch this long instead - cancelled immediately by any lift or real movement - means only a
+// deliberate "wake it up" press triggers the animation; normal interaction underneath is
+// completely unaffected, since this path never consumes anything either way.
+private const val WAKE_HOLD_MS = 1200L
+
+/** How many real pager pages sit before the first VISIBLE page - just the hidden Night Clock
+ * tab, so this is always 1. Named rather than a bare literal since it appears on both sides of
+ * every index translation between "real pager index" and "visible page index" below. */
+private const val PAGE_INDEX_OFFSET = 1
+
 /**
  * The one place all of the launcher's touch gestures are arbitrated (brief section 29):
  * horizontal page navigation, bottom-up App Drawer, top-down Notifications, and tap-to-enter
@@ -67,13 +80,23 @@ fun LauncherGestureHost(
     pageContent: @Composable (pageIndex: Int, interactionState: LauncherInteractionState) -> Unit,
     appDrawerContent: @Composable (progress: Float, close: () -> Unit) -> Unit,
     notificationsContent: @Composable (progress: Float, close: () -> Unit) -> Unit,
+    nightClockContent: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     onFailsafeHoldTriggered: () -> Unit = {},
+    onNightClockActiveChanged: (Boolean) -> Unit = {},
     requestedPage: Int? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val pagerState = rememberPagerState(initialPage = initialPage) { pageCount }
+
+    // Real page 0 is the hidden Night Clock tab (brief follow-up: "just like the Nest Home
+    // Hub") - never in pageLabels/the tab bar, reached only by swiping past the real first
+    // visible page and back, exactly like any other adjacent pair of pages (no bespoke gesture
+    // needed - that's the whole reason to model it as a genuine page instead of a bolted-on
+    // overlay). Every index this composable is called with from the outside (initialPage,
+    // requestedPage, onPageSettled) stays 0-based over the VISIBLE pages only - the +1 offset
+    // needed to make room for the hidden page is entirely internal, via [PAGE_INDEX_OFFSET].
+    val pagerState = rememberPagerState(initialPage = initialPage + PAGE_INDEX_OFFSET) { pageCount + PAGE_INDEX_OFFSET }
 
     // Lets a caller (e.g. an incoming AirPlay connection) drive the pager from outside without
     // hoisting PagerState itself - each distinct non-null value is a fresh navigation request, so
@@ -82,7 +105,7 @@ fun LauncherGestureHost(
     LaunchedEffect(requestedPage) {
         val target = requestedPage ?: return@LaunchedEffect
         if (target in 0 until pageCount) {
-            pagerState.animateScrollToPage(target)
+            pagerState.animateScrollToPage(target + PAGE_INDEX_OFFSET)
         }
     }
 
@@ -100,8 +123,14 @@ fun LauncherGestureHost(
     var notificationsDragFraction by remember { mutableStateOf<Float?>(null) }
 
     LaunchedEffect(pagerState.settledPage) {
-        onPageSettled(pagerState.settledPage)
+        val settled = pagerState.settledPage
+        onNightClockActiveChanged(settled == 0)
+        if (settled >= PAGE_INDEX_OFFSET) {
+            onPageSettled(settled - PAGE_INDEX_OFFSET)
+        }
     }
+
+    val isOnNightClock = pagerState.currentPage == 0
 
     // Travel mode auto-collapses back to Ambient after a short idle period - but never while a
     // sheet is open/opening, and never while the pager itself is still settling a fling.
@@ -121,9 +150,14 @@ fun LauncherGestureHost(
         }
     }
 
-    val isTravel = interactionState == LauncherInteractionState.Travel ||
-        interactionState == LauncherInteractionState.OpeningAppDrawer ||
-        interactionState == LauncherInteractionState.OpeningNotifications
+    // Night Clock never gets the Travel-mode scale/corner/tab-bar chrome - it's meant to be a
+    // plain, decoration-free ambient screen the way the real Nest Hub's sleep display is, not
+    // "the launcher, but shrunk."
+    val isTravel = !isOnNightClock && (
+        interactionState == LauncherInteractionState.Travel ||
+            interactionState == LauncherInteractionState.OpeningAppDrawer ||
+            interactionState == LauncherInteractionState.OpeningNotifications
+        )
 
     Box(
         modifier = modifier
@@ -158,8 +192,12 @@ fun LauncherGestureHost(
             }
             // Attached directly to this ancestor Box (not a sibling overlay drawn on top) so it
             // participates in Initial-pass-before-children / Main-pass-after-children exactly
-            // once, unambiguously, ahead of the pager's own drag handling below.
-            .pointerInput(pageCount) {
+            // once, unambiguously, ahead of the pager's own drag handling below. Entirely inert
+            // on Night Clock - no edge-zone sheets, no tap-and-hold wake - swiping back to Clock
+            // (the pager's own native page-1-to-0 transition, nothing bespoke needed here) is
+            // the one and only way out, matching the brief's "that's how you get out of it."
+            .pointerInput(pageCount, isOnNightClock) {
+                if (isOnNightClock) return@pointerInput
                 val edgeZonePx = EDGE_ZONE_HEIGHT.toPx()
                 awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -177,7 +215,25 @@ fun LauncherGestureHost(
 
                         if (zone == EdgeZone.NONE) {
                             if (interactionState == LauncherInteractionState.Ambient) {
-                                interactionState = LauncherInteractionState.Travel
+                                // AwaitPointerEventScope is restricted (see the failsafe block
+                                // above) - the actual timed wait runs on the outer `scope`
+                                // instead, cancelled the moment this loop sees a lift or real
+                                // movement. Never consumes either way, so a plain tap or drag on
+                                // other content (a button, a page's own view) reaches its target
+                                // completely normally regardless of whether it also wakes.
+                                val touchSlopPx = viewConfiguration.touchSlop
+                                val wakeJob = scope.launch {
+                                    delay(WAKE_HOLD_MS)
+                                    interactionState = LauncherInteractionState.Travel
+                                }
+                                while (true) {
+                                    val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (change.changedToUpIgnoreConsumed()) break
+                                    val totalDelta = change.position - down.position
+                                    if (kotlin.math.abs(totalDelta.x) > touchSlopPx || kotlin.math.abs(totalDelta.y) > touchSlopPx) break
+                                }
+                                wakeJob.cancel()
                             }
                             return@awaitEachGesture
                         }
@@ -265,9 +321,13 @@ fun LauncherGestureHost(
                 state = pagerState,
                 pagerSnapDistance = if (isTravel) PagerSnapDistance.atMost(pageCount) else PagerSnapDistance.atMost(1),
             ),
-        ) { page ->
-            TravelFrame(isTravel = isTravel) {
-                pageContent(page, interactionState)
+        ) { realPage ->
+            if (realPage == 0) {
+                nightClockContent()
+            } else {
+                TravelFrame(isTravel = isTravel) {
+                    pageContent(realPage - PAGE_INDEX_OFFSET, interactionState)
+                }
             }
         }
 
@@ -275,6 +335,7 @@ fun LauncherGestureHost(
             visible = isTravel,
             labels = pageLabels,
             pagerState = pagerState,
+            pageIndexOffset = PAGE_INDEX_OFFSET,
             scope = scope,
             modifier = Modifier.align(Alignment.TopCenter),
         )
@@ -352,6 +413,7 @@ private fun LauncherTabBar(
     visible: Boolean,
     labels: List<String>,
     pagerState: PagerState,
+    pageIndexOffset: Int,
     scope: kotlinx.coroutines.CoroutineScope,
     modifier: Modifier = Modifier,
 ) {
@@ -372,7 +434,7 @@ private fun LauncherTabBar(
             .clip(RoundedCornerShape(22.dp))
             .background(MDTheme.colors.surface.copy(alpha = 0.78f))
             .padding(horizontal = 6.dp, vertical = 6.dp)
-            .pointerInput(labels.size) {
+            .pointerInput(labels.size, pageIndexOffset) {
                 val threshold = TAB_BAR_SWIPE_THRESHOLD.toPx()
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -385,26 +447,26 @@ private fun LauncherTabBar(
                     }
                     when {
                         totalDx <= -threshold -> {
-                            val next = (pagerState.currentPage + 1).coerceAtMost(labels.lastIndex)
-                            scope.launch { pagerState.animateScrollToPage(next) }
+                            val next = ((pagerState.currentPage - pageIndexOffset) + 1).coerceAtMost(labels.lastIndex)
+                            scope.launch { pagerState.animateScrollToPage(next + pageIndexOffset) }
                         }
                         totalDx >= threshold -> {
-                            val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
-                            scope.launch { pagerState.animateScrollToPage(prev) }
+                            val prev = ((pagerState.currentPage - pageIndexOffset) - 1).coerceAtLeast(0)
+                            scope.launch { pagerState.animateScrollToPage(prev + pageIndexOffset) }
                         }
                     }
                 }
             },
     ) {
         labels.forEachIndexed { index, label ->
-            val selected = index == pagerState.currentPage
+            val selected = index == (pagerState.currentPage - pageIndexOffset)
             Text(
                 text = label,
                 style = MDTheme.type.caption,
                 color = if (selected) MDTheme.colors.accent else MDTheme.colors.textSecondary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
-                    .clickable { scope.launch { pagerState.animateScrollToPage(index) } }
+                    .clickable { scope.launch { pagerState.animateScrollToPage(index + pageIndexOffset) } }
                     .padding(horizontal = 14.dp, vertical = 8.dp),
             )
         }

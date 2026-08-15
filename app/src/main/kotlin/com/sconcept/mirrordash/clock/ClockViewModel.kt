@@ -19,7 +19,7 @@ data class ClockAppearance(
     val textColor: Color = Color.White,
     val background: ClockBackground = ClockBackground.SolidColor(Color.Black),
     val clockAnchor: OverlayAnchor = OverlayAnchor(0.06f, 0.82f),
-    val weatherAnchor: OverlayAnchor = OverlayAnchor(0.92f, 0.08f),
+    val weatherWidgets: List<WeatherWidget> = emptyList(),
     val textWidgets: List<CustomTextWidget> = emptyList(),
 )
 
@@ -42,7 +42,7 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
                     ClockBackground.SolidColor(Color(it.clockBackgroundColorArgb))
                 },
                 clockAnchor = OverlayAnchor(it.clockAnchorX, it.clockAnchorY),
-                weatherAnchor = OverlayAnchor(it.weatherAnchorX, it.weatherAnchorY),
+                weatherWidgets = it.weatherWidgets,
                 textWidgets = it.customTextWidgets,
             )
         }
@@ -70,12 +70,36 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
         }
     }
 
-    fun setWeatherAnchor(anchor: OverlayAnchor) {
+    /** Kept entirely separate from [setClockAnchor] - dragging the clock on the hidden Night
+     * Clock tab must never move the daytime Clock page's own layout. */
+    fun setNightClockAnchor(anchor: OverlayAnchor) {
         val clamped = ClockLayoutHelper.clamp(anchor)
         viewModelScope.launch {
             settingsRepository.update {
-                weatherAnchorX = clamped.x
-                weatherAnchorY = clamped.y
+                nightClockAnchorX = clamped.x
+                nightClockAnchorY = clamped.y
+            }
+        }
+    }
+
+    fun setNightClockWeatherAnchor(anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        viewModelScope.launch {
+            settingsRepository.update {
+                nightClockWeatherAnchorX = clamped.x
+                nightClockWeatherAnchorY = clamped.y
+            }
+        }
+    }
+
+    fun setWeatherWidgetAnchor(id: String, anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        val current = appearance.value.weatherWidgets
+        viewModelScope.launch {
+            settingsRepository.update {
+                weatherWidgets = current.map {
+                    if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
+                }
             }
         }
     }

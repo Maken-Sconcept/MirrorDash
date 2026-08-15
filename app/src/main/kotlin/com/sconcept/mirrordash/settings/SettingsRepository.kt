@@ -10,6 +10,10 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.WeatherWidget
+import com.sconcept.mirrordash.clock.defaultWeatherWidget
+import com.sconcept.mirrordash.iptv.DEFAULT_PARENTAL_CONTROL_PIN
+import com.sconcept.mirrordash.iptv.ParentalControlMode
 import com.sconcept.mirrordash.iptv.RecordingDestinationMode
 import com.sconcept.mirrordash.iptv.ScheduledRecording
 import com.sconcept.mirrordash.nas.model.SmbShare
@@ -62,6 +66,14 @@ const val DEFAULT_CLOCK_ANCHOR_Y = 0.82f
 const val DEFAULT_WEATHER_ANCHOR_X = 0.92f
 const val DEFAULT_WEATHER_ANCHOR_Y = 0.08f
 
+/** Night Clock's own clock/weather positions - deliberately separate from the two above so
+ * dragging on that hidden tab never moves the daytime Clock page's layout. Defaults stack the
+ * two roughly centered, time above weather, matching a Nest Hub's ambient layout. */
+const val DEFAULT_NIGHT_CLOCK_ANCHOR_X = 0.5f
+const val DEFAULT_NIGHT_CLOCK_ANCHOR_Y = 0.42f
+const val DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_X = 0.5f
+const val DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_Y = 0.58f
+
 data class MirrorDashSettings(
     // Device identity - one name shared by every network-facing feature (AirPlay, Walkie-Talkie,
     // and anything added later) rather than each feature keeping its own, so a unit only has one
@@ -77,6 +89,7 @@ data class MirrorDashSettings(
     val clockAnchorY: Float = DEFAULT_CLOCK_ANCHOR_Y,
     val weatherAnchorX: Float = DEFAULT_WEATHER_ANCHOR_X,
     val weatherAnchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
+    val weatherWidgets: List<WeatherWidget> = emptyList(),
     val customTextWidgets: List<CustomTextWidget> = emptyList(),
 
     // Weather
@@ -128,6 +141,14 @@ data class MirrorDashSettings(
     val browserHomeUrl: String = "",
     val browserLastVisitedUrl: String = "",
 
+    // Jellyfin
+    val jellyfinEnabled: Boolean = false,
+    val jellyfinServerUrl: String = "",
+    val jellyfinStartPath: String = "",
+    val jellyfinDesktopMode: Boolean = false,
+    val jellyfinReloadOnOpen: Boolean = false,
+    val jellyfinOpenExternalLinks: Boolean = true,
+
     // Home Assistant
     val homeAssistantEnabled: Boolean = false,
     val homeAssistantUrl: String = "",
@@ -156,6 +177,10 @@ data class MirrorDashSettings(
     // differs - most providers issue extra MACs on the same portal, not a whole second portal.
     val iptvRecordingPortalUrl: String = "",
     val iptvRecordingMacAddress: String = "",
+    // Parental control (see ParentalControlMode) - gates channels/genres the portal itself marks
+    // `censored`, entirely client-side since the portal never checks any PIN on its own.
+    val parentalControlPin: String = DEFAULT_PARENTAL_CONTROL_PIN,
+    val parentalControlMode: String = ParentalControlMode.DISABLED.storageKey,
     val iptvRecordingDestination: String = RecordingDestinationMode.SMB_PRIMARY.storageKey,
     val iptvRecordingSmbFolder: String = "MirrorDash Recordings",
     val iptvRecordingLocalCapMb: Int = DEFAULT_RECORDING_LOCAL_CAP_MB,
@@ -171,6 +196,17 @@ data class MirrorDashSettings(
     val brightnessLevel255: Int = 255,
     val brightnessExtraDimPercent: Int = 0,
     val brightnessDimTarget: String = BRIGHTNESS_DIM_TARGET_WHOLE_SCREEN,
+
+    // Night Clock - a separate, uniquely-controlled brightness pair from the main Brightness
+    // section above, applied only while the hidden Night Clock tab is showing (see
+    // LauncherGestureHost). Defaults deliberately dim: this tab exists specifically to be dimmer
+    // than anything the main brightness controls would normally be left at.
+    val nightClockBrightnessLevel255: Int = 15,
+    val nightClockTextDimPercent: Int = 50,
+    val nightClockAnchorX: Float = DEFAULT_NIGHT_CLOCK_ANCHOR_X,
+    val nightClockAnchorY: Float = DEFAULT_NIGHT_CLOCK_ANCHOR_Y,
+    val nightClockWeatherAnchorX: Float = DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_X,
+    val nightClockWeatherAnchorY: Float = DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_Y,
 ) {
     val smbShare: SmbShare
         get() = SmbShare(
@@ -260,6 +296,16 @@ class SettingsRepository(context: Context) {
         val favorites = favoritesRaw?.let { raw ->
             runCatching { json.decodeFromString<List<String>>(raw) }.getOrDefault(emptyList())
         } ?: emptyList()
+        val weatherWidgetDefaults = listOf(
+            defaultWeatherWidget(
+                anchorX = this[Keys.WEATHER_ANCHOR_X] ?: defaults.weatherAnchorX,
+                anchorY = this[Keys.WEATHER_ANCHOR_Y] ?: defaults.weatherAnchorY,
+            ),
+        )
+        val weatherWidgetsRaw = this[Keys.WEATHER_WIDGETS]
+        val weatherWidgets = weatherWidgetsRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<WeatherWidget>>(raw) }.getOrDefault(weatherWidgetDefaults)
+        } ?: weatherWidgetDefaults
         val textWidgetsRaw = this[Keys.CUSTOM_TEXT_WIDGETS]
         val textWidgets = textWidgetsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<CustomTextWidget>>(raw) }.getOrDefault(emptyList())
@@ -279,6 +325,7 @@ class SettingsRepository(context: Context) {
             clockAnchorY = this[Keys.CLOCK_ANCHOR_Y] ?: defaults.clockAnchorY,
             weatherAnchorX = this[Keys.WEATHER_ANCHOR_X] ?: defaults.weatherAnchorX,
             weatherAnchorY = this[Keys.WEATHER_ANCHOR_Y] ?: defaults.weatherAnchorY,
+            weatherWidgets = weatherWidgets,
             customTextWidgets = textWidgets,
             weatherEnabled = this[Keys.WEATHER_ENABLED] ?: defaults.weatherEnabled,
             weatherLocationQuery = this[Keys.WEATHER_LOCATION_QUERY] ?: defaults.weatherLocationQuery,
@@ -317,6 +364,12 @@ class SettingsRepository(context: Context) {
             browserEnabled = this[Keys.BROWSER_ENABLED] ?: defaults.browserEnabled,
             browserHomeUrl = this[Keys.BROWSER_HOME_URL] ?: defaults.browserHomeUrl,
             browserLastVisitedUrl = this[Keys.BROWSER_LAST_VISITED_URL] ?: defaults.browserLastVisitedUrl,
+            jellyfinEnabled = this[Keys.JELLYFIN_ENABLED] ?: defaults.jellyfinEnabled,
+            jellyfinServerUrl = this[Keys.JELLYFIN_SERVER_URL] ?: defaults.jellyfinServerUrl,
+            jellyfinStartPath = this[Keys.JELLYFIN_START_PATH] ?: defaults.jellyfinStartPath,
+            jellyfinDesktopMode = this[Keys.JELLYFIN_DESKTOP_MODE] ?: defaults.jellyfinDesktopMode,
+            jellyfinReloadOnOpen = this[Keys.JELLYFIN_RELOAD_ON_OPEN] ?: defaults.jellyfinReloadOnOpen,
+            jellyfinOpenExternalLinks = this[Keys.JELLYFIN_OPEN_EXTERNAL_LINKS] ?: defaults.jellyfinOpenExternalLinks,
             homeAssistantEnabled = this[Keys.HOME_ASSISTANT_ENABLED] ?: defaults.homeAssistantEnabled,
             homeAssistantUrl = this[Keys.HOME_ASSISTANT_URL] ?: defaults.homeAssistantUrl,
             iptvEnabled = this[Keys.IPTV_ENABLED] ?: defaults.iptvEnabled,
@@ -328,6 +381,8 @@ class SettingsRepository(context: Context) {
             iptvOpenMuted = this[Keys.IPTV_OPEN_MUTED] ?: defaults.iptvOpenMuted,
             iptvRecordingPortalUrl = this[Keys.IPTV_RECORDING_PORTAL_URL] ?: defaults.iptvRecordingPortalUrl,
             iptvRecordingMacAddress = this[Keys.IPTV_RECORDING_MAC_ADDRESS] ?: defaults.iptvRecordingMacAddress,
+            parentalControlPin = this[Keys.PARENTAL_CONTROL_PIN] ?: defaults.parentalControlPin,
+            parentalControlMode = this[Keys.PARENTAL_CONTROL_MODE] ?: defaults.parentalControlMode,
             iptvRecordingDestination = this[Keys.IPTV_RECORDING_DESTINATION] ?: defaults.iptvRecordingDestination,
             iptvRecordingSmbFolder = this[Keys.IPTV_RECORDING_SMB_FOLDER] ?: defaults.iptvRecordingSmbFolder,
             iptvRecordingLocalCapMb = this[Keys.IPTV_RECORDING_LOCAL_CAP_MB] ?: defaults.iptvRecordingLocalCapMb,
@@ -339,6 +394,12 @@ class SettingsRepository(context: Context) {
             brightnessLevel255 = this[Keys.BRIGHTNESS_LEVEL_255] ?: defaults.brightnessLevel255,
             brightnessExtraDimPercent = this[Keys.BRIGHTNESS_EXTRA_DIM_PERCENT] ?: defaults.brightnessExtraDimPercent,
             brightnessDimTarget = this[Keys.BRIGHTNESS_DIM_TARGET] ?: defaults.brightnessDimTarget,
+            nightClockBrightnessLevel255 = this[Keys.NIGHT_CLOCK_BRIGHTNESS_LEVEL_255] ?: defaults.nightClockBrightnessLevel255,
+            nightClockTextDimPercent = this[Keys.NIGHT_CLOCK_TEXT_DIM_PERCENT] ?: defaults.nightClockTextDimPercent,
+            nightClockAnchorX = this[Keys.NIGHT_CLOCK_ANCHOR_X] ?: defaults.nightClockAnchorX,
+            nightClockAnchorY = this[Keys.NIGHT_CLOCK_ANCHOR_Y] ?: defaults.nightClockAnchorY,
+            nightClockWeatherAnchorX = this[Keys.NIGHT_CLOCK_WEATHER_ANCHOR_X] ?: defaults.nightClockWeatherAnchorX,
+            nightClockWeatherAnchorY = this[Keys.NIGHT_CLOCK_WEATHER_ANCHOR_Y] ?: defaults.nightClockWeatherAnchorY,
         )
     }
 
@@ -353,6 +414,7 @@ class SettingsRepository(context: Context) {
         val CLOCK_ANCHOR_Y = floatPreferencesKey("clock_anchor_y")
         val WEATHER_ANCHOR_X = floatPreferencesKey("weather_anchor_x")
         val WEATHER_ANCHOR_Y = floatPreferencesKey("weather_anchor_y")
+        val WEATHER_WIDGETS = stringPreferencesKey("weather_widgets_json")
 
         val WEATHER_ENABLED = booleanPreferencesKey("weather_enabled")
         val WEATHER_LOCATION_QUERY = stringPreferencesKey("weather_location_query")
@@ -397,6 +459,13 @@ class SettingsRepository(context: Context) {
         val BROWSER_HOME_URL = stringPreferencesKey("browser_home_url")
         val BROWSER_LAST_VISITED_URL = stringPreferencesKey("browser_last_visited_url")
 
+        val JELLYFIN_ENABLED = booleanPreferencesKey("jellyfin_enabled")
+        val JELLYFIN_SERVER_URL = stringPreferencesKey("jellyfin_server_url")
+        val JELLYFIN_START_PATH = stringPreferencesKey("jellyfin_start_path")
+        val JELLYFIN_DESKTOP_MODE = booleanPreferencesKey("jellyfin_desktop_mode")
+        val JELLYFIN_RELOAD_ON_OPEN = booleanPreferencesKey("jellyfin_reload_on_open")
+        val JELLYFIN_OPEN_EXTERNAL_LINKS = booleanPreferencesKey("jellyfin_open_external_links")
+
         val HOME_ASSISTANT_ENABLED = booleanPreferencesKey("home_assistant_enabled")
         val HOME_ASSISTANT_URL = stringPreferencesKey("home_assistant_url")
 
@@ -409,6 +478,8 @@ class SettingsRepository(context: Context) {
         val IPTV_OPEN_MUTED = booleanPreferencesKey("iptv_open_muted")
         val IPTV_RECORDING_PORTAL_URL = stringPreferencesKey("iptv_recording_portal_url")
         val IPTV_RECORDING_MAC_ADDRESS = stringPreferencesKey("iptv_recording_mac_address")
+        val PARENTAL_CONTROL_PIN = stringPreferencesKey("parental_control_pin")
+        val PARENTAL_CONTROL_MODE = stringPreferencesKey("parental_control_mode")
         val IPTV_RECORDING_DESTINATION = stringPreferencesKey("iptv_recording_destination")
         val IPTV_RECORDING_SMB_FOLDER = stringPreferencesKey("iptv_recording_smb_folder")
         val IPTV_RECORDING_LOCAL_CAP_MB = intPreferencesKey("iptv_recording_local_cap_mb")
@@ -424,6 +495,12 @@ class SettingsRepository(context: Context) {
         val BRIGHTNESS_LEVEL_255 = intPreferencesKey("brightness_level_255")
         val BRIGHTNESS_EXTRA_DIM_PERCENT = intPreferencesKey("brightness_extra_dim_percent")
         val BRIGHTNESS_DIM_TARGET = stringPreferencesKey("brightness_dim_target")
+        val NIGHT_CLOCK_BRIGHTNESS_LEVEL_255 = intPreferencesKey("night_clock_brightness_level_255")
+        val NIGHT_CLOCK_TEXT_DIM_PERCENT = intPreferencesKey("night_clock_text_dim_percent")
+        val NIGHT_CLOCK_ANCHOR_X = floatPreferencesKey("night_clock_anchor_x")
+        val NIGHT_CLOCK_ANCHOR_Y = floatPreferencesKey("night_clock_anchor_y")
+        val NIGHT_CLOCK_WEATHER_ANCHOR_X = floatPreferencesKey("night_clock_weather_anchor_x")
+        val NIGHT_CLOCK_WEATHER_ANCHOR_Y = floatPreferencesKey("night_clock_weather_anchor_y")
     }
 }
 
@@ -481,6 +558,13 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var browserHomeUrl: String by PrefDelegate(SettingsRepository.Keys.BROWSER_HOME_URL, prefs, defaults.browserHomeUrl)
     var browserLastVisitedUrl: String by PrefDelegate(SettingsRepository.Keys.BROWSER_LAST_VISITED_URL, prefs, defaults.browserLastVisitedUrl)
 
+    var jellyfinEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_ENABLED, prefs, defaults.jellyfinEnabled)
+    var jellyfinServerUrl: String by PrefDelegate(SettingsRepository.Keys.JELLYFIN_SERVER_URL, prefs, defaults.jellyfinServerUrl)
+    var jellyfinStartPath: String by PrefDelegate(SettingsRepository.Keys.JELLYFIN_START_PATH, prefs, defaults.jellyfinStartPath)
+    var jellyfinDesktopMode: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_DESKTOP_MODE, prefs, defaults.jellyfinDesktopMode)
+    var jellyfinReloadOnOpen: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_RELOAD_ON_OPEN, prefs, defaults.jellyfinReloadOnOpen)
+    var jellyfinOpenExternalLinks: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_OPEN_EXTERNAL_LINKS, prefs, defaults.jellyfinOpenExternalLinks)
+
     var homeAssistantEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_ENABLED, prefs, defaults.homeAssistantEnabled)
     var homeAssistantUrl: String by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_URL, prefs, defaults.homeAssistantUrl)
 
@@ -493,6 +577,8 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var iptvOpenMuted: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_OPEN_MUTED, prefs, defaults.iptvOpenMuted)
     var iptvRecordingPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_PORTAL_URL, prefs, defaults.iptvRecordingPortalUrl)
     var iptvRecordingMacAddress: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_MAC_ADDRESS, prefs, defaults.iptvRecordingMacAddress)
+    var parentalControlPin: String by PrefDelegate(SettingsRepository.Keys.PARENTAL_CONTROL_PIN, prefs, defaults.parentalControlPin)
+    var parentalControlMode: String by PrefDelegate(SettingsRepository.Keys.PARENTAL_CONTROL_MODE, prefs, defaults.parentalControlMode)
     var iptvRecordingDestination: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_DESTINATION, prefs, defaults.iptvRecordingDestination)
     var iptvRecordingSmbFolder: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_SMB_FOLDER, prefs, defaults.iptvRecordingSmbFolder)
     var iptvRecordingLocalCapMb: Int by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_LOCAL_CAP_MB, prefs, defaults.iptvRecordingLocalCapMb)
@@ -504,6 +590,12 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var brightnessLevel255: Int by PrefDelegate(SettingsRepository.Keys.BRIGHTNESS_LEVEL_255, prefs, defaults.brightnessLevel255)
     var brightnessExtraDimPercent: Int by PrefDelegate(SettingsRepository.Keys.BRIGHTNESS_EXTRA_DIM_PERCENT, prefs, defaults.brightnessExtraDimPercent)
     var brightnessDimTarget: String by PrefDelegate(SettingsRepository.Keys.BRIGHTNESS_DIM_TARGET, prefs, defaults.brightnessDimTarget)
+    var nightClockBrightnessLevel255: Int by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_BRIGHTNESS_LEVEL_255, prefs, defaults.nightClockBrightnessLevel255)
+    var nightClockTextDimPercent: Int by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_TEXT_DIM_PERCENT, prefs, defaults.nightClockTextDimPercent)
+    var nightClockAnchorX: Float by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_ANCHOR_X, prefs, defaults.nightClockAnchorX)
+    var nightClockAnchorY: Float by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_ANCHOR_Y, prefs, defaults.nightClockAnchorY)
+    var nightClockWeatherAnchorX: Float by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_WEATHER_ANCHOR_X, prefs, defaults.nightClockWeatherAnchorX)
+    var nightClockWeatherAnchorY: Float by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_WEATHER_ANCHOR_Y, prefs, defaults.nightClockWeatherAnchorY)
 
     var walkieTalkiePeers: List<WalkieTalkiePeer>
         get() = prefs[SettingsRepository.Keys.WALKIE_TALKIE_PEERS]
@@ -519,6 +611,14 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
             .orEmpty()
         set(value) {
             prefs[SettingsRepository.Keys.LAUNCHER_FAVORITE_APPS] = json.encodeToString(value)
+        }
+
+    var weatherWidgets: List<WeatherWidget>
+        get() = prefs[SettingsRepository.Keys.WEATHER_WIDGETS]
+            ?.let { runCatching { json.decodeFromString<List<WeatherWidget>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.WEATHER_WIDGETS] = json.encodeToString(value)
         }
 
     var customTextWidgets: List<CustomTextWidget>

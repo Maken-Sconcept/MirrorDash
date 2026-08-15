@@ -57,6 +57,7 @@ class StalkerPortalClient(
                     logoUrl = obj.optString("logo").ifBlank { null },
                     cmd = cmd,
                     genreId = obj.optString("tv_genre_id"),
+                    censored = obj.optString("censored") == "1",
                 )
             }
         }
@@ -66,7 +67,9 @@ class StalkerPortalClient(
      * "title":"ENGLISH",...}, ...]}` - same array-shaped `js` as [fetchShortEpg]. Best-effort:
      * a portal that doesn't support genres (or a transient failure) just means no category tabs,
      * not a broken connection - [IptvViewModel] falls back to a synthetic "All" entry rather than
-     * failing the whole connect over it. */
+     * failing the whole connect over it. Every genre also carries a `censored` flag (0/1) -
+     * confirmed live that [fetchChannels] silently excludes every channel in a censored genre
+     * from its response entirely, which is why those need [fetchCensoredGenreChannels] instead. */
     suspend fun fetchGenres(): Result<List<StalkerGenre>> = withContext(Dispatchers.IO) {
         runCatching {
             val endpoint = resolvedEndpoint ?: error("connect() must succeed first")
@@ -74,8 +77,55 @@ class StalkerPortalClient(
             (0 until js.length()).mapNotNull { i ->
                 val obj = js.optJSONObject(i) ?: return@mapNotNull null
                 val id = obj.optString("id").ifBlank { return@mapNotNull null }
-                StalkerGenre(id = id, title = obj.optString("title").ifBlank { "Unknown" })
+                StalkerGenre(
+                    id = id,
+                    title = obj.optString("title").ifBlank { "Unknown" },
+                    censored = obj.optString("censored") == "1",
+                )
             }
+        }
+    }
+
+    /** [fetchChannels] (`get_all_channels`) silently excludes every censored genre's channels
+     * from its response entirely - confirmed live against edge.bz (3,004 channels back, zero
+     * from the one censored genre on this portal). The only way to actually list them is
+     * per-genre via `get_ordered_list`, which - unlike `get_all_channels` - is paginated (14
+     * items/page, confirmed live, not configurable via any param), so this loops pages until the
+     * portal's own `total_items` is satisfied or a page comes back empty.
+     *
+     * Deliberately not folded into [fetchChannels]/`connect()` - real portals cap out around a
+     * couple hundred censored channels here, meaning ~25 extra requests, which is only worth
+     * paying for a genre parental control has actually unlocked, not for every connection. */
+    suspend fun fetchCensoredGenreChannels(genreId: String): Result<List<StalkerChannel>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val endpoint = resolvedEndpoint ?: error("connect() must succeed first")
+            val results = mutableListOf<StalkerChannel>()
+            var page = 1
+            while (page <= MAX_CENSORED_GENRE_PAGES) {
+                val js = request(
+                    endpoint,
+                    mapOf("type" to "itv", "action" to "get_ordered_list", "genre" to genreId, "p" to page.toString()),
+                )
+                val data = js.optJSONArray("data") ?: JSONArray()
+                if (data.length() == 0) break
+                (0 until data.length()).mapNotNullTo(results) { i ->
+                    val obj = data.optJSONObject(i) ?: return@mapNotNullTo null
+                    val cmd = obj.optString("cmd").ifBlank { return@mapNotNullTo null }
+                    val number = obj.optString("number")
+                    StalkerChannel(
+                        id = obj.optString("id"),
+                        number = number,
+                        name = obj.optString("name").ifBlank { "Channel $number" },
+                        logoUrl = obj.optString("logo").ifBlank { null },
+                        cmd = cmd,
+                        genreId = obj.optString("tv_genre_id").ifBlank { genreId },
+                        censored = true,
+                    )
+                }
+                if (results.size >= js.optInt("total_items", 0)) break
+                page++
+            }
+            results
         }
     }
 
@@ -254,5 +304,10 @@ class StalkerPortalClient(
     companion object {
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 10_000
+
+        /** Hard cap on [fetchCensoredGenreChannels]'s pagination loop - protects against a
+         * pathological/misreported `total_items` looping forever; 200 pages x 14 items is far
+         * beyond any real censored-genre channel count seen in practice (360 on edge.bz). */
+        private const val MAX_CENSORED_GENRE_PAGES = 200
     }
 }

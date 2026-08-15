@@ -9,6 +9,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sconcept.mirrordash.airplay.AirPlayUiState
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.WEATHER_WIDGET_MODE_FORECAST_CARD
+import com.sconcept.mirrordash.clock.WeatherWidget
+import com.sconcept.mirrordash.clock.defaultWeatherWidget
 import com.sconcept.mirrordash.nas.SmbRepository
 import com.sconcept.mirrordash.nas.SmbPaths
 import com.sconcept.mirrordash.nas.model.SmbConnectionState
@@ -151,6 +154,27 @@ class SettingsViewModel(application: Application, private val settingsRepository
     }
 
     // --- Weather -----------------------------------------------------------------------------
+
+    fun addWeatherWidget(mode: String = WEATHER_WIDGET_MODE_FORECAST_CARD) = viewModelScope.launch {
+        val current = uiState.value.settings.weatherWidgets
+        settingsRepository.update {
+            weatherWidgets = current + defaultWeatherWidget().copy(mode = mode)
+        }
+    }
+
+    fun updateWeatherWidget(id: String, transform: (WeatherWidget) -> WeatherWidget) = viewModelScope.launch {
+        val current = uiState.value.settings.weatherWidgets
+        settingsRepository.update {
+            weatherWidgets = current.map { if (it.id == id) transform(it) else it }
+        }
+    }
+
+    fun removeWeatherWidget(id: String) = viewModelScope.launch {
+        val current = uiState.value.settings.weatherWidgets
+        settingsRepository.update {
+            weatherWidgets = current.filterNot { it.id == id }
+        }
+    }
 
     fun setWeatherEnabled(enabled: Boolean) = viewModelScope.launch {
         settingsRepository.update { weatherEnabled = enabled }
@@ -371,6 +395,32 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { browserLastVisitedUrl = "" }
     }
 
+    // --- Jellyfin ------------------------------------------------------------------------------
+
+    fun setJellyfinEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { jellyfinEnabled = enabled }
+    }
+
+    fun setJellyfinServerUrl(url: String) = viewModelScope.launch {
+        settingsRepository.update { jellyfinServerUrl = url }
+    }
+
+    fun setJellyfinStartPath(path: String) = viewModelScope.launch {
+        settingsRepository.update { jellyfinStartPath = path }
+    }
+
+    fun setJellyfinDesktopMode(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { jellyfinDesktopMode = enabled }
+    }
+
+    fun setJellyfinReloadOnOpen(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { jellyfinReloadOnOpen = enabled }
+    }
+
+    fun setJellyfinOpenExternalLinks(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { jellyfinOpenExternalLinks = enabled }
+    }
+
     // --- Home Assistant --------------------------------------------------------------------------
 
     fun setHomeAssistantEnabled(enabled: Boolean) = viewModelScope.launch {
@@ -426,6 +476,21 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { iptvRecordingDestination = mode.storageKey }
     }
 
+    /** Digits only, capped at [com.sconcept.mirrordash.iptv.MAX_PARENTAL_CONTROL_PIN_LENGTH] -
+     * enforced here rather than trusting the numeric-keypad UI to only ever send valid input. */
+    fun setParentalControlPin(pin: String) = viewModelScope.launch {
+        val sanitized = pin.filter { it.isDigit() }.take(com.sconcept.mirrordash.iptv.MAX_PARENTAL_CONTROL_PIN_LENGTH)
+        settingsRepository.update { parentalControlPin = sanitized }
+    }
+
+    fun resetParentalControlPin() = viewModelScope.launch {
+        settingsRepository.update { parentalControlPin = com.sconcept.mirrordash.iptv.DEFAULT_PARENTAL_CONTROL_PIN }
+    }
+
+    fun setParentalControlMode(mode: com.sconcept.mirrordash.iptv.ParentalControlMode) = viewModelScope.launch {
+        settingsRepository.update { parentalControlMode = mode.storageKey }
+    }
+
     fun setIptvRecordingSmbFolder(folder: String) = viewModelScope.launch {
         settingsRepository.update { iptvRecordingSmbFolder = folder }
     }
@@ -452,6 +517,16 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setBrightnessDimTarget(target: String) = viewModelScope.launch {
         settingsRepository.update { brightnessDimTarget = target }
+    }
+
+    // --- Night Clock -------------------------------------------------------------------------------
+
+    fun setNightClockBrightnessLevel(level255: Int) = viewModelScope.launch {
+        settingsRepository.update { nightClockBrightnessLevel255 = level255 }
+    }
+
+    fun setNightClockTextDimPercent(percent: Int) = viewModelScope.launch {
+        settingsRepository.update { nightClockTextDimPercent = percent }
     }
 
     companion object {
