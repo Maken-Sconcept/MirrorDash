@@ -109,39 +109,11 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                 subtitle = "The portal connected but didn't return any live channels.",
             )
             else -> {
-                PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
-                if (uiState.isBuffering) {
-                    CircularProgressIndicator(
-                        color = MDTheme.colors.accent,
-                        modifier = Modifier.align(Alignment.Center).size(40.dp),
-                    )
-                }
-                PlaybackControls(
-                    uiState = uiState,
-                    recordingState = recordingState,
-                    onPlayPause = viewModel::togglePlayPause,
-                    onPrevious = viewModel::previousChannel,
-                    onNext = viewModel::nextChannel,
-                    onToggleChannelList = viewModel::toggleChannelList,
-                    onToggleGuide = viewModel::toggleGuide,
-                    onVolumeChange = viewModel::setVolume,
-                    onToggleMute = viewModel::toggleMute,
-                    onRecordNow = { channel -> recordingEngine.startManual(channel) },
-                    onRecordTimed = { channel, minutes -> recordingEngine.startFixedDuration(channel, minutes) },
-                    onOpenGuideToSchedule = viewModel::toggleGuide,
-                    onStopRecording = { recordingEngine.stop() },
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
-                if (uiState.showChannelList) {
-                    ChannelListPanel(
-                        channels = uiState.displayedChannels,
-                        currentChannelId = uiState.currentChannel?.id,
-                        onSelect = { viewModel.selectChannelById(it.id) },
-                        onDismiss = viewModel::toggleChannelList,
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                    )
-                }
-                if (uiState.showGuide) {
+                // Factored out rather than duplicated across the split-preview and full-size
+                // branches below - every param but the modifier (which controls whether this
+                // fills the screen or just the bottom 70%) and showPreview/onCollapsePreview is
+                // identical either way.
+                val guide: @Composable (modifier: Modifier, showPreview: Boolean) -> Unit = { guideModifier, showPreview ->
                     IptvGuideOverlay(
                         channels = uiState.displayedChannels,
                         currentChannelId = uiState.currentChannel?.id,
@@ -172,8 +144,65 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                         onCancelScheduled = { id -> scope.launch { recordingEngine.cancelScheduledRecording(id) } },
                         onRecordLiveProgram = { channel, program -> recordingEngine.startUntil(channel, program.endEpochSeconds) },
                         onStopRecording = { recordingEngine.stop() },
-                        modifier = Modifier.fillMaxSize(),
+                        onCollapsePreview = if (showPreview) viewModel::collapseGuidePreview else null,
+                        modifier = guideModifier,
                     )
+                }
+
+                if (uiState.showGuide && uiState.guideShowsPreview) {
+                    // Video on top, Guide below, both visible at once - the preview a channel tap
+                    // from the Guide starts (see [IptvUiState.guideShowsPreview]'s doc comment).
+                    // 30/70 via Column weights, not two overlapping fillMaxSize Boxes - simpler to
+                    // reason about than z-order + manual height math, and Compose's own layout
+                    // pass keeps the two regions from ever fighting over space.
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.fillMaxWidth().weight(GUIDE_PREVIEW_HEIGHT_FRACTION).background(Color.Black)) {
+                            PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
+                            if (uiState.isBuffering) {
+                                CircularProgressIndicator(
+                                    color = MDTheme.colors.accent,
+                                    modifier = Modifier.align(Alignment.Center).size(28.dp),
+                                )
+                            }
+                        }
+                        guide(Modifier.fillMaxWidth().weight(1f - GUIDE_PREVIEW_HEIGHT_FRACTION), true)
+                    }
+                } else {
+                    PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
+                    if (uiState.isBuffering) {
+                        CircularProgressIndicator(
+                            color = MDTheme.colors.accent,
+                            modifier = Modifier.align(Alignment.Center).size(40.dp),
+                        )
+                    }
+                    PlaybackControls(
+                        uiState = uiState,
+                        recordingState = recordingState,
+                        onPlayPause = viewModel::togglePlayPause,
+                        onPrevious = viewModel::previousChannel,
+                        onNext = viewModel::nextChannel,
+                        onToggleChannelList = viewModel::toggleChannelList,
+                        onToggleGuide = viewModel::toggleGuide,
+                        onVolumeChange = viewModel::setVolume,
+                        onToggleMute = viewModel::toggleMute,
+                        onRecordNow = { channel -> recordingEngine.startManual(channel) },
+                        onRecordTimed = { channel, minutes -> recordingEngine.startFixedDuration(channel, minutes) },
+                        onOpenGuideToSchedule = viewModel::toggleGuide,
+                        onStopRecording = { recordingEngine.stop() },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                    if (uiState.showChannelList) {
+                        ChannelListPanel(
+                            channels = uiState.displayedChannels,
+                            currentChannelId = uiState.currentChannel?.id,
+                            onSelect = { viewModel.selectChannelById(it.id) },
+                            onDismiss = viewModel::toggleChannelList,
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                        )
+                    }
+                    if (uiState.showGuide) {
+                        guide(Modifier.fillMaxSize(), false)
+                    }
                 }
             }
         }
@@ -546,6 +575,10 @@ private fun VolumeButton(volume: Float, onVolumeChange: (Float) -> Unit, onToggl
 
 private const val VOLUME_BAR_AUTO_COLLAPSE_MS = 4000L
 private const val SAVED_BADGE_DURATION_MS = 5000L
+
+/** The Guide's split-preview layout (see [IptvUiState.guideShowsPreview]) - preview on top,
+ * Guide below. */
+private const val GUIDE_PREVIEW_HEIGHT_FRACTION = 0.3f
 
 /** How far (in dp) the finger has to drag down, while holding, before fine-tuning bottoms out at
  * [FINE_TUNE_MIN_SENSITIVITY] - past that point extra downward movement doesn't get any finer.

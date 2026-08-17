@@ -29,17 +29,25 @@ import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.NightlightRound
 import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,10 +55,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sconcept.mirrordash.settings.SettingsViewModel
 import com.sconcept.mirrordash.ui.theme.MDTheme
+import com.sconcept.mirrordash.wedding.WeddingPinPolicy
+import com.sconcept.mirrordash.wedding.WeddingPinResult
+import com.sconcept.mirrordash.wedding.WeddingViewModel
 
 private enum class SettingsSection(val title: String, val subtitle: String) {
     CLOCK("Clock", "Time, background, and draggable widgets"),
@@ -63,6 +79,9 @@ private enum class SettingsSection(val title: String, val subtitle: String) {
     JELLYFIN("Jellyfin", "Media server address and playback-focused web tab"),
     HOME_ASSISTANT("Home Assistant", "Dashboard address and the tab it lives on"),
     IPTV("IPTV", "Portal address, MAC address, and the tab it lives on"),
+    PHOTOBOOTH("Photobooth", "3-photo capture, sharing, and hardware diagnostics"),
+    MIRRORDROP("Share Photos", "Local Wi-Fi sharing server for Photobooth photos"),
+    WEDDING("Wedding", "Couple details, guest reset, and seating setup"),
     LAUNCHER("Launcher", "Default Home app and notification access"),
 }
 
@@ -74,6 +93,7 @@ private enum class SettingsSection(val title: String, val subtitle: String) {
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
+    weddingViewModel: WeddingViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
@@ -82,6 +102,7 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var selectedSection by remember { mutableStateOf<SettingsSection?>(null) }
+    var createWeddingPin by remember { mutableStateOf<Boolean?>(null) }
 
     BackHandler(enabled = selectedSection != null) { selectedSection = null }
 
@@ -102,7 +123,10 @@ fun SettingsScreen(
             label = "settingsSection",
         ) { section ->
             when (section) {
-                null -> SettingsList(onSelect = { selectedSection = it })
+                null -> SettingsList(
+                    onSelect = { selectedSection = it },
+                    onEnterWeddingMode = { createWeddingPin = !viewModel.hasWeddingPin() },
+                )
                 SettingsSection.CLOCK -> SectionScaffold(section.title) { ClockSettingsContent(uiState, viewModel) }
                 SettingsSection.BRIGHTNESS -> SectionScaffold(section.title) { BrightnessSettingsContent(uiState, viewModel, onRequestWriteSettingsAccess) }
                 SettingsSection.NIGHT_CLOCK -> SectionScaffold(section.title) { NightClockSettingsContent(uiState, viewModel) }
@@ -113,6 +137,11 @@ fun SettingsScreen(
                 SettingsSection.JELLYFIN -> SectionScaffold(section.title) { JellyfinSettingsContent(uiState, viewModel) }
                 SettingsSection.HOME_ASSISTANT -> SectionScaffold(section.title) { HomeAssistantSettingsContent(uiState, viewModel) }
                 SettingsSection.IPTV -> SectionScaffold(section.title) { IptvSettingsContent(uiState, viewModel) }
+                SettingsSection.PHOTOBOOTH -> SectionScaffold(section.title) { PhotoboothSettingsContent(uiState, viewModel) }
+                SettingsSection.MIRRORDROP -> SectionScaffold(section.title) { MirrorDropSettingsContent(uiState, viewModel) }
+                SettingsSection.WEDDING -> SectionScaffold(section.title) {
+                    WeddingSettingsContent(uiState, viewModel, weddingViewModel)
+                }
                 SettingsSection.LAUNCHER -> SectionScaffold(section.title) {
                     LauncherSettingsContent(
                         uiState = uiState,
@@ -134,11 +163,22 @@ fun SettingsScreen(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MDTheme.colors.textPrimary)
             }
         }
+
+        createWeddingPin?.let { isCreating ->
+            WeddingPinDialog(
+                createPin = isCreating,
+                onDismiss = { createWeddingPin = null },
+                onSubmit = { pin -> viewModel.enterWeddingMode(pin) },
+            )
+        }
     }
 }
 
 @Composable
-private fun SettingsList(onSelect: (SettingsSection) -> Unit) {
+private fun SettingsList(
+    onSelect: (SettingsSection) -> Unit,
+    onEnterWeddingMode: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -147,12 +187,143 @@ private fun SettingsList(onSelect: (SettingsSection) -> Unit) {
         Text("Settings", style = MDTheme.type.sectionTitle.copy(fontSize = MDTheme.type.sectionTitle.fontSize), color = MDTheme.colors.textPrimary)
         Spacer(Modifier.height(28.dp))
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             items(SettingsSection.entries) { section ->
                 SettingsRow(section = section, onClick = { onSelect(section) })
             }
+            item {
+                Spacer(Modifier.height(28.dp))
+                WeddingModeEntryCard(onClick = onEnterWeddingMode)
+            }
         }
     }
+}
+
+@Composable
+private fun WeddingModeEntryCard(onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MDTheme.colors.surface)
+            .padding(22.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.FavoriteBorder,
+                contentDescription = null,
+                tint = MDTheme.colors.accent,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.size(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Wedding Mode", style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary)
+                Text(
+                    "Switch to the guest experience. The PIN you enter is required to leave it.",
+                    style = MDTheme.type.settingSubtitle,
+                    color = MDTheme.colors.textSecondary,
+                )
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Button(
+            onClick = onClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+        ) {
+            Text("Enter Wedding Mode")
+        }
+    }
+}
+
+@Composable
+private fun WeddingPinDialog(
+    createPin: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (String) -> WeddingPinResult,
+) {
+    var pin by remember(createPin) { mutableStateOf("") }
+    var confirmation by remember(createPin) { mutableStateOf("") }
+    var error by remember(createPin) { mutableStateOf<String?>(null) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    fun submit() {
+        if (createPin && pin != confirmation) {
+            error = "The PINs do not match. Enter the same PIN twice."
+            return
+        }
+        error = when (onSubmit(pin)) {
+            WeddingPinResult.SUCCESS -> {
+                onDismiss()
+                null
+            }
+            WeddingPinResult.INVALID_FORMAT -> "Use ${WeddingPinPolicy.MIN_LENGTH}-${WeddingPinPolicy.MAX_LENGTH} digits."
+            WeddingPinResult.INCORRECT -> "That PIN is incorrect. Try again."
+            WeddingPinResult.STORAGE_ERROR -> "The PIN could not be secured on this device. Try again."
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (createPin) "Create Wedding PIN" else "Enter Wedding Mode") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(
+                    if (createPin) {
+                        "Choose a PIN for the hosts. This same PIN will be required to exit Wedding Mode."
+                    } else {
+                        "Enter the host PIN to switch to Wedding Mode."
+                    },
+                    color = MDTheme.colors.textSecondary,
+                )
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = {
+                        pin = WeddingPinPolicy.sanitize(it)
+                        error = null
+                    },
+                    label = { Text(if (createPin) "New PIN" else "Host PIN") },
+                    singleLine = true,
+                    isError = error != null,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                )
+                if (createPin) {
+                    OutlinedTextField(
+                        value = confirmation,
+                        onValueChange = {
+                            confirmation = WeddingPinPolicy.sanitize(it)
+                            error = null
+                        },
+                        label = { Text("Confirm PIN") },
+                        singleLine = true,
+                        isError = error != null,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                error?.let { Text(it, color = MDTheme.colors.danger, style = MDTheme.type.caption) }
+            }
+        },
+        confirmButton = {
+            Button(onClick = ::submit) {
+                Text(if (createPin) "Set PIN and Enter" else "Enter")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -186,6 +357,9 @@ private fun sectionIcon(section: SettingsSection) = when (section) {
     SettingsSection.JELLYFIN -> Icons.Filled.Movie
     SettingsSection.HOME_ASSISTANT -> Icons.Filled.Home
     SettingsSection.IPTV -> Icons.Filled.LiveTv
+    SettingsSection.PHOTOBOOTH -> Icons.Filled.PhotoCamera
+    SettingsSection.MIRRORDROP -> Icons.Filled.Share
+    SettingsSection.WEDDING -> Icons.Filled.FavoriteBorder
     SettingsSection.LAUNCHER -> Icons.Filled.Info
 }
 

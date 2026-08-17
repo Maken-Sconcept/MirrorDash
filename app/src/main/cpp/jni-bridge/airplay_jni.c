@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include "dnssd.h"
 #include "jni_globals.h"
 #include "logger.h"

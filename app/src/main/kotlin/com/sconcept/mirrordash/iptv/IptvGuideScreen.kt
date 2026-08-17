@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -100,6 +101,10 @@ fun IptvGuideOverlay(
     onCancelScheduled: (String) -> Unit,
     onRecordLiveProgram: (StalkerChannel, EpgProgram) -> Unit,
     onStopRecording: () -> Unit,
+    /** Non-null (and shown as a "regular size" button) only while the split preview is active -
+     * see [IptvUiState.guideShowsPreview]. Null in the ordinary full-screen Guide, where there's
+     * no preview to collapse back out of. */
+    onCollapsePreview: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val hScroll = rememberScrollState()
@@ -123,6 +128,11 @@ fun IptvGuideOverlay(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
             ) {
                 Text("Guide", style = MDTheme.type.sectionTitle, color = Color.White, modifier = Modifier.weight(1f))
+                if (onCollapsePreview != null) {
+                    IconButton(onClick = onCollapsePreview) {
+                        Icon(Icons.Filled.FullscreenExit, contentDescription = "Regular size", tint = Color.White)
+                    }
+                }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Filled.Close, contentDescription = "Close guide", tint = Color.White)
                 }

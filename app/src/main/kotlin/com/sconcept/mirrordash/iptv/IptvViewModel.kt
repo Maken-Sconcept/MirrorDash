@@ -40,6 +40,12 @@ data class IptvUiState(
     val isBuffering: Boolean = false,
     val showChannelList: Boolean = false,
     val showGuide: Boolean = false,
+    /** True once a channel has been tapped from the Guide (and not since collapsed back via
+     * [IptvViewModel.collapseGuidePreview]) - the Guide shrinks to the bottom 70% of the screen
+     * and the live player becomes visible in the top 30% above it, rather than the Guide covering
+     * the whole screen and hiding playback the way it does before any tap. Reset to false each
+     * time the Guide is freshly opened, so every Guide session starts full-size. */
+    val guideShowsPreview: Boolean = false,
     val volume: Float = 1f,
     /** Bumped every time the underlying [ExoPlayer] instance is created or torn down, so the
      * screen knows to re-fetch it from [IptvViewModel.currentPlayer] and rebind its PlayerView -
@@ -182,7 +188,21 @@ class IptvViewModel(
     }
 
     fun toggleGuide() {
-        _uiState.update { it.copy(showGuide = !it.showGuide, showChannelList = false) }
+        _uiState.update {
+            val opening = !it.showGuide
+            it.copy(
+                showGuide = opening,
+                showChannelList = false,
+                // Every fresh Guide session starts full-size, whatever it was left at last time.
+                guideShowsPreview = if (opening) false else it.guideShowsPreview,
+            )
+        }
+    }
+
+    /** The Guide's own "regular size" button - collapses the preview back to a full-screen Guide
+     * without closing it, the reverse of what tapping a channel does. */
+    fun collapseGuidePreview() {
+        _uiState.update { it.copy(guideShowsPreview = false) }
     }
 
     fun selectGenre(genreId: String) {
@@ -303,7 +323,17 @@ class IptvViewModel(
     }
 
     private fun applyChannelSelection(index: Int) {
-        _uiState.update { it.copy(currentChannelIndex = index, showChannelList = false, showGuide = false) }
+        _uiState.update {
+            it.copy(
+                currentChannelIndex = index,
+                showChannelList = false,
+                // Picking a channel from the Guide previews it inline instead of closing the
+                // Guide out from under you - see [IptvUiState.guideShowsPreview]. Picking one from
+                // the simpler ChannelListPanel instead still closes as before, since showGuide is
+                // untouched here and was already false in that case.
+                guideShowsPreview = it.guideShowsPreview || it.showGuide,
+            )
+        }
         playCurrentChannel()
     }
 

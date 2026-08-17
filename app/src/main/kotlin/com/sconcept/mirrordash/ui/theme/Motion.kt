@@ -41,5 +41,5 @@ object MirrorDashMotion {
      * replay at all, it's a genuine Travel->Ambient->Travel round trip triggered by a normal
      * pause exceeding the window. Only fires once real inactivity - not just no touches this
      * instant - has elapsed. */
-    const val TRAVEL_IDLE_TIMEOUT_MS = 15000L
+    const val TRAVEL_IDLE_TIMEOUT_MS = 7500L
 }

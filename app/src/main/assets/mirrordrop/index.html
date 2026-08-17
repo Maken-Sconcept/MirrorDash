@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>MirrorDrop</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="brand">MirrorDash</div>
+      <div class="subbrand">MirrorDrop</div>
+    </header>
+
+    <main id="main" class="main">
+      <p id="status" class="status">Connecting to MirrorDash&hellip;</p>
+      <p id="deviceLine" class="device-line"></p>
+
+      <form id="pinPrompt" class="content pin-prompt" hidden>
+        <label for="pinInput">Enter the PIN shown on the mirror</label>
+        <input id="pinInput" name="pin" type="text" inputmode="numeric" autocomplete="off" maxlength="6" />
+        <p id="pinError" class="error-text pin-error"></p>
+        <button type="submit">Continue</button>
+      </form>
+
+      <div id="content" class="content" hidden></div>
+    </main>
+
+    <footer class="footer">
+      <span id="footerNote">Local network only. No account needed.</span>
+    </footer>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

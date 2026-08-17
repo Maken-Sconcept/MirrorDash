@@ -106,6 +106,29 @@ dependencies {
     implementation("eu.agno3.jcifs:jcifs-ng:2.1.10")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // Photobooth camera capture - CameraX preferred, with a Camera2 fallback path (see
+    // photobooth/CameraCapabilityDetector.kt) for the unusual Rockchip/Echelon camera HAL.
+    val cameraXVersion = "1.4.1"
+    implementation("androidx.camera:camera-core:$cameraXVersion")
+    implementation("androidx.camera:camera-camera2:$cameraXVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraXVersion")
+    implementation("androidx.camera:camera-view:$cameraXVersion")
+
+    // MirrorDrop's embedded local web server - the smallest maintained HTTP+WebSocket combo
+    // (avoids pulling in Ktor/OkHttp-server/Netty on a low-power device) for serving the
+    // receiver web app and signaling WebRTC over the LAN. See the mirrordrop package.
+    val nanohttpdVersion = "2.3.1"
+    implementation("org.nanohttpd:nanohttpd:$nanohttpdVersion")
+    implementation("org.nanohttpd:nanohttpd-websocket:$nanohttpdVersion")
+
+    // MirrorDrop's native WebRTC peer (RTCDataChannel file transfer). Google stopped publishing
+    // org.webrtc:google-webrtc; this is the actively maintained community successor with
+    // prebuilt libwebrtc .so's for armeabi-v7a/arm64-v8a.
+    implementation("io.getstream:stream-webrtc-android:1.3.8")
+
+    // MirrorDrop's QR pairing code - encoding only, no barcode scanning/camera decode needed.
+    implementation("com.google.zxing:core:3.5.3")
+
     // IPTV tab's player - HLS/TS live streams off a Stalker/Ministra portal (see the iptv
     // package). Not used by AirPlay, which decodes its own H.264/H.265 mirror stream natively.
     implementation("androidx.media3:media3-exoplayer:1.4.1")

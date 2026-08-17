@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -75,9 +76,11 @@ fun ClockSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel)
     Spacer(Modifier.height(28.dp))
 
     Crossfade(targetState = selectedTab, label = "clockSettingsTab") { tab ->
-        when (tab) {
-            ClockSettingsTab.CLOCK -> AppearanceSettingsContent(uiState, viewModel)
-            ClockSettingsTab.WIDGETS -> WidgetsSettingsContent(uiState, viewModel)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            when (tab) {
+                ClockSettingsTab.CLOCK -> AppearanceSettingsContent(uiState, viewModel)
+                ClockSettingsTab.WIDGETS -> WidgetsSettingsContent(uiState, viewModel)
+            }
         }
     }
 }

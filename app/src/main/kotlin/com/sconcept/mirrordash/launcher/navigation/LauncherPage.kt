@@ -13,6 +13,7 @@ sealed class LauncherPage(val id: String, val label: String) {
     data object Jellyfin : LauncherPage("jellyfin", "Jellyfin")
     data object HomeAssistant : LauncherPage("home_assistant", "Home Assistant")
     data object Iptv : LauncherPage("iptv", "IPTV")
+    data object Photobooth : LauncherPage("photobooth", "Photobooth")
     data object Settings : LauncherPage("settings", "Settings")
 }
 
@@ -30,6 +31,7 @@ object LauncherPages {
         includeJellyfinPage: Boolean,
         includeHomeAssistantPage: Boolean,
         includeIptvPage: Boolean,
+        includePhotoboothPage: Boolean,
     ): List<LauncherPage> = buildList {
         add(LauncherPage.Clock)
         if (includePhotoramaPage) add(LauncherPage.Photorama)
@@ -37,6 +39,7 @@ object LauncherPages {
         if (includeJellyfinPage) add(LauncherPage.Jellyfin)
         if (includeHomeAssistantPage) add(LauncherPage.HomeAssistant)
         if (includeIptvPage) add(LauncherPage.Iptv)
+        if (includePhotoboothPage) add(LauncherPage.Photobooth)
         add(LauncherPage.Settings)
     }
 }

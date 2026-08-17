@@ -68,8 +68,21 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
             _uiState.value = WeatherUiState(isConfigured = false)
             return
         }
-        val lat = config.latitude.toDoubleOrNull()
-        val lon = config.longitude.toDoubleOrNull()
+        var lat = config.latitude.toDoubleOrNull()
+        var lon = config.longitude.toDoubleOrNull()
+        if ((lat == null || lon == null) && config.query.isNotBlank()) {
+            repository.resolveLocation(config.query).getOrNull()?.let { resolved ->
+                lat = resolved.latitude
+                lon = resolved.longitude
+                settingsRepository.update {
+                    weatherLocationQuery = resolved.query
+                    weatherLocationLabel = resolved.label
+                    weatherLatitude = resolved.latitude.toString()
+                    weatherLongitude = resolved.longitude.toString()
+                    weatherEnabled = true
+                }
+            }
+        }
         if (lat == null || lon == null) {
             _uiState.value = WeatherUiState(isConfigured = false)
             return

@@ -20,6 +20,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Photobooth must not block install/launch on hardware without a working camera - the
+         Echelon/Rockchip camera HAL is unverified, so this is explicitly optional (brief §5). -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <queries>
         <intent>

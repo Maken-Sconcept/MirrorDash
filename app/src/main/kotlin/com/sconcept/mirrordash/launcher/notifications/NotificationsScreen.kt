@@ -1,8 +1,10 @@
 package com.sconcept.mirrordash.launcher.notifications
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.media.AudioManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,18 +24,25 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AirplanemodeActive
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -46,6 +55,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.sconcept.mirrordash.brightness.BrightnessMath
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import java.text.DateFormat
 import java.text.SimpleDateFormat
@@ -67,6 +77,8 @@ fun NotificationsScreen(
     onClearAll: () -> Unit,
     onGrantAccess: () -> Unit,
     onOpenSettings: () -> Unit,
+    brightnessLevel255: Int,
+    onBrightnessChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val timeText by rememberClockTicker()
@@ -74,7 +86,11 @@ fun NotificationsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MDTheme.colors.backgroundElevated)
+            // Translucent rather than the fully opaque backgroundElevated every other panel
+            // uses - the point of a quick-settings drop-down is seeing the page underneath
+            // still peeking through, same as stock Android's shade. No blur (RenderEffect
+            // needs API 31+, this runs on API 25 hardware) - flat alpha is the honest option.
+            .background(MDTheme.colors.backgroundElevated.copy(alpha = 0.86f))
             .padding(top = 28.dp, start = 40.dp, end = 40.dp, bottom = 24.dp),
     ) {
         // Landscape-width layout throughout, matching every other panel here (App Drawer,
@@ -104,6 +120,14 @@ fun NotificationsScreen(
         Spacer(Modifier.height(20.dp))
 
         QuickSettingsRow()
+
+        Spacer(Modifier.height(20.dp))
+
+        BrightnessSliderRow(level255 = brightnessLevel255, onLevelChange = onBrightnessChange)
+
+        Spacer(Modifier.height(12.dp))
+
+        VolumeSliderRow()
 
         Spacer(Modifier.height(24.dp))
 
@@ -298,6 +322,111 @@ private fun QuickSettingTile(state: QuickSettingState, onClick: () -> Unit) {
         }
         Spacer(Modifier.height(6.dp))
         Text(label, style = MDTheme.type.caption, color = MDTheme.colors.textSecondary)
+    }
+}
+
+/** Mirrors [com.sconcept.mirrordash.settings.ui.BrightnessSettingsContent]'s own "Backlight
+ * level" slider exactly - same [BrightnessMath.QUICK_CONTROL_STEPS] stepped scale, same setter
+ * call - so this and the Settings screen are just two views onto the one
+ * `settingsRepository.brightnessLevel255` value; dragging either updates the other live with no
+ * extra wiring, the same way [MirrorDashActivity]'s brightness collectors already react to any
+ * write regardless of where it came from. */
+@Composable
+private fun BrightnessSliderRow(level255: Int, onLevelChange: (Int) -> Unit) {
+    val steps = BrightnessMath.QUICK_CONTROL_STEPS
+    val stepIndex = BrightnessMath.stepIndexFor(level255)
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            Icons.Filled.Brightness6,
+            contentDescription = "Brightness",
+            tint = MDTheme.colors.textSecondary,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Slider(
+            value = stepIndex.toFloat(),
+            onValueChange = { onLevelChange(steps[it.toInt().coerceIn(0, steps.lastIndex)]) },
+            valueRange = 0f..steps.lastIndex.toFloat(),
+            steps = steps.size - 2,
+            colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(14.dp))
+        Text(
+            if (level255 == 0) "Off" else "${level255 * 100 / 255}%",
+            style = MDTheme.type.caption,
+            color = MDTheme.colors.textSecondary,
+            modifier = Modifier.width(36.dp),
+        )
+    }
+}
+
+/** System media volume ([AudioManager.STREAM_MUSIC]) - same direct-AudioManager approach as
+ * [com.sconcept.mirrordash.airplay.AirPlayMirrorSurface]'s volume overlay, the only other place
+ * in the app that touches the system stream. Tapping the icon mutes/restores (remembering the
+ * level from just before muting), same idea as a physical mute button. Polls on resume plus a
+ * slow background tick - same staleness handling [QuickSettingsRow] already uses for Wi-Fi/
+ * Bluetooth/DND - since a physical volume-key press changes the stream with no callback this
+ * composable would otherwise see. */
+@Composable
+private fun VolumeSliderRow() {
+    val context = LocalContext.current
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var volume by remember { mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)) }
+    var volumeBeforeMute by remember { mutableIntStateOf(volume.takeIf { it > 0 } ?: (maxVolume / 2)) }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1500)
+            volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        }
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            imageVector = when {
+                volume <= 0 -> Icons.AutoMirrored.Filled.VolumeOff
+                volume < maxVolume / 2 -> Icons.AutoMirrored.Filled.VolumeDown
+                else -> Icons.AutoMirrored.Filled.VolumeUp
+            },
+            contentDescription = if (volume <= 0) "Unmute" else "Mute",
+            tint = MDTheme.colors.textSecondary,
+            modifier = Modifier
+                .size(22.dp)
+                .clickable {
+                    if (volume > 0) {
+                        volumeBeforeMute = volume
+                        volume = 0
+                    } else {
+                        volume = volumeBeforeMute
+                    }
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+                },
+        )
+        Spacer(Modifier.width(14.dp))
+        Slider(
+            value = volume.toFloat(),
+            valueRange = 0f..maxVolume.toFloat(),
+            onValueChange = { newValue ->
+                volume = newValue.toInt()
+                if (volume > 0) volumeBeforeMute = volume
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+            },
+            colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

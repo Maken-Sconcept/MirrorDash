@@ -76,9 +76,7 @@ fun AirPlayMirrorSurface(modifier: Modifier = Modifier) {
                 override fun onVideoFormatChanged(codec: Int, width: Int, height: Int) {
                     decoder.onVideoFormatChanged(codec, width, height)
                 }
-                override fun onVideoFrame(data: ByteArray, ptsUs: Long) {
-                    decoder.onVideoFrame(data, ptsUs)
-                }
+                override fun onVideoFrame(data: ByteArray, ptsUs: Long) = decoder.onVideoFrame(data, ptsUs)
                 override fun onVideoSessionEnded() {
                     decoder.resetSession()
                 }

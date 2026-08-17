@@ -7,12 +7,12 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sconcept.mirrordash.ui.theme.MDTheme
@@ -53,21 +54,10 @@ import kotlin.math.roundToInt
 
 @Composable
 internal fun WeatherWidgetSurface(widget: WeatherWidget, weather: WeatherUiState, textColor: Color) {
-    if (!weather.isConfigured) return
-
-    val snapshot = weather.snapshot
-    if (widget.mode == WEATHER_WIDGET_MODE_FORECAST_CARD && snapshot != null) {
-        ForecastWeatherCard(
-            widget = widget,
-            weather = weather,
-            textColor = textColor,
-        )
+    if (widget.mode == WEATHER_WIDGET_MODE_FORECAST_CARD) {
+        ForecastWeatherCard(widget = widget, weather = weather, textColor = textColor)
     } else {
-        WeatherLineWidget(
-            widget = widget,
-            weather = weather,
-            textColor = textColor,
-        )
+        WeatherLineWidget(widget = widget, weather = weather, textColor = textColor)
     }
 }
 
@@ -99,12 +89,14 @@ private fun WeatherLineWidget(widget: WeatherWidget, weather: WeatherUiState, te
 
 @Composable
 private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, textColor: Color) {
-    val snapshot = weather.snapshot ?: return
+    val snapshot = weather.snapshot
     val scale = widget.scalePercent / 100f
-    val headerTitle = remember(snapshot.weatherCode, snapshot.isDay) {
-        weatherConditionLabel(snapshot.weatherCode, snapshot.isDay)
+    val headerTitle = remember(snapshot?.weatherCode, snapshot?.isDay, weather.condition) {
+        snapshot?.let { weatherConditionLabel(it.weatherCode, it.isDay) }
+            ?: weather.condition?.name?.lowercase()?.replaceFirstChar { it.titlecase() }
+            ?: "Weather"
     }
-    val currentTemperature = snapshot.currentTemperature.roundToInt()
+    val currentTemperature = snapshot?.currentTemperature?.roundToInt() ?: weather.temperature
     val horizontalPadding = (20f * scale).dp
     val verticalPadding = (18f * scale).dp
     val itemSpacing = (12f * scale).dp
@@ -132,24 +124,33 @@ private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, 
                         ),
                         color = textColor,
                     )
-                    if (widget.showLocation && snapshot.location.label.isNotBlank()) {
-                        Spacer(Modifier.height((4f * scale).dp))
-                        Text(
-                            text = snapshot.location.label,
-                            style = MDTheme.type.settingSubtitle.copy(fontSize = (15f * scale).sp),
-                            color = textColor.copy(alpha = 0.76f),
-                        )
+                    if (widget.showLocation) {
+                        val locationLabel = snapshot?.location?.label ?: weather.locationLabel
+                        if (!locationLabel.isNullOrBlank()) {
+                            Spacer(Modifier.height((4f * scale).dp))
+                            Text(
+                                text = locationLabel,
+                                style = MDTheme.type.settingSubtitle.copy(fontSize = (15f * scale).sp),
+                                color = textColor.copy(alpha = 0.76f),
+                            )
+                        }
                     }
                     Spacer(Modifier.height((6f * scale).dp))
                     Text(
-                        text = if (weather.isStale) "Last update unavailable" else "Live forecast",
+                        text = when {
+                            snapshot == null && weather.isLoading -> "Loading forecast"
+                            snapshot == null && weather.isConfigured -> "Forecast unavailable"
+                            !weather.isConfigured -> "Set a weather location"
+                            weather.isStale -> "Last update unavailable"
+                            else -> "Live forecast"
+                        },
                         style = MDTheme.type.caption.copy(fontSize = (12f * scale).sp),
                         color = textColor.copy(alpha = 0.6f),
                     )
                 }
 
                 Text(
-                    text = "$currentTemperature°",
+                    text = currentTemperature?.let { "$it°" } ?: "--°",
                     style = MDTheme.type.clock.copy(
                         fontSize = (54f * scale).sp,
                         fontWeight = FontWeight.Light,
@@ -161,14 +162,18 @@ private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, 
 
             Spacer(Modifier.height((18f * scale).dp))
 
-            if (widget.forecastMode == WEATHER_WIDGET_FORECAST_DAILY) {
-                DailyForecastGrid(
+            when {
+                snapshot == null -> PlaceholderForecastSummary(
+                    widget = widget,
+                    scale = scale,
+                    textColor = textColor,
+                )
+                widget.forecastMode == WEATHER_WIDGET_FORECAST_DAILY -> DailyForecastGrid(
                     items = snapshot.forecast.take(widget.itemCount.coerceAtLeast(1)),
                     scale = scale,
                     textColor = textColor,
                 )
-            } else {
-                HourlyForecastGrid(
+                else -> HourlyForecastGrid(
                     items = snapshot.hourlyForecast.take(widget.itemCount.coerceAtLeast(1)),
                     scale = scale,
                     textColor = textColor,
@@ -182,6 +187,43 @@ private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, 
                 style = MDTheme.type.caption.copy(fontSize = (12f * scale).sp),
                 color = textColor.copy(alpha = 0.56f),
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlaceholderForecastSummary(widget: WeatherWidget, scale: Float, textColor: Color) {
+    val items = widget.itemCount.coerceAtLeast(1).coerceAtMost(if (widget.forecastMode == WEATHER_WIDGET_FORECAST_DAILY) 5 else 6)
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy((10f * scale).dp),
+        verticalArrangement = Arrangement.spacedBy((10f * scale).dp),
+        maxItemsInEachRow = min(3, items),
+    ) {
+        repeat(items) { index ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy((6f * scale).dp),
+                modifier = Modifier
+                    .defaultMinSize(minWidth = (72f * scale).dp)
+                    .clip(RoundedCornerShape((16f * scale).dp))
+                    .background(Color.White.copy(alpha = 0.03f))
+                    .padding(horizontal = (10f * scale).dp, vertical = (10f * scale).dp),
+            ) {
+                Text(
+                    text = if (widget.forecastMode == WEATHER_WIDGET_FORECAST_DAILY) "Day ${index + 1}" else "Hour ${index + 1}",
+                    style = MDTheme.type.settingSubtitle.copy(fontSize = (13f * scale).sp),
+                    color = textColor.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                )
+                AnimatedWeatherIcon(weatherCode = 3, isDay = true, size = (26f * scale).dp)
+                Text(
+                    text = "--",
+                    style = MDTheme.type.caption.copy(fontSize = (12f * scale).sp),
+                    color = textColor.copy(alpha = 0.5f),
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 }
@@ -267,51 +309,36 @@ private fun ForecastChip(
 }
 
 @Composable
-internal fun AnimatedWeatherIcon(weatherCode: Int, isDay: Boolean, size: androidx.compose.ui.unit.Dp) {
+internal fun AnimatedWeatherIcon(weatherCode: Int, isDay: Boolean, size: Dp) {
     val transition = rememberInfiniteTransition(label = "weatherIcon")
     val drift by transition.animateFloat(
         initialValue = -1f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 4200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
+        animationSpec = infiniteRepeatable(tween(durationMillis = 4200, easing = LinearEasing), RepeatMode.Reverse),
         label = "drift",
     )
     val pulse by transition.animateFloat(
         initialValue = 0.92f,
         targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3600, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
+        animationSpec = infiniteRepeatable(tween(durationMillis = 3600, easing = LinearEasing), RepeatMode.Reverse),
         label = "pulse",
     )
     val rainOffset by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
+        animationSpec = infiniteRepeatable(tween(durationMillis = 1500, easing = LinearEasing), RepeatMode.Restart),
         label = "rainOffset",
     )
     val snowOffset by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
+        animationSpec = infiniteRepeatable(tween(durationMillis = 3000, easing = LinearEasing), RepeatMode.Restart),
         label = "snowOffset",
     )
     val flash by transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.85f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
+        animationSpec = infiniteRepeatable(tween(durationMillis = 900, easing = LinearEasing), RepeatMode.Reverse),
         label = "flash",
     )
 
@@ -335,12 +362,12 @@ internal fun AnimatedWeatherIcon(weatherCode: Int, isDay: Boolean, size: android
             repeat(8) { index ->
                 val angle = Math.toRadians((index * 45.0) + drift * 4.0)
                 val start = Offset(
-                    (sunCenter.x + kotlin.math.cos(angle).toFloat() * sunRadius * 1.45f),
-                    (sunCenter.y + kotlin.math.sin(angle).toFloat() * sunRadius * 1.45f),
+                    sunCenter.x + kotlin.math.cos(angle).toFloat() * sunRadius * 1.45f,
+                    sunCenter.y + kotlin.math.sin(angle).toFloat() * sunRadius * 1.45f,
                 )
                 val end = Offset(
-                    (sunCenter.x + kotlin.math.cos(angle).toFloat() * sunRadius * 2.05f),
-                    (sunCenter.y + kotlin.math.sin(angle).toFloat() * sunRadius * 2.05f),
+                    sunCenter.x + kotlin.math.cos(angle).toFloat() * sunRadius * 2.05f,
+                    sunCenter.y + kotlin.math.sin(angle).toFloat() * sunRadius * 2.05f,
                 )
                 drawLine(
                     color = sunColor.copy(alpha = 0.55f),
@@ -368,8 +395,7 @@ internal fun AnimatedWeatherIcon(weatherCode: Int, isDay: Boolean, size: android
                     ),
                 )
             }
-            val crescent = Path.combine(PathOperation.Difference, outer, inner)
-            drawPath(crescent, color = moonColor.copy(alpha = 0.95f))
+            drawPath(Path.combine(PathOperation.Difference, outer, inner), color = moonColor.copy(alpha = 0.95f))
         }
 
         if (spec.kind == WeatherVisualKind.FOG) {
@@ -457,9 +483,7 @@ internal fun AnimatedWeatherIcon(weatherCode: Int, isDay: Boolean, size: android
     }
 }
 
-private data class WeatherVisualSpec(
-    val kind: WeatherVisualKind,
-)
+private data class WeatherVisualSpec(val kind: WeatherVisualKind)
 
 private enum class WeatherVisualKind(val needsCloud: Boolean) {
     SUN(false),

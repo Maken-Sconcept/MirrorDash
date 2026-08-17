@@ -207,7 +207,7 @@ private fun ClockContent(
             RightEdgeAffordance(color = appearance.textColor)
         }
 
-        if (airPlayStatus != null && airPlayStatus.enabled) {
+        if (airPlayStatus != null && airPlayStatus.enabled && airPlayStatus.showClockWidget) {
             AirPlayStatusWidget(
                 state = airPlayStatus,
                 modifier = Modifier.align(Alignment.TopStart).padding(EDGE_INSET),
