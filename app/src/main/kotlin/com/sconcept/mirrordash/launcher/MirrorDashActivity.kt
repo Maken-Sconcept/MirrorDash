@@ -77,6 +77,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -125,6 +126,12 @@ class MirrorDashActivity : ComponentActivity() {
         }
 
         photoramaViewModel.ensureStarted()
+
+        lifecycleScope.launch {
+            if (!container.settingsRepository.settings.first().provisioningAppliedOnce) {
+                settingsViewModel.autoApplyProvisioningConfigIfPresent()
+            }
+        }
 
         // Safety net alongside ScheduledRecordingReceiver's own BOOT_COMPLETED handling - covers
         // the case where the app was installed/updated after the last boot (which never fires
@@ -493,6 +500,14 @@ private fun LauncherPageContent(
         }
         LauncherPage.Jellyfin -> {
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+            // Starts null (not "") so autoAuthEnabled below stays false - and no auto-auth script
+            // gets generated at all - until the Keystore read actually resolves, rather than
+            // briefly generating one with an empty password that could reach the page before the
+            // real value loads.
+            var autoAuthPassword by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(settingsState.settings.jellyfinAutoAuth) {
+                autoAuthPassword = if (settingsState.settings.jellyfinAutoAuth) settingsViewModel.jellyfinPassword() else null
+            }
             JellyfinScreen(
                 serverUrl = settingsState.settings.jellyfinServerUrl,
                 startPath = settingsState.settings.jellyfinStartPath,
@@ -501,11 +516,23 @@ private fun LauncherPageContent(
                 openExternalLinks = settingsState.settings.jellyfinOpenExternalLinks,
                 isActive = isJellyfinPageActive,
                 isAwake = isAwake,
+                autoAuthUsername = settingsState.settings.jellyfinUsername,
+                autoAuthPassword = autoAuthPassword.orEmpty(),
+                autoAuthEnabled = settingsState.settings.jellyfinAutoAuth && autoAuthPassword != null,
             )
         }
         LauncherPage.HomeAssistant -> {
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
-            HomeAssistantScreen(url = settingsState.settings.homeAssistantUrl)
+            var autoAuthPassword by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(settingsState.settings.homeAssistantAutoAuth) {
+                autoAuthPassword = if (settingsState.settings.homeAssistantAutoAuth) settingsViewModel.homeAssistantPassword() else null
+            }
+            HomeAssistantScreen(
+                url = settingsState.settings.homeAssistantUrl,
+                autoAuthUsername = settingsState.settings.homeAssistantUsername,
+                autoAuthPassword = autoAuthPassword.orEmpty(),
+                autoAuthEnabled = settingsState.settings.homeAssistantAutoAuth && autoAuthPassword != null,
+            )
         }
         LauncherPage.Iptv -> {
             IptvScreen(viewModel = iptvViewModel)

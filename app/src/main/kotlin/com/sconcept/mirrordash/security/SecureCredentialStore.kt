@@ -10,11 +10,21 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/** Identifies which slot a credential is stored under - [SecureCredentialStore] shares one
+ * Keystore key across every slot (a fresh IV per encryption keeps that safe), so this is just a
+ * SharedPreferences key suffix, not a separate cryptographic identity. */
+object CredentialId {
+    const val SMB = "smb"
+    const val JELLYFIN = "jellyfin"
+    const val HOME_ASSISTANT = "home_assistant"
+}
+
 /**
- * Encrypts the SMB password at rest using a key generated inside the Android Keystore
- * (hardware-backed where available). The key material never leaves the keystore; only
- * ciphertext + IV is persisted in SharedPreferences. Ported unchanged from BerthierOptions -
- * no Fossify or other app-specific dependency here.
+ * Encrypts credentials (SMB, Jellyfin, Home Assistant, ...) at rest using a key generated inside
+ * the Android Keystore (hardware-backed where available). The key material never leaves the
+ * keystore; only ciphertext + IV is persisted in SharedPreferences, one slot per [CredentialId].
+ * Originally ported unchanged from BerthierOptions as a single SMB-only slot; generalized to a
+ * keyed store once Jellyfin/Home Assistant auto-auth needed their own slots too.
  */
 class SecureCredentialStore(context: Context) {
 
@@ -27,7 +37,8 @@ class SecureCredentialStore(context: Context) {
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_LENGTH_BITS = 128
         private const val GCM_IV_LENGTH_BYTES = 12
-        private const val PREF_SMB_PASSWORD = "smb_password_enc"
+
+        private fun prefKeyFor(credentialId: String) = "${credentialId}_password_enc"
     }
 
     private fun getOrCreateKey(): SecretKey {
@@ -69,19 +80,19 @@ class SecureCredentialStore(context: Context) {
         }
     }
 
-    fun saveCredentials(password: String) {
-        prefs.edit().putString(PREF_SMB_PASSWORD, encrypt(password)).apply()
+    fun saveCredentials(credentialId: String, password: String) {
+        prefs.edit().putString(prefKeyFor(credentialId), encrypt(password)).apply()
     }
 
-    fun loadCredentials(): String? {
-        val encoded = prefs.getString(PREF_SMB_PASSWORD, null) ?: return null
+    fun loadCredentials(credentialId: String): String? {
+        val encoded = prefs.getString(prefKeyFor(credentialId), null) ?: return null
         return decrypt(encoded)
     }
 
-    fun hasCredentials() = prefs.contains(PREF_SMB_PASSWORD)
+    fun hasCredentials(credentialId: String) = prefs.contains(prefKeyFor(credentialId))
 
-    fun deleteCredentials() {
-        prefs.edit().remove(PREF_SMB_PASSWORD).apply()
+    fun deleteCredentials(credentialId: String) {
+        prefs.edit().remove(prefKeyFor(credentialId)).apply()
     }
 }
 

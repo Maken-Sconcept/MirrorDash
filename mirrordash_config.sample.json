@@ -1,0 +1,28 @@
+{
+  "jellyfin": {
+    "url": "http://jellyfin.example.local:8096/web/#/home",
+    "username": "changeme",
+    "password": "changeme",
+    "autoAuth": true
+  },
+  "homeAssistant": {
+    "url": "http://homeassistant.example.local:8123/lovelace/default_view",
+    "username": "changeme",
+    "password": "changeme",
+    "autoAuth": true
+  },
+  "walkieTalkie": {
+    "autoAddDiscovered": true
+  },
+  "iptv": {
+    "url": "http://iptv.example.local:8080/c/",
+    "mac": "00:1A:79:00:00:00",
+    "openMuted": true
+  },
+  "nas": {
+    "server": "192.168.1.10",
+    "shareName": "MyShare",
+    "username": "changeme",
+    "password": "changeme"
+  }
+}

@@ -1,15 +1,23 @@
 package com.sconcept.mirrordash.settings.ui
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sconcept.mirrordash.settings.SettingsUiState
 import com.sconcept.mirrordash.settings.SettingsViewModel
@@ -114,6 +122,56 @@ fun JellyfinSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewMod
             onCheckedChange = viewModel::setJellyfinOpenExternalLinks,
             colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
         )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Auto sign-in") {
+        Text(
+            "Fills in the username/password below on the login page automatically. Best-effort -" +
+                " if Jellyfin's login form ever changes shape, it just falls back to signing in" +
+                " manually that session.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        ) {
+            Switch(
+                checked = settings.jellyfinAutoAuth,
+                onCheckedChange = viewModel::setJellyfinAutoAuth,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("Sign in automatically", style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+        }
+        Spacer(Modifier.height(16.dp))
+        BufferedTextField(
+            persistedValue = settings.jellyfinUsername,
+            onValueChange = viewModel::setJellyfinUsername,
+            placeholder = { Text("Username") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = uiState.jellyfinPasswordDraft,
+            onValueChange = viewModel::setJellyfinPasswordDraft,
+            label = { Text("Password") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = viewModel::saveJellyfinPassword,
+            enabled = uiState.jellyfinPasswordDraft.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
+        ) {
+            Text("Save password")
+        }
     }
 
     Spacer(Modifier.height(16.dp))

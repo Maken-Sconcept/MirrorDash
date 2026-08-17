@@ -21,6 +21,8 @@ import com.sconcept.mirrordash.nas.model.SmbShare
 import com.sconcept.mirrordash.launcher.AppContainer
 import com.sconcept.mirrordash.launcher.display.DisplayOrientationMode
 import com.sconcept.mirrordash.launcher.display.storageKey
+import com.sconcept.mirrordash.provisioning.ProvisioningConfig
+import com.sconcept.mirrordash.provisioning.ProvisioningConfigLoader
 import com.sconcept.mirrordash.walkietalkie.WalkieTalkieUiState
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkieDiscoveredPeer
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
@@ -38,6 +40,12 @@ import kotlinx.coroutines.withContext
 
 enum class NasTestResult { IDLE, TESTING, SUCCESS, FAILED }
 
+data class ProvisioningStatus(
+    val appliedAt: Long,
+    val summary: String,
+    val isError: Boolean = false,
+)
+
 data class NasBrowserState(
     val path: String = "",
     val items: List<SmbFileItem> = emptyList(),
@@ -51,12 +59,15 @@ data class SettingsUiState(
     val nasTestResult: NasTestResult = NasTestResult.IDLE,
     val nasTestMessage: String? = null,
     val nasPasswordDraft: String = "",
+    val jellyfinPasswordDraft: String = "",
+    val homeAssistantPasswordDraft: String = "",
     val browser: NasBrowserState? = null,
     val weatherResolving: Boolean = false,
     val weatherError: String? = null,
     val nearbyWalkieTalkiePeers: List<WalkieTalkieDiscoveredPeer> = emptyList(),
     val walkieTalkieState: WalkieTalkieUiState = WalkieTalkieUiState(),
     val airPlayState: AirPlayUiState = AirPlayUiState(),
+    val provisioningStatus: ProvisioningStatus? = null,
 )
 
 /**
@@ -331,6 +342,10 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { walkieTalkieOverlayEnabled = enabled }
     }
 
+    fun setWalkieTalkieAutoAddDiscovered(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { walkieTalkieAutoAddDiscovered = enabled }
+    }
+
     fun pressToTalk(target: String) {
         walkieTalkieEngine.pressToTalk(target)
     }
@@ -428,6 +443,25 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { jellyfinOpenExternalLinks = enabled }
     }
 
+    fun setJellyfinUsername(username: String) = viewModelScope.launch {
+        settingsRepository.update { jellyfinUsername = username }
+    }
+
+    fun setJellyfinAutoAuth(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { jellyfinAutoAuth = enabled }
+    }
+
+    fun setJellyfinPasswordDraft(password: String) {
+        _extra.update { it.copy(jellyfinPasswordDraft = password) }
+    }
+
+    fun saveJellyfinPassword() = viewModelScope.launch {
+        settingsRepository.saveJellyfinPassword(_extra.value.jellyfinPasswordDraft)
+        _extra.update { it.copy(jellyfinPasswordDraft = "") }
+    }
+
+    suspend fun jellyfinPassword(): String = settingsRepository.jellyfinPassword()
+
     // --- Home Assistant --------------------------------------------------------------------------
 
     fun setHomeAssistantEnabled(enabled: Boolean) = viewModelScope.launch {
@@ -437,6 +471,25 @@ class SettingsViewModel(application: Application, private val settingsRepository
     fun setHomeAssistantUrl(url: String) = viewModelScope.launch {
         settingsRepository.update { homeAssistantUrl = url }
     }
+
+    fun setHomeAssistantUsername(username: String) = viewModelScope.launch {
+        settingsRepository.update { homeAssistantUsername = username }
+    }
+
+    fun setHomeAssistantAutoAuth(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { homeAssistantAutoAuth = enabled }
+    }
+
+    fun setHomeAssistantPasswordDraft(password: String) {
+        _extra.update { it.copy(homeAssistantPasswordDraft = password) }
+    }
+
+    fun saveHomeAssistantPassword() = viewModelScope.launch {
+        settingsRepository.saveHomeAssistantPassword(_extra.value.homeAssistantPasswordDraft)
+        _extra.update { it.copy(homeAssistantPasswordDraft = "") }
+    }
+
+    suspend fun homeAssistantPassword(): String = settingsRepository.homeAssistantPassword()
 
     // --- IPTV ----------------------------------------------------------------------------------
 
@@ -534,6 +587,97 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setNightClockTextDimPercent(percent: Int) = viewModelScope.launch {
         settingsRepository.update { nightClockTextDimPercent = percent }
+    }
+
+    // --- Provisioning ----------------------------------------------------------------------
+
+    /** Called once from [com.sconcept.mirrordash.launcher.MirrorDashActivity] on every cold
+     * start where [MirrorDashSettings.provisioningAppliedOnce] is still false - deliberately
+     * does NOT set that flag when no file is present, so a unit that's booted before its config
+     * file was pushed just tries again next launch instead of missing its one shot. */
+    fun autoApplyProvisioningConfigIfPresent() {
+        val config = ProvisioningConfigLoader.load(getApplication<Application>()) ?: return
+        applyProvisioningConfig(config)
+    }
+
+    /** The "Re-apply config file" button in Launcher settings - re-reads and re-applies
+     * unconditionally, so editing the on-device file (e.g. a changed password) can be synced
+     * without wiping app data. */
+    fun reapplyProvisioningConfig() = viewModelScope.launch {
+        val config = ProvisioningConfigLoader.load(getApplication<Application>())
+        if (config == null) {
+            _extra.update {
+                it.copy(
+                    provisioningStatus = ProvisioningStatus(
+                        appliedAt = System.currentTimeMillis(),
+                        summary = "No config file found at ${ProvisioningConfigLoader.configFile(getApplication<Application>()).absolutePath}",
+                        isError = true,
+                    ),
+                )
+            }
+            return@launch
+        }
+        applyProvisioningConfig(config)
+    }
+
+    private fun applyProvisioningConfig(config: ProvisioningConfig) = viewModelScope.launch {
+        val applied = mutableListOf<String>()
+
+        config.jellyfin?.let { cfg ->
+            settingsRepository.update {
+                jellyfinServerUrl = cfg.url
+                jellyfinUsername = cfg.username
+                jellyfinAutoAuth = cfg.autoAuth
+                jellyfinEnabled = true
+            }
+            settingsRepository.saveJellyfinPassword(cfg.password)
+            applied += "Jellyfin"
+        }
+
+        config.homeAssistant?.let { cfg ->
+            settingsRepository.update {
+                homeAssistantUrl = cfg.url
+                homeAssistantUsername = cfg.username
+                homeAssistantAutoAuth = cfg.autoAuth
+                homeAssistantEnabled = true
+            }
+            settingsRepository.saveHomeAssistantPassword(cfg.password)
+            applied += "Home Assistant"
+        }
+
+        config.walkieTalkie?.let { cfg ->
+            settingsRepository.update {
+                walkieTalkieAutoAddDiscovered = cfg.autoAddDiscovered
+                walkieTalkieEnabled = true
+            }
+            applied += "Walkie-Talkie"
+        }
+
+        config.iptv?.let { cfg ->
+            settingsRepository.update {
+                iptvPortalUrl = cfg.url
+                iptvMacAddress = com.sconcept.mirrordash.iptv.IptvMac.normalize(cfg.mac)
+                iptvOpenMuted = cfg.openMuted
+                iptvEnabled = true
+            }
+            applied += "IPTV"
+        }
+
+        config.nas?.let { cfg ->
+            setNasPasswordDraft(cfg.password)
+            testNasConnection(cfg.server, cfg.shareName.trimStart('\\', '/'), cfg.username, "", true)
+            applied += "NAS"
+        }
+
+        settingsRepository.update { provisioningAppliedOnce = true }
+        _extra.update {
+            it.copy(
+                provisioningStatus = ProvisioningStatus(
+                    appliedAt = System.currentTimeMillis(),
+                    summary = if (applied.isEmpty()) "Config file had nothing to apply" else "Applied: ${applied.joinToString(", ")}",
+                ),
+            )
+        }
     }
 
     companion object {

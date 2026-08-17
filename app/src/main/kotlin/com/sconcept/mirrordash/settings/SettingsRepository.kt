@@ -17,6 +17,7 @@ import com.sconcept.mirrordash.iptv.ParentalControlMode
 import com.sconcept.mirrordash.iptv.RecordingDestinationMode
 import com.sconcept.mirrordash.iptv.ScheduledRecording
 import com.sconcept.mirrordash.nas.model.SmbShare
+import com.sconcept.mirrordash.security.CredentialId
 import com.sconcept.mirrordash.security.SecureCredentialStore
 import com.sconcept.mirrordash.security.SessionCredentialHolder
 import com.sconcept.mirrordash.ui.theme.DEFAULT_CLOCK_FONT_SIZE_SP
@@ -141,6 +142,9 @@ data class MirrorDashSettings(
     val walkieTalkieOverlayEnabled: Boolean = false,
     val walkieTalkiePttAnchorX: Float = 0.92f,
     val walkieTalkiePttAnchorY: Float = 0.82f,
+    // When on, every peer NSD discovery finds is added to walkieTalkiePeers automatically -
+    // see the auto-add collector in WalkieTalkieEngine's init block.
+    val walkieTalkieAutoAddDiscovered: Boolean = true,
 
     // AirPlay
     val airplayEnabled: Boolean = false,
@@ -156,17 +160,22 @@ data class MirrorDashSettings(
     val browserHomeUrl: String = "",
     val browserLastVisitedUrl: String = "",
 
-    // Jellyfin
+    // Jellyfin - the password never lives here, it goes through SecureCredentialStore
+    // (CredentialId.JELLYFIN), same as the SMB password.
     val jellyfinEnabled: Boolean = false,
     val jellyfinServerUrl: String = "",
     val jellyfinStartPath: String = "",
     val jellyfinDesktopMode: Boolean = false,
     val jellyfinReloadOnOpen: Boolean = false,
     val jellyfinOpenExternalLinks: Boolean = true,
+    val jellyfinUsername: String = "",
+    val jellyfinAutoAuth: Boolean = true,
 
-    // Home Assistant
+    // Home Assistant - password via SecureCredentialStore (CredentialId.HOME_ASSISTANT).
     val homeAssistantEnabled: Boolean = false,
     val homeAssistantUrl: String = "",
+    val homeAssistantUsername: String = "",
+    val homeAssistantAutoAuth: Boolean = true,
 
     // IPTV (Stalker/Ministra portal - see the iptv package)
     val iptvEnabled: Boolean = false,
@@ -222,6 +231,10 @@ data class MirrorDashSettings(
     val nightClockAnchorY: Float = DEFAULT_NIGHT_CLOCK_ANCHOR_Y,
     val nightClockWeatherAnchorX: Float = DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_X,
     val nightClockWeatherAnchorY: Float = DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_Y,
+
+    // Provisioning - see the provisioning package. Set once the on-device config file (if any)
+    // has been applied, so it only auto-seeds settings once, not on every boot.
+    val provisioningAppliedOnce: Boolean = false,
 ) {
     val smbShare: SmbShare
         get() = SmbShare(
@@ -260,7 +273,7 @@ class SettingsRepository(context: Context) {
 
     private fun resolveSmbPassword(remember: Boolean): String {
         return if (remember) {
-            secureCredentialStore.loadCredentials() ?: ""
+            secureCredentialStore.loadCredentials(CredentialId.SMB) ?: ""
         } else {
             SessionCredentialHolder.smbPassword ?: ""
         }
@@ -275,10 +288,10 @@ class SettingsRepository(context: Context) {
             prefs[Keys.SMB_REMEMBER] = remember
         }
         if (remember) {
-            secureCredentialStore.saveCredentials(share.password)
+            secureCredentialStore.saveCredentials(CredentialId.SMB, share.password)
             SessionCredentialHolder.smbPassword = null
         } else {
-            secureCredentialStore.deleteCredentials()
+            secureCredentialStore.deleteCredentials(CredentialId.SMB)
             SessionCredentialHolder.smbPassword = share.password
         }
     }
@@ -293,8 +306,20 @@ class SettingsRepository(context: Context) {
             prefs.remove(Keys.PHOTORAMA_FOLDER_PATH)
             prefs[Keys.PHOTORAMA_ENABLED] = false
         }
-        secureCredentialStore.deleteCredentials()
+        secureCredentialStore.deleteCredentials(CredentialId.SMB)
         SessionCredentialHolder.smbPassword = null
+    }
+
+    suspend fun jellyfinPassword(): String = secureCredentialStore.loadCredentials(CredentialId.JELLYFIN) ?: ""
+
+    suspend fun saveJellyfinPassword(password: String) {
+        secureCredentialStore.saveCredentials(CredentialId.JELLYFIN, password)
+    }
+
+    suspend fun homeAssistantPassword(): String = secureCredentialStore.loadCredentials(CredentialId.HOME_ASSISTANT) ?: ""
+
+    suspend fun saveHomeAssistantPassword(password: String) {
+        secureCredentialStore.saveCredentials(CredentialId.HOME_ASSISTANT, password)
     }
 
     suspend fun update(transform: MirrorDashSettingsEditor.() -> Unit) {
@@ -369,6 +394,7 @@ class SettingsRepository(context: Context) {
             walkieTalkieOverlayEnabled = this[Keys.WALKIE_TALKIE_OVERLAY_ENABLED] ?: defaults.walkieTalkieOverlayEnabled,
             walkieTalkiePttAnchorX = this[Keys.WALKIE_TALKIE_PTT_ANCHOR_X] ?: defaults.walkieTalkiePttAnchorX,
             walkieTalkiePttAnchorY = this[Keys.WALKIE_TALKIE_PTT_ANCHOR_Y] ?: defaults.walkieTalkiePttAnchorY,
+            walkieTalkieAutoAddDiscovered = this[Keys.WALKIE_TALKIE_AUTO_ADD_DISCOVERED] ?: defaults.walkieTalkieAutoAddDiscovered,
             airplayEnabled = this[Keys.AIRPLAY_ENABLED] ?: defaults.airplayEnabled,
             airplayHwAddressHex = this[Keys.AIRPLAY_HW_ADDRESS_HEX] ?: defaults.airplayHwAddressHex,
             airplayAuthMode = this[Keys.AIRPLAY_AUTH_MODE] ?: defaults.airplayAuthMode,
@@ -385,8 +411,12 @@ class SettingsRepository(context: Context) {
             jellyfinDesktopMode = this[Keys.JELLYFIN_DESKTOP_MODE] ?: defaults.jellyfinDesktopMode,
             jellyfinReloadOnOpen = this[Keys.JELLYFIN_RELOAD_ON_OPEN] ?: defaults.jellyfinReloadOnOpen,
             jellyfinOpenExternalLinks = this[Keys.JELLYFIN_OPEN_EXTERNAL_LINKS] ?: defaults.jellyfinOpenExternalLinks,
+            jellyfinUsername = this[Keys.JELLYFIN_USERNAME] ?: defaults.jellyfinUsername,
+            jellyfinAutoAuth = this[Keys.JELLYFIN_AUTO_AUTH] ?: defaults.jellyfinAutoAuth,
             homeAssistantEnabled = this[Keys.HOME_ASSISTANT_ENABLED] ?: defaults.homeAssistantEnabled,
             homeAssistantUrl = this[Keys.HOME_ASSISTANT_URL] ?: defaults.homeAssistantUrl,
+            homeAssistantUsername = this[Keys.HOME_ASSISTANT_USERNAME] ?: defaults.homeAssistantUsername,
+            homeAssistantAutoAuth = this[Keys.HOME_ASSISTANT_AUTO_AUTH] ?: defaults.homeAssistantAutoAuth,
             iptvEnabled = this[Keys.IPTV_ENABLED] ?: defaults.iptvEnabled,
             iptvPortalUrl = this[Keys.IPTV_PORTAL_URL] ?: defaults.iptvPortalUrl,
             iptvMacAddress = this[Keys.IPTV_MAC_ADDRESS] ?: defaults.iptvMacAddress,
@@ -415,6 +445,7 @@ class SettingsRepository(context: Context) {
             nightClockAnchorY = this[Keys.NIGHT_CLOCK_ANCHOR_Y] ?: defaults.nightClockAnchorY,
             nightClockWeatherAnchorX = this[Keys.NIGHT_CLOCK_WEATHER_ANCHOR_X] ?: defaults.nightClockWeatherAnchorX,
             nightClockWeatherAnchorY = this[Keys.NIGHT_CLOCK_WEATHER_ANCHOR_Y] ?: defaults.nightClockWeatherAnchorY,
+            provisioningAppliedOnce = this[Keys.PROVISIONING_APPLIED_ONCE] ?: defaults.provisioningAppliedOnce,
         )
     }
 
@@ -461,6 +492,7 @@ class SettingsRepository(context: Context) {
         val WALKIE_TALKIE_OVERLAY_ENABLED = booleanPreferencesKey("walkie_talkie_overlay_enabled")
         val WALKIE_TALKIE_PTT_ANCHOR_X = floatPreferencesKey("walkie_talkie_ptt_anchor_x")
         val WALKIE_TALKIE_PTT_ANCHOR_Y = floatPreferencesKey("walkie_talkie_ptt_anchor_y")
+        val WALKIE_TALKIE_AUTO_ADD_DISCOVERED = booleanPreferencesKey("walkie_talkie_auto_add_discovered")
 
         val AIRPLAY_ENABLED = booleanPreferencesKey("airplay_enabled")
         val AIRPLAY_HW_ADDRESS_HEX = stringPreferencesKey("airplay_hw_address_hex")
@@ -480,9 +512,13 @@ class SettingsRepository(context: Context) {
         val JELLYFIN_DESKTOP_MODE = booleanPreferencesKey("jellyfin_desktop_mode")
         val JELLYFIN_RELOAD_ON_OPEN = booleanPreferencesKey("jellyfin_reload_on_open")
         val JELLYFIN_OPEN_EXTERNAL_LINKS = booleanPreferencesKey("jellyfin_open_external_links")
+        val JELLYFIN_USERNAME = stringPreferencesKey("jellyfin_username")
+        val JELLYFIN_AUTO_AUTH = booleanPreferencesKey("jellyfin_auto_auth")
 
         val HOME_ASSISTANT_ENABLED = booleanPreferencesKey("home_assistant_enabled")
         val HOME_ASSISTANT_URL = stringPreferencesKey("home_assistant_url")
+        val HOME_ASSISTANT_USERNAME = stringPreferencesKey("home_assistant_username")
+        val HOME_ASSISTANT_AUTO_AUTH = booleanPreferencesKey("home_assistant_auto_auth")
 
         val IPTV_ENABLED = booleanPreferencesKey("iptv_enabled")
         val IPTV_PORTAL_URL = stringPreferencesKey("iptv_portal_url")
@@ -516,6 +552,8 @@ class SettingsRepository(context: Context) {
         val NIGHT_CLOCK_ANCHOR_Y = floatPreferencesKey("night_clock_anchor_y")
         val NIGHT_CLOCK_WEATHER_ANCHOR_X = floatPreferencesKey("night_clock_weather_anchor_x")
         val NIGHT_CLOCK_WEATHER_ANCHOR_Y = floatPreferencesKey("night_clock_weather_anchor_y")
+
+        val PROVISIONING_APPLIED_ONCE = booleanPreferencesKey("provisioning_applied_once")
     }
 }
 
@@ -560,6 +598,7 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var walkieTalkieOverlayEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_OVERLAY_ENABLED, prefs, defaults.walkieTalkieOverlayEnabled)
     var walkieTalkiePttAnchorX: Float by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_PTT_ANCHOR_X, prefs, defaults.walkieTalkiePttAnchorX)
     var walkieTalkiePttAnchorY: Float by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_PTT_ANCHOR_Y, prefs, defaults.walkieTalkiePttAnchorY)
+    var walkieTalkieAutoAddDiscovered: Boolean by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_AUTO_ADD_DISCOVERED, prefs, defaults.walkieTalkieAutoAddDiscovered)
 
     var airplayEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.AIRPLAY_ENABLED, prefs, defaults.airplayEnabled)
     var airplayHwAddressHex: String by PrefDelegate(SettingsRepository.Keys.AIRPLAY_HW_ADDRESS_HEX, prefs, defaults.airplayHwAddressHex)
@@ -579,9 +618,13 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var jellyfinDesktopMode: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_DESKTOP_MODE, prefs, defaults.jellyfinDesktopMode)
     var jellyfinReloadOnOpen: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_RELOAD_ON_OPEN, prefs, defaults.jellyfinReloadOnOpen)
     var jellyfinOpenExternalLinks: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_OPEN_EXTERNAL_LINKS, prefs, defaults.jellyfinOpenExternalLinks)
+    var jellyfinUsername: String by PrefDelegate(SettingsRepository.Keys.JELLYFIN_USERNAME, prefs, defaults.jellyfinUsername)
+    var jellyfinAutoAuth: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_AUTO_AUTH, prefs, defaults.jellyfinAutoAuth)
 
     var homeAssistantEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_ENABLED, prefs, defaults.homeAssistantEnabled)
     var homeAssistantUrl: String by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_URL, prefs, defaults.homeAssistantUrl)
+    var homeAssistantUsername: String by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_USERNAME, prefs, defaults.homeAssistantUsername)
+    var homeAssistantAutoAuth: Boolean by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_AUTO_AUTH, prefs, defaults.homeAssistantAutoAuth)
 
     var iptvEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_ENABLED, prefs, defaults.iptvEnabled)
     var iptvPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_PORTAL_URL, prefs, defaults.iptvPortalUrl)
@@ -611,6 +654,8 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var nightClockAnchorY: Float by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_ANCHOR_Y, prefs, defaults.nightClockAnchorY)
     var nightClockWeatherAnchorX: Float by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_WEATHER_ANCHOR_X, prefs, defaults.nightClockWeatherAnchorX)
     var nightClockWeatherAnchorY: Float by PrefDelegate(SettingsRepository.Keys.NIGHT_CLOCK_WEATHER_ANCHOR_Y, prefs, defaults.nightClockWeatherAnchorY)
+
+    var provisioningAppliedOnce: Boolean by PrefDelegate(SettingsRepository.Keys.PROVISIONING_APPLIED_ONCE, prefs, defaults.provisioningAppliedOnce)
 
     var walkieTalkiePeers: List<WalkieTalkiePeer>
         get() = prefs[SettingsRepository.Keys.WALKIE_TALKIE_PEERS]

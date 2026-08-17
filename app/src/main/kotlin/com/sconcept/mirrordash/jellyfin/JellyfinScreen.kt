@@ -60,6 +60,9 @@ fun JellyfinScreen(
     openExternalLinks: Boolean,
     isActive: Boolean,
     isAwake: Boolean,
+    autoAuthUsername: String = "",
+    autoAuthPassword: String = "",
+    autoAuthEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val normalizedServerUrl = remember(serverUrl) { normalizeBaseUrl(serverUrl) }
@@ -81,6 +84,13 @@ fun JellyfinScreen(
                 openExternalLinks = openExternalLinks,
                 isActive = isActive,
                 isAwake = isAwake,
+                autoAuthScript = remember(autoAuthEnabled, autoAuthUsername, autoAuthPassword) {
+                    if (autoAuthEnabled && autoAuthUsername.isNotBlank()) {
+                        jellyfinAutoAuthScript(autoAuthUsername, autoAuthPassword)
+                    } else {
+                        null
+                    }
+                },
             )
         }
     }
@@ -90,6 +100,7 @@ fun JellyfinScreen(
 private fun JellyfinWebView(
     initialUrl: String,
     serverHost: String?,
+    autoAuthScript: String?,
     desktopMode: Boolean,
     reloadOnOpen: Boolean,
     openExternalLinks: Boolean,
@@ -130,6 +141,15 @@ private fun JellyfinWebView(
         hasSeenActive = true
     }
 
+    // autoAuthScript starts null until the password finishes its async Keystore load - if that
+    // resolves AFTER onPageFinished already fired for this load (a real race: local page loads
+    // are often faster than the Keystore read), onPageFinished's injection never happens at all.
+    // This re-injects the instant a real script becomes available, independent of page-load
+    // timing, rather than requiring a reload to pick it up.
+    LaunchedEffect(autoAuthScript, webViewRef) {
+        autoAuthScript?.let { webViewRef?.evaluateJavascript(it, null) }
+    }
+
     if (loadError != null) {
         ErrorState(message = loadError ?: "Couldn't load Jellyfin", onRetry = {
             loadError = null
@@ -151,10 +171,22 @@ private fun JellyfinWebView(
                 fullscreenCallback?.onCustomViewHidden()
                 fullscreenCallback = null
             }
+
+            // Scoped to just the auto-auth script's own [mirrordash-auth]-prefixed trace lines -
+            // forwarding jellyfin-web's own (very chatty) console output would spam logcat for no
+            // benefit. `adb logcat | grep mirrordash-auth` is the intended way to debug this on
+            // real hardware if auto sign-in ever stops working.
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage?): Boolean {
+                val text = message?.message() ?: return false
+                if (text.startsWith("[mirrordash-auth]")) {
+                    android.util.Log.d("MirrorDashAuth", text)
+                }
+                return true
+            }
         }
     }
 
-    val webClient = remember(serverHost, openExternalLinks) {
+    val webClient = remember(serverHost, openExternalLinks, autoAuthScript) {
         object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val target = request?.url ?: return false
@@ -170,6 +202,10 @@ private fun JellyfinWebView(
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 loadError = null
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                autoAuthScript?.let { view?.evaluateJavascript(it, null) }
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {

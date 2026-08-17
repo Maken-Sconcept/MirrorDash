@@ -229,6 +229,33 @@ fun LauncherSettingsContent(
 
     Spacer(Modifier.height(28.dp))
 
+    SettingGroup(title = "Provisioning") {
+        Text(
+            "Seeds Jellyfin, Home Assistant, Walkie-Talkie, IPTV, and NAS from a config file at " +
+                com.sconcept.mirrordash.provisioning.ProvisioningConfigLoader.configFile(context).absolutePath +
+                " - push it there with adb, then use this button any time the file changes.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = viewModel::reapplyProvisioningConfig,
+            colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
+        ) {
+            Text("Re-apply config file")
+        }
+        uiState.provisioningStatus?.let { status ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                status.summary,
+                style = MDTheme.type.caption,
+                color = if (status.isError) MDTheme.colors.danger else MDTheme.colors.textTertiary,
+            )
+        }
+    }
+
+    Spacer(Modifier.height(28.dp))
+
     SettingGroup(title = "About") {
         Text("MirrorDash 1.0.0", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
     }

@@ -2,7 +2,10 @@ package com.sconcept.mirrordash.homeassistant
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -19,6 +22,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,21 +43,44 @@ import com.sconcept.mirrordash.ui.theme.MDTheme
  * dashboard URL already *is* the app.
  */
 @Composable
-fun HomeAssistantScreen(url: String, modifier: Modifier = Modifier) {
+fun HomeAssistantScreen(
+    url: String,
+    autoAuthUsername: String = "",
+    autoAuthPassword: String = "",
+    autoAuthEnabled: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     Box(modifier = modifier.fillMaxSize().background(MDTheme.colors.background)) {
         if (url.isBlank()) {
             NotConfiguredState()
         } else {
-            KioskWebView(url = url)
+            val autoAuthScript = remember(autoAuthEnabled, autoAuthUsername, autoAuthPassword) {
+                if (autoAuthEnabled && autoAuthUsername.isNotBlank()) {
+                    homeAssistantAutoAuthScript(autoAuthUsername, autoAuthPassword)
+                } else {
+                    null
+                }
+            }
+            KioskWebView(url = url, autoAuthScript = autoAuthScript)
         }
     }
 }
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun KioskWebView(url: String) {
+private fun KioskWebView(url: String, autoAuthScript: String?) {
     var loadError by remember(url) { mutableStateOf<String?>(null) }
     var reloadToken by remember(url) { mutableStateOf(0) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    // autoAuthScript starts null until the password finishes its async Keystore load - if that
+    // resolves AFTER onPageFinished already fired for this load (a real race: local page loads
+    // are often faster than the Keystore read), onPageFinished's injection never happens at all.
+    // This re-injects the instant a real script becomes available, independent of page-load
+    // timing, rather than requiring a reload to pick it up.
+    LaunchedEffect(autoAuthScript, webViewRef) {
+        autoAuthScript?.let { webViewRef?.evaluateJavascript(it, null) }
+    }
 
     if (loadError != null) {
         ErrorState(message = loadError ?: "Couldn't load the dashboard", onRetry = { loadError = null; reloadToken++ })
@@ -77,16 +104,34 @@ private fun KioskWebView(url: String) {
                         }
                     }
                 }
+                // Scoped to just the auto-auth script's own [mirrordash-auth]-prefixed trace
+                // lines - `adb logcat | grep mirrordash-auth` is the intended way to debug this
+                // on real hardware if auto sign-in ever stops working (this is the more fragile
+                // of the two auto-auth scripts, see HomeAssistantAutoAuth.kt's doc comment).
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
+                        val text = message?.message() ?: return false
+                        if (text.startsWith("[mirrordash-auth]")) {
+                            Log.d("MirrorDashAuth", text)
+                        }
+                        return true
+                    }
+                }
+                webViewRef = this
             }
         },
         update = { webView ->
+            webViewRef = webView
             if (webView.tag != url || webView.getTag(TAG_RELOAD) != reloadToken) {
                 webView.tag = url
                 webView.setTag(TAG_RELOAD, reloadToken)
                 webView.loadUrl(url)
             }
         },
-        onRelease = { it.destroy() },
+        onRelease = {
+            webViewRef = null
+            it.destroy()
+        },
         modifier = Modifier.fillMaxSize(),
     )
 }

@@ -128,6 +128,19 @@ fun WalkieTalkieSettingsContent(uiState: SettingsUiState, viewModel: SettingsVie
         }
     }
 
+    Spacer(Modifier.height(16.dp))
+
+    SettingRow(
+        title = "Automatically add discovered devices",
+        subtitle = "Skip the per-device \"Add\" tap - anything found above joins Saved devices on its own",
+    ) {
+        Switch(
+            checked = settings.walkieTalkieAutoAddDiscovered,
+            onCheckedChange = viewModel::setWalkieTalkieAutoAddDiscovered,
+            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+        )
+    }
+
     Spacer(Modifier.height(28.dp))
 
     SettingGroup(title = "Saved devices") {

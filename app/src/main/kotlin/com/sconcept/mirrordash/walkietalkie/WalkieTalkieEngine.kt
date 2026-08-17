@@ -168,6 +168,23 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
                     }
                 }
         }
+
+        // "Auto Find and Add all on network" (provisioning default true) - promotes every NSD
+        // discovery result straight into the saved peer list instead of requiring the manual
+        // per-peer "Add" tap in WalkieTalkieSettings. Only ever adds; turning this off doesn't
+        // drop anything already saved, and manual add/remove keep working unchanged alongside it.
+        scope.launch {
+            combine(settingsRepository.settings, _discoveredPeers) { settings, discovered -> settings to discovered }
+                .collect { (settings, discovered) ->
+                    if (!settings.walkieTalkieAutoAddDiscovered) return@collect
+                    val savedIps = settings.walkieTalkiePeers.map { it.ip }.toSet()
+                    val newPeers = discovered.filter { it.ip !in savedIps }
+                    if (newPeers.isEmpty()) return@collect
+                    settingsRepository.update {
+                        walkieTalkiePeers = walkieTalkiePeers + newPeers.map { WalkieTalkiePeer(it.name, it.ip) }
+                    }
+                }
+        }
     }
 
     fun pressToTalk(target: String = _uiState.value.target) {
