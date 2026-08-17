@@ -1,7 +1,6 @@
 package com.sconcept.mirrordash.launcher
 
 import android.Manifest
-import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -63,8 +62,6 @@ import com.sconcept.mirrordash.launcher.navigation.LauncherPages
 import com.sconcept.mirrordash.launcher.notifications.NotificationRepository
 import com.sconcept.mirrordash.launcher.notifications.NotificationsScreen
 import com.sconcept.mirrordash.launcher.onboarding.OnboardingOverlay
-import com.sconcept.mirrordash.photobooth.PhotoboothScreen
-import com.sconcept.mirrordash.photobooth.PhotoboothViewModel
 import com.sconcept.mirrordash.photorama.PhotoramaScreen
 import com.sconcept.mirrordash.photorama.PhotoramaViewModel
 import com.sconcept.mirrordash.settings.BRIGHTNESS_DIM_TARGET_TEXT_ONLY
@@ -74,8 +71,6 @@ import com.sconcept.mirrordash.ui.theme.MDTheme
 import com.sconcept.mirrordash.ui.theme.MirrorDashTheme
 import com.sconcept.mirrordash.walkietalkie.PttButton
 import com.sconcept.mirrordash.weather.WeatherViewModel
-import com.sconcept.mirrordash.wedding.WeddingModeExperience
-import com.sconcept.mirrordash.wedding.WeddingViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -102,11 +97,6 @@ class MirrorDashActivity : ComponentActivity() {
     private val iptvViewModel: IptvViewModel by viewModels {
         IptvViewModel.factory(application, container.settingsRepository, container.iptvSessionCoordinator)
     }
-    private val photoboothViewModel: PhotoboothViewModel by viewModels { PhotoboothViewModel.factory(application) }
-    private val weddingViewModel: WeddingViewModel by viewModels {
-        WeddingViewModel.factory(container.weddingSeatingRepository)
-    }
-
     // Bridges the Compose-side "is the hidden Night Clock tab currently showing" signal (from
     // LauncherGestureHost's onNightClockActiveChanged) into the plain lifecycleScope brightness
     // collectors below, which run outside Compose and read settingsRepository.settings directly.
@@ -164,13 +154,6 @@ class MirrorDashActivity : ComponentActivity() {
                 }
         }
 
-        lifecycleScope.launch {
-            container.settingsRepository.settings
-                .map { it.weddingModeEnabled }
-                .distinctUntilChanged()
-                .collect(::updateWeddingLockTask)
-        }
-
         // Split in two: the window-brightness layer is a cheap in-process attribute set, so it
         // tracks every emission live as the slider drags. The root layer shells out (several
         // su spawns per candidate path/syntax), which is slow enough that applying it on every
@@ -202,8 +185,6 @@ class MirrorDashActivity : ComponentActivity() {
                     appDrawerViewModel = appDrawerViewModel,
                     settingsViewModel = settingsViewModel,
                     iptvViewModel = iptvViewModel,
-                    photoboothViewModel = photoboothViewModel,
-                    weddingViewModel = weddingViewModel,
                     onRequestHomeRole = { requestHomeRole.launch(HomeRoleHelper.requestHomeRoleIntent(this)) },
                     onRequestNotificationAccess = {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -233,7 +214,6 @@ class MirrorDashActivity : ComponentActivity() {
     }
 
     private var volumeFailsafeJob: Job? = null
-    private var weddingLockTaskStarted = false
 
     // Never consumes the event (falls through to super regardless) so volume still ramps
     // normally as a side effect of holding it - the failsafe is a bonus, not a hijack. Unlike
@@ -267,22 +247,6 @@ class MirrorDashActivity : ComponentActivity() {
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    private fun updateWeddingLockTask(enabled: Boolean) {
-        if (enabled) {
-            val lockTaskPermitted = runCatching {
-                getSystemService(DevicePolicyManager::class.java).isLockTaskPermitted(packageName)
-            }.getOrDefault(false)
-            if (!weddingLockTaskStarted && lockTaskPermitted) {
-                weddingLockTaskStarted = runCatching {
-                    startLockTask()
-                    true
-                }.getOrDefault(false)
-            }
-        } else if (weddingLockTaskStarted) {
-            runCatching { stopLockTask() }
-            weddingLockTaskStarted = false
-        }
-    }
 }
 
 @Composable
@@ -294,8 +258,6 @@ private fun MirrorDashRoot(
     appDrawerViewModel: AppDrawerViewModel,
     settingsViewModel: SettingsViewModel,
     iptvViewModel: IptvViewModel,
-    photoboothViewModel: PhotoboothViewModel,
-    weddingViewModel: WeddingViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
@@ -309,17 +271,6 @@ private fun MirrorDashRoot(
     val settingsUiState by settingsViewModel.uiState.collectAsStateWithLifecycle()
 
     if (!settingsUiState.settingsLoaded) return
-
-    if (settingsUiState.settings.weddingModeEnabled) {
-        LaunchedEffect(Unit) { onNightClockActiveChanged(false) }
-        WeddingModeExperience(
-            settingsViewModel = settingsViewModel,
-            photoboothViewModel = photoboothViewModel,
-            weddingViewModel = weddingViewModel,
-            onFailsafeHoldTriggered = onRequestBrightnessFailsafe,
-        )
-        return
-    }
 
     var isDefaultLauncher by remember { mutableStateOf(HomeRoleHelper.isDefaultLauncher(context)) }
     var showOnboarding by remember { mutableStateOf(!isDefaultLauncher) }
@@ -340,7 +291,6 @@ private fun MirrorDashRoot(
         settingsUiState.settings.jellyfinEnabled,
         settingsUiState.settings.homeAssistantEnabled,
         settingsUiState.settings.iptvEnabled,
-        settingsUiState.settings.photoboothEnabled,
     ) {
         LauncherPages.ordered(
             includePhotoramaPage = clockAppearance.background !is ClockBackground.Photorama,
@@ -348,7 +298,6 @@ private fun MirrorDashRoot(
             includeJellyfinPage = settingsUiState.settings.jellyfinEnabled,
             includeHomeAssistantPage = settingsUiState.settings.homeAssistantEnabled,
             includeIptvPage = settingsUiState.settings.iptvEnabled,
-            includePhotoboothPage = settingsUiState.settings.photoboothEnabled,
         )
     }
     var currentPageIndex by remember { mutableStateOf(pageIndex) }
@@ -360,10 +309,6 @@ private fun MirrorDashRoot(
     // pager will act on again (see LauncherGestureHost's requestedPage doc).
     val airPlayEngine = remember { AppContainer.get(context).airPlayEngine }
     val airPlayUiState by airPlayEngine.uiState.collectAsStateWithLifecycle()
-    // Referenced unconditionally (not just when the Photobooth settings screen is visited) so its
-    // settings collector - which starts/stops the embedded server - is always running, matching
-    // how airPlayEngine/walkieTalkieEngine are kept alive above/in InAppPttOverlay.
-    remember { AppContainer.get(context).mirrorDropEngine }
     val clockPageIndex = remember(orderedPages) { orderedPages.indexOf(LauncherPage.Clock).takeIf { it >= 0 } }
     var requestedPage by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(airPlayUiState.isSessionActive) {
@@ -413,8 +358,6 @@ private fun MirrorDashRoot(
                     photoramaViewModel = photoramaViewModel,
                     settingsViewModel = settingsViewModel,
                     iptvViewModel = iptvViewModel,
-                    photoboothViewModel = photoboothViewModel,
-                    weddingViewModel = weddingViewModel,
                     onRequestHomeRole = onRequestHomeRole,
                     onRequestNotificationAccess = onRequestNotificationAccess,
                     onRequestWriteSettingsAccess = onRequestWriteSettingsAccess,
@@ -506,8 +449,6 @@ private fun LauncherPageContent(
     photoramaViewModel: PhotoramaViewModel,
     settingsViewModel: SettingsViewModel,
     iptvViewModel: IptvViewModel,
-    photoboothViewModel: PhotoboothViewModel,
-    weddingViewModel: WeddingViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
@@ -569,13 +510,9 @@ private fun LauncherPageContent(
         LauncherPage.Iptv -> {
             IptvScreen(viewModel = iptvViewModel)
         }
-        LauncherPage.Photobooth -> {
-            PhotoboothScreen(viewModel = photoboothViewModel)
-        }
         LauncherPage.Settings -> {
             SettingsScreen(
                 viewModel = settingsViewModel,
-                weddingViewModel = weddingViewModel,
                 onRequestHomeRole = onRequestHomeRole,
                 onRequestNotificationAccess = onRequestNotificationAccess,
                 onRequestWriteSettingsAccess = onRequestWriteSettingsAccess,

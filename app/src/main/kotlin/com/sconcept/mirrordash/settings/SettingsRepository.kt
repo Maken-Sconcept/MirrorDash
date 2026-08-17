@@ -22,8 +22,6 @@ import com.sconcept.mirrordash.security.SessionCredentialHolder
 import com.sconcept.mirrordash.ui.theme.DEFAULT_CLOCK_FONT_SIZE_SP
 import com.sconcept.mirrordash.walkietalkie.DEFAULT_WALKIE_TALKIE_CHIME
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
-import com.sconcept.mirrordash.wedding.DEFAULT_WEDDING_IDLE_TIMEOUT_SECONDS
-import com.sconcept.mirrordash.wedding.WeddingProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -46,7 +44,6 @@ const val AIRPLAY_MIRROR_PRESET_720P = "720p"
 const val AIRPLAY_MIRROR_PRESET_1080P = "1080p"
 const val AIRPLAY_MIRROR_PRESET_4K = "4k"
 const val DEFAULT_DEVICE_NAME = "MirrorDash"
-const val DEFAULT_MIRRORDROP_PORT = 8765
 
 const val BRIGHTNESS_DIM_TARGET_WHOLE_SCREEN = "WHOLE_SCREEN"
 const val BRIGHTNESS_DIM_TARGET_TEXT_ONLY = "TEXT_ONLY"
@@ -171,25 +168,6 @@ data class MirrorDashSettings(
     val homeAssistantEnabled: Boolean = false,
     val homeAssistantUrl: String = "",
 
-    // Photobooth (see the photobooth package) - camera capture + local sharing are two separate
-    // concerns (brief §40): this only gates the tab/camera, MirrorDrop has its own enable switch.
-    val photoboothEnabled: Boolean = false,
-
-    // MirrorDrop (see the mirrordrop package) - local Snapdrop-style sharing. Its own enable
-    // switch, independent of photoboothEnabled, so other future features can drive it too.
-    val mirrorDropEnabled: Boolean = false,
-    val mirrorDropPort: Int = DEFAULT_MIRRORDROP_PORT,
-
-    // Wedding Mode is a persisted launcher state. Its host PIN is deliberately stored outside
-    // DataStore by WeddingPinStore so this otherwise-readable preferences file never contains it.
-    val weddingModeEnabled: Boolean = false,
-    val weddingPartnerOne: String = "",
-    val weddingPartnerTwo: String = "",
-    val weddingDateText: String = "",
-    val weddingLocation: String = "",
-    val weddingWelcomeMessage: String = "Welcome to our wedding",
-    val weddingIdleTimeoutSeconds: Int = DEFAULT_WEDDING_IDLE_TIMEOUT_SECONDS,
-
     // IPTV (Stalker/Ministra portal - see the iptv package)
     val iptvEnabled: Boolean = false,
     val iptvPortalUrl: String = "",
@@ -245,16 +223,6 @@ data class MirrorDashSettings(
     val nightClockWeatherAnchorX: Float = DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_X,
     val nightClockWeatherAnchorY: Float = DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_Y,
 ) {
-    val weddingProfile: WeddingProfile
-        get() = WeddingProfile(
-            partnerOne = weddingPartnerOne,
-            partnerTwo = weddingPartnerTwo,
-            dateText = weddingDateText,
-            location = weddingLocation,
-            welcomeMessage = weddingWelcomeMessage,
-            idleTimeoutSeconds = weddingIdleTimeoutSeconds,
-        )
-
     val smbShare: SmbShare
         get() = SmbShare(
             host = smbHost,
@@ -419,16 +387,6 @@ class SettingsRepository(context: Context) {
             jellyfinOpenExternalLinks = this[Keys.JELLYFIN_OPEN_EXTERNAL_LINKS] ?: defaults.jellyfinOpenExternalLinks,
             homeAssistantEnabled = this[Keys.HOME_ASSISTANT_ENABLED] ?: defaults.homeAssistantEnabled,
             homeAssistantUrl = this[Keys.HOME_ASSISTANT_URL] ?: defaults.homeAssistantUrl,
-            photoboothEnabled = this[Keys.PHOTOBOOTH_ENABLED] ?: defaults.photoboothEnabled,
-            mirrorDropEnabled = this[Keys.MIRRORDROP_ENABLED] ?: defaults.mirrorDropEnabled,
-            mirrorDropPort = this[Keys.MIRRORDROP_PORT] ?: defaults.mirrorDropPort,
-            weddingModeEnabled = this[Keys.WEDDING_MODE_ENABLED] ?: defaults.weddingModeEnabled,
-            weddingPartnerOne = this[Keys.WEDDING_PARTNER_ONE] ?: defaults.weddingPartnerOne,
-            weddingPartnerTwo = this[Keys.WEDDING_PARTNER_TWO] ?: defaults.weddingPartnerTwo,
-            weddingDateText = this[Keys.WEDDING_DATE_TEXT] ?: defaults.weddingDateText,
-            weddingLocation = this[Keys.WEDDING_LOCATION] ?: defaults.weddingLocation,
-            weddingWelcomeMessage = this[Keys.WEDDING_WELCOME_MESSAGE] ?: defaults.weddingWelcomeMessage,
-            weddingIdleTimeoutSeconds = this[Keys.WEDDING_IDLE_TIMEOUT_SECONDS] ?: defaults.weddingIdleTimeoutSeconds,
             iptvEnabled = this[Keys.IPTV_ENABLED] ?: defaults.iptvEnabled,
             iptvPortalUrl = this[Keys.IPTV_PORTAL_URL] ?: defaults.iptvPortalUrl,
             iptvMacAddress = this[Keys.IPTV_MAC_ADDRESS] ?: defaults.iptvMacAddress,
@@ -525,19 +483,6 @@ class SettingsRepository(context: Context) {
 
         val HOME_ASSISTANT_ENABLED = booleanPreferencesKey("home_assistant_enabled")
         val HOME_ASSISTANT_URL = stringPreferencesKey("home_assistant_url")
-
-        val PHOTOBOOTH_ENABLED = booleanPreferencesKey("photobooth_enabled")
-
-        val MIRRORDROP_ENABLED = booleanPreferencesKey("mirrordrop_enabled")
-        val MIRRORDROP_PORT = intPreferencesKey("mirrordrop_port")
-
-        val WEDDING_MODE_ENABLED = booleanPreferencesKey("wedding_mode_enabled")
-        val WEDDING_PARTNER_ONE = stringPreferencesKey("wedding_partner_one")
-        val WEDDING_PARTNER_TWO = stringPreferencesKey("wedding_partner_two")
-        val WEDDING_DATE_TEXT = stringPreferencesKey("wedding_date_text")
-        val WEDDING_LOCATION = stringPreferencesKey("wedding_location")
-        val WEDDING_WELCOME_MESSAGE = stringPreferencesKey("wedding_welcome_message")
-        val WEDDING_IDLE_TIMEOUT_SECONDS = intPreferencesKey("wedding_idle_timeout_seconds")
 
         val IPTV_ENABLED = booleanPreferencesKey("iptv_enabled")
         val IPTV_PORTAL_URL = stringPreferencesKey("iptv_portal_url")
@@ -637,23 +582,6 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
 
     var homeAssistantEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_ENABLED, prefs, defaults.homeAssistantEnabled)
     var homeAssistantUrl: String by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_URL, prefs, defaults.homeAssistantUrl)
-
-    var photoboothEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTOBOOTH_ENABLED, prefs, defaults.photoboothEnabled)
-
-    var mirrorDropEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.MIRRORDROP_ENABLED, prefs, defaults.mirrorDropEnabled)
-    var mirrorDropPort: Int by PrefDelegate(SettingsRepository.Keys.MIRRORDROP_PORT, prefs, defaults.mirrorDropPort)
-
-    var weddingModeEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.WEDDING_MODE_ENABLED, prefs, defaults.weddingModeEnabled)
-    var weddingPartnerOne: String by PrefDelegate(SettingsRepository.Keys.WEDDING_PARTNER_ONE, prefs, defaults.weddingPartnerOne)
-    var weddingPartnerTwo: String by PrefDelegate(SettingsRepository.Keys.WEDDING_PARTNER_TWO, prefs, defaults.weddingPartnerTwo)
-    var weddingDateText: String by PrefDelegate(SettingsRepository.Keys.WEDDING_DATE_TEXT, prefs, defaults.weddingDateText)
-    var weddingLocation: String by PrefDelegate(SettingsRepository.Keys.WEDDING_LOCATION, prefs, defaults.weddingLocation)
-    var weddingWelcomeMessage: String by PrefDelegate(SettingsRepository.Keys.WEDDING_WELCOME_MESSAGE, prefs, defaults.weddingWelcomeMessage)
-    var weddingIdleTimeoutSeconds: Int by PrefDelegate(
-        SettingsRepository.Keys.WEDDING_IDLE_TIMEOUT_SECONDS,
-        prefs,
-        defaults.weddingIdleTimeoutSeconds,
-    )
 
     var iptvEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_ENABLED, prefs, defaults.iptvEnabled)
     var iptvPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_PORTAL_URL, prefs, defaults.iptvPortalUrl)

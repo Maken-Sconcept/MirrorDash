@@ -4,12 +4,8 @@ import android.content.Context
 import com.sconcept.mirrordash.airplay.AirPlayEngine
 import com.sconcept.mirrordash.iptv.IptvRecordingEngine
 import com.sconcept.mirrordash.iptv.IptvSessionCoordinator
-import com.sconcept.mirrordash.mirrordrop.MirrorDropEngine
-import com.sconcept.mirrordash.mirrordrop.MirrorDropPhotoboothRepositorySource
-import com.sconcept.mirrordash.photobooth.PhotoboothRepository
 import com.sconcept.mirrordash.settings.SettingsRepository
 import com.sconcept.mirrordash.walkietalkie.WalkieTalkieEngine
-import com.sconcept.mirrordash.wedding.seating.WeddingSeatingRepository
 
 /**
  * Hand-rolled composition root (the project intentionally has no DI framework - see the plan's
@@ -22,11 +18,6 @@ class AppContainer private constructor(context: Context) {
     val airPlayEngine by lazy { AirPlayEngine.get(context, settingsRepository) }
     val iptvSessionCoordinator by lazy { IptvSessionCoordinator.get() }
     val iptvRecordingEngine by lazy { IptvRecordingEngine.get(context, settingsRepository, iptvSessionCoordinator) }
-    val photoboothRepository by lazy { PhotoboothRepository(context) }
-    val mirrorDropEngine by lazy {
-        MirrorDropEngine.get(context, settingsRepository, MirrorDropPhotoboothRepositorySource(photoboothRepository))
-    }
-    val weddingSeatingRepository by lazy { WeddingSeatingRepository(context) }
 
     companion object {
         @Volatile

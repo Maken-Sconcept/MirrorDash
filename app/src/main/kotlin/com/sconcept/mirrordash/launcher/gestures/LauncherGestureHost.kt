@@ -106,8 +106,9 @@ fun LauncherGestureHost(
 
     // Real page 0 is the hidden Night Clock tab (brief follow-up: "just like the Nest Home
     // Hub") - never in pageLabels/the tab bar, reached only by swiping past the real first
-    // visible page and back, exactly like any other adjacent pair of pages. Wedding Mode turns
-    // this page off, making the offset zero without changing any caller-facing page indexes.
+    // visible page and back, exactly like any other adjacent pair of pages. Callers that don't
+    // want it (nightClockEnabled = false) get an offset of zero without changing any
+    // caller-facing page indexes.
     val pagerState = rememberPagerState(initialPage = initialPage + pageIndexOffset) { pageCount + pageIndexOffset }
 
     // Lets a caller (e.g. an incoming AirPlay connection) drive the pager from outside without

@@ -12,8 +12,6 @@ import com.sconcept.mirrordash.clock.CustomTextWidget
 import com.sconcept.mirrordash.clock.WEATHER_WIDGET_MODE_FORECAST_CARD
 import com.sconcept.mirrordash.clock.WeatherWidget
 import com.sconcept.mirrordash.clock.defaultWeatherWidget
-import com.sconcept.mirrordash.mirrordrop.MirrorDropUiState
-import com.sconcept.mirrordash.mirrordrop.ShareMode
 import com.sconcept.mirrordash.nas.SmbRepository
 import com.sconcept.mirrordash.nas.SmbPaths
 import com.sconcept.mirrordash.nas.model.SmbConnectionState
@@ -27,9 +25,6 @@ import com.sconcept.mirrordash.walkietalkie.WalkieTalkieUiState
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkieDiscoveredPeer
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
 import com.sconcept.mirrordash.weather.WeatherRepository
-import com.sconcept.mirrordash.wedding.WeddingPinPolicy
-import com.sconcept.mirrordash.wedding.WeddingPinResult
-import com.sconcept.mirrordash.wedding.WeddingPinStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -62,7 +57,6 @@ data class SettingsUiState(
     val nearbyWalkieTalkiePeers: List<WalkieTalkieDiscoveredPeer> = emptyList(),
     val walkieTalkieState: WalkieTalkieUiState = WalkieTalkieUiState(),
     val airPlayState: AirPlayUiState = AirPlayUiState(),
-    val mirrorDropState: MirrorDropUiState = MirrorDropUiState(),
 )
 
 /**
@@ -77,8 +71,6 @@ class SettingsViewModel(application: Application, private val settingsRepository
     private val weatherRepository = WeatherRepository()
     private val walkieTalkieEngine = AppContainer.get(application).walkieTalkieEngine
     private val airPlayEngine = AppContainer.get(application).airPlayEngine
-    private val mirrorDropEngine = AppContainer.get(application).mirrorDropEngine
-    private val weddingPinStore = WeddingPinStore(application)
 
     private val _extra = MutableStateFlow(SettingsUiState())
 
@@ -87,15 +79,13 @@ class SettingsViewModel(application: Application, private val settingsRepository
         _extra,
         walkieTalkieEngine.uiState,
         airPlayEngine.uiState,
-        mirrorDropEngine.uiState,
-    ) { settings, extra, walkieTalkie, airPlay, mirrorDrop ->
+    ) { settings, extra, walkieTalkie, airPlay ->
         extra.copy(
             settings = settings,
             settingsLoaded = true,
             nearbyWalkieTalkiePeers = walkieTalkie.discoveredPeers,
             walkieTalkieState = walkieTalkie,
             airPlayState = airPlay,
-            mirrorDropState = mirrorDrop,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -446,97 +436,6 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setHomeAssistantUrl(url: String) = viewModelScope.launch {
         settingsRepository.update { homeAssistantUrl = url }
-    }
-
-    // --- Photobooth ----------------------------------------------------------------------------
-
-    fun setPhotoboothEnabled(enabled: Boolean) = viewModelScope.launch {
-        settingsRepository.update { photoboothEnabled = enabled }
-    }
-
-    // --- MirrorDrop ----------------------------------------------------------------------------
-
-    fun setMirrorDropEnabled(enabled: Boolean) = viewModelScope.launch {
-        settingsRepository.update { mirrorDropEnabled = enabled }
-    }
-
-    fun setMirrorDropPort(port: Int) = viewModelScope.launch {
-        settingsRepository.update { mirrorDropPort = port }
-    }
-
-    private val _lastSharePin = MutableStateFlow<String?>(null)
-
-    /** The plaintext PIN from the most recent [startMirrorDropSharing] call, if it required one -
-     * only ever available right after starting, since [MirrorDropShareSessionManager] only ever
-     * stores the hash. Cleared on [stopMirrorDropSharing] so a stale PIN can't linger on screen. */
-    val lastSharePin: StateFlow<String?> = _lastSharePin
-
-    fun startMirrorDropSharing(requirePin: Boolean, mode: ShareMode) {
-        val result = mirrorDropEngine.startSharing(requirePin, mode)
-        _lastSharePin.value = result.plaintextPin
-    }
-
-    fun stopMirrorDropSharing() {
-        mirrorDropEngine.stopSharing()
-        _lastSharePin.value = null
-    }
-
-    // --- Wedding Mode --------------------------------------------------------------------------
-
-    fun hasWeddingPin(): Boolean = weddingPinStore.hasPin()
-
-    fun setWeddingPartnerOne(value: String) = viewModelScope.launch {
-        settingsRepository.update { weddingPartnerOne = value.take(80) }
-    }
-
-    fun setWeddingPartnerTwo(value: String) = viewModelScope.launch {
-        settingsRepository.update { weddingPartnerTwo = value.take(80) }
-    }
-
-    fun setWeddingDateText(value: String) = viewModelScope.launch {
-        settingsRepository.update { weddingDateText = value.take(100) }
-    }
-
-    fun setWeddingLocation(value: String) = viewModelScope.launch {
-        settingsRepository.update { weddingLocation = value.take(120) }
-    }
-
-    fun setWeddingWelcomeMessage(value: String) = viewModelScope.launch {
-        settingsRepository.update { weddingWelcomeMessage = value.take(180) }
-    }
-
-    fun setWeddingIdleTimeoutSeconds(seconds: Int) = viewModelScope.launch {
-        settingsRepository.update { weddingIdleTimeoutSeconds = seconds.coerceIn(30, 900) }
-    }
-
-    fun enterWeddingMode(pin: String): WeddingPinResult {
-        if (!WeddingPinPolicy.isValid(pin)) return WeddingPinResult.INVALID_FORMAT
-
-        val credentialResult = runCatching {
-            if (weddingPinStore.hasPin()) {
-                if (!weddingPinStore.matches(pin)) return WeddingPinResult.INCORRECT
-            } else {
-                weddingPinStore.save(pin)
-            }
-        }
-        if (credentialResult.isFailure) return WeddingPinResult.STORAGE_ERROR
-
-        viewModelScope.launch {
-            settingsRepository.update { weddingModeEnabled = true }
-        }
-        return WeddingPinResult.SUCCESS
-    }
-
-    fun exitWeddingMode(pin: String): WeddingPinResult {
-        if (!WeddingPinPolicy.isValid(pin)) return WeddingPinResult.INVALID_FORMAT
-        val matches = runCatching { weddingPinStore.matches(pin) }
-            .getOrElse { return WeddingPinResult.STORAGE_ERROR }
-        if (!matches) return WeddingPinResult.INCORRECT
-
-        viewModelScope.launch {
-            settingsRepository.update { weddingModeEnabled = false }
-        }
-        return WeddingPinResult.SUCCESS
     }
 
     // --- IPTV ----------------------------------------------------------------------------------

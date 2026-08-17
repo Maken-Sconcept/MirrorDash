@@ -30,7 +30,6 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
         val includeJellyfin: Boolean,
         val includeHomeAssistant: Boolean,
         val includeIptv: Boolean,
-        val includePhotobooth: Boolean,
     )
 
     // Settings is always the last page regardless of how many pages exist, so "is this the last
@@ -42,7 +41,6 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
         includeJellyfinPage = true,
         includeHomeAssistantPage = true,
         includeIptvPage = true,
-        includePhotoboothPage = true,
     ).size
 
     init {
@@ -55,7 +53,6 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
                         includeJellyfin = it.jellyfinEnabled,
                         includeHomeAssistant = it.homeAssistantEnabled,
                         includeIptv = it.iptvEnabled,
-                        includePhotobooth = it.photoboothEnabled,
                     )
                 }
                 .distinctUntilChanged()
@@ -66,7 +63,6 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
                         includeJellyfinPage = availability.includeJellyfin,
                         includeHomeAssistantPage = availability.includeHomeAssistant,
                         includeIptvPage = availability.includeIptv,
-                        includePhotoboothPage = availability.includePhotobooth,
                     ).size
                     if (_initialPageIndex.value == null) {
                         val stored = settingsRepository.settings.first().lastVisitedPageIndex
