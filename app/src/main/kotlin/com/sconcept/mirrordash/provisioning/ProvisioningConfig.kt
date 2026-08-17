@@ -41,7 +41,6 @@ data class WalkieTalkieConfig(
 data class IptvConfig(
     val url: String,
     val mac: String,
-    val openMuted: Boolean = true,
 )
 
 @Serializable

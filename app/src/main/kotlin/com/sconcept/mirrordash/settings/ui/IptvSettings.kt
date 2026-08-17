@@ -125,16 +125,6 @@ fun IptvSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) 
         )
     }
 
-    Spacer(Modifier.height(24.dp))
-
-    SettingRow(title = "Always open muted", subtitle = "Start silent every time the tab connects, instead of the remembered volume") {
-        Switch(
-            checked = settings.iptvOpenMuted,
-            onCheckedChange = viewModel::setIptvOpenMuted,
-            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
-        )
-    }
-
     Spacer(Modifier.height(28.dp))
 
     SettingGroup(title = "Parental control") {

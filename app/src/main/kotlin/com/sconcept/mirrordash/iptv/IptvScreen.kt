@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -31,8 +30,10 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -90,6 +91,8 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
     val recordingState by recordingEngine.uiState.collectAsState()
     val settings by container.settingsRepository.settings.collectAsState(initial = null)
     val scheduledRecordings = settings?.iptvScheduledRecordings.orEmpty()
+    val recordingHistory = settings?.iptvRecordingHistory.orEmpty()
+    var showRecordingHistory by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
@@ -189,6 +192,7 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                         onRecordTimed = { channel, minutes -> recordingEngine.startFixedDuration(channel, minutes) },
                         onOpenGuideToSchedule = viewModel::toggleGuide,
                         onStopRecording = { recordingEngine.stop() },
+                        onToggleHistory = { showRecordingHistory = !showRecordingHistory },
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )
                     if (uiState.showChannelList) {
@@ -205,6 +209,13 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                     }
                 }
             }
+        }
+
+        if (showRecordingHistory) {
+            RecordingHistoryPanel(
+                recordings = recordingHistory,
+                onDismiss = { showRecordingHistory = false },
+            )
         }
 
         uiState.pendingPinChallenge?.let { _ ->
@@ -347,6 +358,7 @@ private fun PlaybackControls(
     onRecordTimed: (StalkerChannel, Int) -> Unit,
     onOpenGuideToSchedule: () -> Unit,
     onStopRecording: () -> Unit,
+    onToggleHistory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -380,6 +392,7 @@ private fun PlaybackControls(
                 onOpenGuideToSchedule = onOpenGuideToSchedule,
                 onStopRecording = onStopRecording,
             )
+            RoundIconButton(icon = Icons.Filled.History, contentDescription = "Recording history", onClick = onToggleHistory)
             VolumeButton(volume = uiState.volume, onVolumeChange = onVolumeChange, onToggleMute = onToggleMute)
         }
     }
@@ -407,21 +420,9 @@ private fun RecordButton(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showDurationPicker by remember { mutableStateOf(false) }
-    var showSaved by remember { mutableStateOf(false) }
     val active = recordingState.activeRecording
 
     LaunchedEffect(active) { if (active == null) { expanded = false; showDurationPicker = false } }
-
-    // Confirms where a recording landed once it stops, in the same slot the live "recording..."
-    // readout just occupied - reverting straight to a bare icon after Stop would leave the save
-    // itself unconfirmed. Auto-collapses like the volume bar rather than needing a dismiss tap.
-    LaunchedEffect(recordingState.lastCompleted) {
-        if (recordingState.lastCompleted != null) {
-            showSaved = true
-            delay(SAVED_BADGE_DURATION_MS)
-            showSaved = false
-        }
-    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -438,7 +439,6 @@ private fun RecordButton(
                 } else {
                     expanded = !expanded
                     showDurationPicker = false
-                    showSaved = false
                 }
             },
             modifier = Modifier.size(48.dp),
@@ -456,21 +456,6 @@ private fun RecordButton(
                 style = MDTheme.type.caption,
                 color = Color.White,
                 modifier = Modifier.padding(start = 4.dp, end = 16.dp),
-            )
-        } else if (showSaved && recordingState.lastCompleted != null) {
-            val completed = recordingState.lastCompleted
-            val label = if (completed.stoppedForLowStorage) {
-                "Storage almost full, stopped · ${completed.path}"
-            } else {
-                "Saved · ${completed.path}"
-            }
-            Text(
-                label,
-                style = MDTheme.type.caption,
-                color = if (completed.stoppedForLowStorage) MDTheme.colors.danger else Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 4.dp, end = 16.dp).widthIn(max = 240.dp),
             )
         } else if (expanded && currentChannel != null) {
             if (showDurationPicker) {
@@ -574,7 +559,6 @@ private fun VolumeButton(volume: Float, onVolumeChange: (Float) -> Unit, onToggl
 }
 
 private const val VOLUME_BAR_AUTO_COLLAPSE_MS = 4000L
-private const val SAVED_BADGE_DURATION_MS = 5000L
 
 /** The Guide's split-preview layout (see [IptvUiState.guideShowsPreview]) - preview on top,
  * Guide below. */
@@ -713,6 +697,106 @@ private fun ChannelListPanel(
             }
         }
     }
+}
+
+/** Full-screen, not a side panel like [ChannelListPanel] - each row carries enough metadata
+ * (when, how long, how big, where it landed) that it needs the width. Newest first, matching how
+ * [MirrorDashSettings.iptvRecordingHistory] is already stored (see [IptvRecordingEngine]'s
+ * `finally` block) - no separate sort needed here. */
+@Composable
+private fun RecordingHistoryPanel(
+    recordings: List<CompletedRecording>,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.92f))
+            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
+    ) {
+        Column(modifier = Modifier.fillMaxSize().padding(top = 24.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            ) {
+                Text(
+                    "Recording history",
+                    style = MDTheme.type.sectionTitle.copy(fontSize = MDTheme.type.settingTitle.fontSize),
+                    color = Color.White,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            if (recordings.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Nothing recorded yet",
+                        style = MDTheme.type.settingSubtitle,
+                        color = Color.White.copy(alpha = 0.6f),
+                    )
+                }
+            } else {
+                LazyColumn(modifier = Modifier.padding(horizontal = 24.dp)) {
+                    items(recordings, key = { it.finishedAtEpochSeconds.toString() + it.path }) { recording ->
+                        RecordingHistoryRow(recording)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordingHistoryRow(recording: CompletedRecording) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+    ) {
+        Text(recording.channelName, style = MDTheme.type.body, color = Color.White)
+        Spacer(Modifier.height(2.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                formatRecordingDate(recording.finishedAtEpochSeconds),
+                style = MDTheme.type.caption,
+                color = Color.White.copy(alpha = 0.6f),
+            )
+            Text(
+                formatRecordingDuration(recording.startedAtEpochSeconds, recording.finishedAtEpochSeconds),
+                style = MDTheme.type.caption,
+                color = Color.White.copy(alpha = 0.6f),
+            )
+            Text(formatMegabytes(recording.bytesWritten), style = MDTheme.type.caption, color = Color.White.copy(alpha = 0.6f))
+            Text(recording.destinationLabel, style = MDTheme.type.caption, color = Color.White.copy(alpha = 0.6f))
+        }
+        if (recording.stoppedForLowStorage) {
+            Text(
+                "Storage almost full, stopped early",
+                style = MDTheme.type.caption,
+                color = MDTheme.colors.danger,
+            )
+        }
+        Text(
+            recording.path,
+            style = MDTheme.type.caption,
+            color = Color.White.copy(alpha = 0.4f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun formatRecordingDate(epochSeconds: Long): String =
+    java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(epochSeconds * 1000))
+
+private fun formatRecordingDuration(startEpochSeconds: Long, endEpochSeconds: Long): String {
+    val totalSeconds = (endEpochSeconds - startEpochSeconds).coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    return if (hours > 0) "${hours}h ${minutes}m" else "${minutes}m"
 }
 
 @Composable

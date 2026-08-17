@@ -48,13 +48,19 @@ object SmbClient {
         }
         val root = SmbFile(url, context)
         return root.listFiles()
-            ?.map { f ->
-                SmbFileItem(
-                    name = f.name.trimEnd('/'),
-                    url = f.canonicalPath,
-                    isDirectory = f.isDirectory,
-                    sizeBytes = if (f.isDirectory) 0L else f.length(),
-                )
+            // A single entry throwing (a permission-restricted subfolder, a broken symlink, an
+            // NAS-generated system folder like @Recently-Snapshot) used to fail this whole
+            // listing via `map` - one bad neighbor shouldn't make an otherwise-fine folder
+            // unbrowsable, so that entry is just skipped instead.
+            ?.mapNotNull { f ->
+                runCatching {
+                    SmbFileItem(
+                        name = f.name.trimEnd('/'),
+                        url = f.canonicalPath,
+                        isDirectory = f.isDirectory,
+                        sizeBytes = if (f.isDirectory) 0L else f.length(),
+                    )
+                }.getOrNull()
             }
             ?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
             .orEmpty()

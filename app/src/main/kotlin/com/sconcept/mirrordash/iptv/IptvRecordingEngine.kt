@@ -42,6 +42,10 @@ private const val MIN_FREE_SPACE_BYTES = 300L * 1024 * 1024
  * every chunk like the byte-count UI update is. */
 private const val FREE_SPACE_CHECK_INTERVAL_MS = 15_000L
 
+/** How many finished recordings [MirrorDashSettings.iptvRecordingHistory] keeps, oldest dropped
+ * first - a DataStore preference is a poor fit for an unbounded, ever-growing list. */
+private const val RECORDING_HISTORY_LIMIT = 50
+
 data class RecordingEngineUiState(
     val activeRecording: ActiveRecording? = null,
     val lastCompleted: CompletedRecording? = null,
@@ -177,25 +181,28 @@ class IptvRecordingEngine private constructor(
                 Log.e(TAG, "Recording failed: ${e.message}", e)
                 _uiState.update { it.copy(lastError = e.message ?: "Recording failed") }
             } finally {
-                val bytesWritten = _uiState.value.activeRecording?.bytesWritten ?: 0L
+                val active = _uiState.value.activeRecording
+                val bytesWritten = active?.bytesWritten ?: 0L
                 runCatching { destination?.close() }
                 if (usedSharedSession) sessionCoordinator.release()
-                _uiState.update {
-                    it.copy(
-                        activeRecording = null,
-                        // Only when a destination actually got opened - an error before that point
-                        // (e.g. couldn't reach the portal) never wrote anything worth pointing at.
-                        lastCompleted = openedHandle?.let { handle ->
-                            CompletedRecording(
-                                channelName = channel.name,
-                                destinationLabel = handle.label,
-                                path = handle.path,
-                                bytesWritten = bytesWritten,
-                                finishedAtEpochSeconds = nowSeconds(),
-                                stoppedForLowStorage = stoppedForLowStorage,
-                            )
-                        } ?: it.lastCompleted,
+                // Only when a destination actually got opened - an error before that point (e.g.
+                // couldn't reach the portal) never wrote anything worth pointing at or keeping.
+                val completed = openedHandle?.let { handle ->
+                    CompletedRecording(
+                        channelName = channel.name,
+                        destinationLabel = handle.label,
+                        path = handle.path,
+                        bytesWritten = bytesWritten,
+                        startedAtEpochSeconds = active?.startedAtEpochSeconds ?: nowSeconds(),
+                        finishedAtEpochSeconds = nowSeconds(),
+                        stoppedForLowStorage = stoppedForLowStorage,
                     )
+                }
+                _uiState.update { it.copy(activeRecording = null, lastCompleted = completed ?: it.lastCompleted) }
+                if (completed != null) {
+                    settingsRepository.update {
+                        iptvRecordingHistory = (listOf(completed) + iptvRecordingHistory).take(RECORDING_HISTORY_LIMIT)
+                    }
                 }
                 IptvRecordingService.stop(appContext)
             }

@@ -516,10 +516,6 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { iptvSleepTimeoutSeconds = seconds }
     }
 
-    fun setIptvOpenMuted(enabled: Boolean) = viewModelScope.launch {
-        settingsRepository.update { iptvOpenMuted = enabled }
-    }
-
     fun setIptvRecordingPortalUrl(url: String) = viewModelScope.launch {
         settingsRepository.update { iptvRecordingPortalUrl = url }
     }
@@ -657,7 +653,6 @@ class SettingsViewModel(application: Application, private val settingsRepository
             settingsRepository.update {
                 iptvPortalUrl = cfg.url
                 iptvMacAddress = com.sconcept.mirrordash.iptv.IptvMac.normalize(cfg.mac)
-                iptvOpenMuted = cfg.openMuted
                 iptvEnabled = true
             }
             applied += "IPTV"

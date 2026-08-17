@@ -341,6 +341,12 @@ private fun MirrorDashRoot(
         ) / 255f
     }
 
+    // Local mirror of the same "is Night Clock showing" signal MirrorDashActivity threads into
+    // the backlight/root-layer collectors (see onNightClockActiveChanged below) - needed here too
+    // so BrightnessDimOverlay, the compensating scrim for layer 1's limited backlight floor, can
+    // switch to Night Clock's own dimmer target instead of always reading the main Clock's.
+    var isNightClockActive by remember { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -373,7 +379,10 @@ private fun MirrorDashRoot(
                 )
             },
             onFailsafeHoldTriggered = onRequestBrightnessFailsafe,
-            onNightClockActiveChanged = onNightClockActiveChanged,
+            onNightClockActiveChanged = { active ->
+                isNightClockActive = active
+                onNightClockActiveChanged(active)
+            },
             requestedPage = requestedPage,
             nightClockContent = {
                 val nightWeather by weatherViewModel.uiState.collectAsStateWithLifecycle()
@@ -436,11 +445,22 @@ private fun MirrorDashRoot(
         }
 
         // Skipped entirely in text-only mode on the Clock page - there, ClockScreen dims its own
-        // content directly instead, leaving the background/Photorama fully lit underneath.
+        // content directly instead, leaving the background/Photorama fully lit underneath. While
+        // Night Clock is showing, this reads its own separate (and usually much dimmer) backlight
+        // target instead of the main Clock's - otherwise this compensating scrim, which is what
+        // actually gets the panel down near true black past layer 1's limited floor (see
+        // BacklightController's doc comment), stays computed from whatever the main brightness
+        // happens to be during the day and never kicks in for Night Clock at all. The main "extra
+        // dim" knob has no Night Clock equivalent - Night Clock's background is already solid
+        // black by design (see NightClockSettingsContent's doc comment), so it's excluded here.
         if (!textOnlyDim) {
             BrightnessDimOverlay(
-                brightnessLevel255 = settingsUiState.settings.brightnessLevel255,
-                extraDimPercent = settingsUiState.settings.brightnessExtraDimPercent,
+                brightnessLevel255 = if (isNightClockActive) {
+                    settingsUiState.settings.nightClockBrightnessLevel255
+                } else {
+                    settingsUiState.settings.brightnessLevel255
+                },
+                extraDimPercent = if (isNightClockActive) 0 else settingsUiState.settings.brightnessExtraDimPercent,
             )
         }
     }

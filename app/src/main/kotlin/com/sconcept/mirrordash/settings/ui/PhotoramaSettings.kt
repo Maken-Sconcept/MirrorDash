@@ -18,9 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -235,14 +235,34 @@ private fun NasFolderBrowserSheet(
                 Spacer(Modifier.height(12.dp))
             }
 
-            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (path.isNotBlank()) {
-                    item {
-                        BrowserRow(name = "..", isLoading = false, onClick = onUp)
+            if (isLoading) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = MDTheme.colors.accent)
+                        Spacer(Modifier.height(12.dp))
+                        Text("Loading…", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
                     }
                 }
-                items(items, key = { it.name }) { item ->
-                    BrowserRow(name = item.name, isLoading = false, onClick = { onEnter(item) })
+            } else {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (path.isNotBlank()) {
+                        item {
+                            BrowserRow(name = "..", onClick = onUp)
+                        }
+                    }
+                    if (items.isEmpty()) {
+                        item {
+                            Text(
+                                "No subfolders here",
+                                style = MDTheme.type.settingSubtitle,
+                                color = MDTheme.colors.textSecondary,
+                                modifier = Modifier.padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                    items(items, key = { it.name }) { item ->
+                        BrowserRow(name = item.name, onClick = { onEnter(item) })
+                    }
                 }
             }
 
@@ -252,6 +272,7 @@ private fun NasFolderBrowserSheet(
                 Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = onSelect,
+                    enabled = !isLoading,
                     colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
                 ) {
                     Text("Use this folder")
@@ -262,7 +283,7 @@ private fun NasFolderBrowserSheet(
 }
 
 @Composable
-private fun BrowserRow(name: String, isLoading: Boolean, onClick: () -> Unit) {
+private fun BrowserRow(name: String, onClick: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier

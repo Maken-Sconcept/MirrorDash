@@ -396,16 +396,11 @@ class IptvViewModel(
             val genres = newClient.fetchGenres().getOrDefault(emptyList())
                 .ifEmpty { listOf(StalkerGenre(id = ALL_GENRES_ID, title = "All")) }
 
-            // Resume the remembered channel if it's still in the list, otherwise just the first
-            // one - and start at the remembered volume unless "Always open muted" is on, which
-            // overrides only this connection's starting point, not the remembered value itself.
+            // Resume the remembered channel if it's still in the list, otherwise just the first one.
             val rememberedIndex = channels.indexOfFirst { it.id == config.iptvLastChannelId }.takeIf { it >= 0 }
             val initialIndex = rememberedIndex ?: if (channels.isEmpty()) -1 else 0
-            val rememberedVolume = config.iptvVolume.coerceIn(0f, 1f)
-            val initialVolume = if (config.iptvOpenMuted) 0f else rememberedVolume
-            // So that tapping the mute icon after an "open muted" start unmutes back to the
-            // actual remembered level, not a hardcoded full blast.
-            if (rememberedVolume > 0f) volumeBeforeMute = rememberedVolume
+            val initialVolume = config.iptvVolume.coerceIn(0f, 1f)
+            if (initialVolume > 0f) volumeBeforeMute = initialVolume
 
             client = newClient
             _uiState.update {

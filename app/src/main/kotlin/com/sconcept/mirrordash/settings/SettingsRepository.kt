@@ -12,6 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.sconcept.mirrordash.clock.CustomTextWidget
 import com.sconcept.mirrordash.clock.WeatherWidget
 import com.sconcept.mirrordash.clock.defaultWeatherWidget
+import com.sconcept.mirrordash.iptv.CompletedRecording
 import com.sconcept.mirrordash.iptv.DEFAULT_PARENTAL_CONTROL_PIN
 import com.sconcept.mirrordash.iptv.ParentalControlMode
 import com.sconcept.mirrordash.iptv.RecordingDestinationMode
@@ -186,10 +187,6 @@ data class MirrorDashSettings(
     // always full volume / the first channel - see IptvViewModel's connect flow.
     val iptvVolume: Float = 1f,
     val iptvLastChannelId: String = "",
-    // "Always open on mute first" - overrides iptvVolume as the *starting* volume on connect
-    // without touching the remembered value itself, so muting-by-default doesn't clobber what
-    // gets restored the next time this is turned back off.
-    val iptvOpenMuted: Boolean = false,
     // Recording (see IptvRecordingEngine). Both destinations are always implemented - this only
     // picks which is tried first, the other is the automatic fallback if it fails to open.
     //
@@ -209,6 +206,9 @@ data class MirrorDashSettings(
     val iptvRecordingSmbFolder: String = "MirrorDash Recordings",
     val iptvRecordingLocalCapMb: Int = DEFAULT_RECORDING_LOCAL_CAP_MB,
     val iptvScheduledRecordings: List<ScheduledRecording> = emptyList(),
+    // Newest first, capped at IPTV_RECORDING_HISTORY_LIMIT entries - see IptvRecordingEngine's
+    // finally block, the one place this ever gets appended to.
+    val iptvRecordingHistory: List<CompletedRecording> = emptyList(),
 
     // Launcher
     val launcherFavoriteApps: List<String> = emptyList(),
@@ -354,6 +354,10 @@ class SettingsRepository(context: Context) {
         val scheduledRecordings = scheduledRecordingsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<ScheduledRecording>>(raw) }.getOrDefault(emptyList())
         } ?: emptyList()
+        val recordingHistoryRaw = this[Keys.IPTV_RECORDING_HISTORY]
+        val recordingHistory = recordingHistoryRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<CompletedRecording>>(raw) }.getOrDefault(emptyList())
+        } ?: emptyList()
 
         return MirrorDashSettings(
             deviceName = this[Keys.DEVICE_NAME] ?: defaults.deviceName,
@@ -423,7 +427,6 @@ class SettingsRepository(context: Context) {
             iptvSleepTimeoutSeconds = this[Keys.IPTV_SLEEP_TIMEOUT_SECONDS] ?: defaults.iptvSleepTimeoutSeconds,
             iptvVolume = this[Keys.IPTV_VOLUME] ?: defaults.iptvVolume,
             iptvLastChannelId = this[Keys.IPTV_LAST_CHANNEL_ID] ?: defaults.iptvLastChannelId,
-            iptvOpenMuted = this[Keys.IPTV_OPEN_MUTED] ?: defaults.iptvOpenMuted,
             iptvRecordingPortalUrl = this[Keys.IPTV_RECORDING_PORTAL_URL] ?: defaults.iptvRecordingPortalUrl,
             iptvRecordingMacAddress = this[Keys.IPTV_RECORDING_MAC_ADDRESS] ?: defaults.iptvRecordingMacAddress,
             parentalControlPin = this[Keys.PARENTAL_CONTROL_PIN] ?: defaults.parentalControlPin,
@@ -432,6 +435,7 @@ class SettingsRepository(context: Context) {
             iptvRecordingSmbFolder = this[Keys.IPTV_RECORDING_SMB_FOLDER] ?: defaults.iptvRecordingSmbFolder,
             iptvRecordingLocalCapMb = this[Keys.IPTV_RECORDING_LOCAL_CAP_MB] ?: defaults.iptvRecordingLocalCapMb,
             iptvScheduledRecordings = scheduledRecordings,
+            iptvRecordingHistory = recordingHistory,
             launcherFavoriteApps = favorites,
             launcherHiddenApps = this[Keys.LAUNCHER_HIDDEN_APPS] ?: defaults.launcherHiddenApps,
             lastVisitedPageIndex = this[Keys.LAST_VISITED_PAGE_INDEX] ?: defaults.lastVisitedPageIndex,
@@ -526,7 +530,6 @@ class SettingsRepository(context: Context) {
         val IPTV_SLEEP_TIMEOUT_SECONDS = intPreferencesKey("iptv_sleep_timeout_seconds")
         val IPTV_VOLUME = floatPreferencesKey("iptv_volume")
         val IPTV_LAST_CHANNEL_ID = stringPreferencesKey("iptv_last_channel_id")
-        val IPTV_OPEN_MUTED = booleanPreferencesKey("iptv_open_muted")
         val IPTV_RECORDING_PORTAL_URL = stringPreferencesKey("iptv_recording_portal_url")
         val IPTV_RECORDING_MAC_ADDRESS = stringPreferencesKey("iptv_recording_mac_address")
         val PARENTAL_CONTROL_PIN = stringPreferencesKey("parental_control_pin")
@@ -535,6 +538,7 @@ class SettingsRepository(context: Context) {
         val IPTV_RECORDING_SMB_FOLDER = stringPreferencesKey("iptv_recording_smb_folder")
         val IPTV_RECORDING_LOCAL_CAP_MB = intPreferencesKey("iptv_recording_local_cap_mb")
         val IPTV_SCHEDULED_RECORDINGS = stringPreferencesKey("iptv_scheduled_recordings_json")
+        val IPTV_RECORDING_HISTORY = stringPreferencesKey("iptv_recording_history_json")
 
         val CUSTOM_TEXT_WIDGETS = stringPreferencesKey("custom_text_widgets_json")
 
@@ -632,7 +636,6 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var iptvSleepTimeoutSeconds: Int by PrefDelegate(SettingsRepository.Keys.IPTV_SLEEP_TIMEOUT_SECONDS, prefs, defaults.iptvSleepTimeoutSeconds)
     var iptvVolume: Float by PrefDelegate(SettingsRepository.Keys.IPTV_VOLUME, prefs, defaults.iptvVolume)
     var iptvLastChannelId: String by PrefDelegate(SettingsRepository.Keys.IPTV_LAST_CHANNEL_ID, prefs, defaults.iptvLastChannelId)
-    var iptvOpenMuted: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_OPEN_MUTED, prefs, defaults.iptvOpenMuted)
     var iptvRecordingPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_PORTAL_URL, prefs, defaults.iptvRecordingPortalUrl)
     var iptvRecordingMacAddress: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_MAC_ADDRESS, prefs, defaults.iptvRecordingMacAddress)
     var parentalControlPin: String by PrefDelegate(SettingsRepository.Keys.PARENTAL_CONTROL_PIN, prefs, defaults.parentalControlPin)
@@ -695,6 +698,14 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
             .orEmpty()
         set(value) {
             prefs[SettingsRepository.Keys.IPTV_SCHEDULED_RECORDINGS] = json.encodeToString(value)
+        }
+
+    var iptvRecordingHistory: List<CompletedRecording>
+        get() = prefs[SettingsRepository.Keys.IPTV_RECORDING_HISTORY]
+            ?.let { runCatching { json.decodeFromString<List<CompletedRecording>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.IPTV_RECORDING_HISTORY] = json.encodeToString(value)
         }
 }
 

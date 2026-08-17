@@ -50,16 +50,19 @@ data class ActiveRecording(
     val stopAtEpochSeconds: Long? = null,
 )
 
-/** What the record button briefly shows in place of the "recording..." state once a recording
- * finishes - where it actually landed, so stopping a recording confirms it was saved rather than
- * just silently reverting to the idle icon. [path] is share/app-storage-relative (e.g. "MirrorDash
- * Recordings/WWE HD_2026-08-15_10-30-00.ts"), not an absolute filesystem path - the latter is
- * either meaningless (app-private local storage) or not what the user typed in as the NAS folder. */
+/** One finished recording, kept in [com.sconcept.mirrordash.settings.SettingsRepository]'s
+ * persisted history (see [com.sconcept.mirrordash.settings.MirrorDashSettings.iptvRecordingHistory])
+ * so what got saved is still browsable after the fact, not just the momentary confirmation right
+ * as a recording stops. [path] is share/app-storage-relative (e.g. "MirrorDash Recordings/WWE
+ * HD_2026-08-15_10-30-00.ts"), not an absolute filesystem path - the latter is either meaningless
+ * (app-private local storage) or not what the user typed in as the NAS folder. */
+@Serializable
 data class CompletedRecording(
     val channelName: String,
     val destinationLabel: String,
     val path: String,
     val bytesWritten: Long,
+    val startedAtEpochSeconds: Long,
     val finishedAtEpochSeconds: Long,
     /** Stopped itself, rather than the user or a schedule/timer ending it - the destination
      * volume dropped under the free-space failsafe mid-recording. */
