@@ -22,7 +22,7 @@ data class ScheduledRecording(
     val endEpochSeconds: Long,
 )
 
-enum class RecordingTrigger { MANUAL, FIXED_DURATION, SCHEDULED }
+enum class RecordingTrigger { MANUAL, FIXED_DURATION, SCHEDULED, DOWNLOAD }
 
 /** Which destination is tried first - the other is always attempted as a fallback if opening the
  * primary one fails, per the brief: both are implemented as independent, always-available write
@@ -38,8 +38,8 @@ enum class RecordingDestinationMode(val storageKey: String) {
     }
 }
 
-/** What's actually running right now, for the record button/UI to reflect - `null` in
- * [IptvRecordingEngine.uiState] means nothing is currently recording. */
+/** What's actually running right now, for the record button/Download Manager UI to reflect -
+ * `null` in [IptvRecordingEngine.uiState] means nothing is currently recording/downloading. */
 data class ActiveRecording(
     val channelId: String,
     val channelName: String,
@@ -48,6 +48,15 @@ data class ActiveRecording(
     val startedAtEpochSeconds: Long,
     val bytesWritten: Long = 0L,
     val stopAtEpochSeconds: Long? = null,
+    /** The source's `Content-Length`, when the server sent one - a VOD download almost always
+     * has one (it's a finite file), a live channel recording never does (an open-ended stream).
+     * Null means "unknown size", which is what tells the Download Manager to show an
+     * indeterminate spinner instead of a percentage/circular progress. */
+    val totalBytes: Long? = null,
+    /** Bytes written since the last ~1s tick, divided by however long that tick actually took -
+     * see [IptvRecordingEngine.copyStream]. 0 until the first tick has a prior sample to diff
+     * against. */
+    val bytesPerSecond: Long = 0L,
 )
 
 /** One finished recording, kept in [com.sconcept.mirrordash.settings.SettingsRepository]'s
@@ -67,4 +76,8 @@ data class CompletedRecording(
     /** Stopped itself, rather than the user or a schedule/timer ending it - the destination
      * volume dropped under the free-space failsafe mid-recording. */
     val stoppedForLowStorage: Boolean = false,
+    /** Defaults to [RecordingTrigger.MANUAL] so history entries persisted before this field
+     * existed still decode - added so the Download Manager's History tab can tell a Movies/Series
+     * download apart from a live-TV recording in the shared history list. */
+    val trigger: RecordingTrigger = RecordingTrigger.MANUAL,
 )

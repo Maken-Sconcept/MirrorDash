@@ -1,6 +1,7 @@
 package com.sconcept.mirrordash.photorama
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -11,6 +12,9 @@ import com.sconcept.mirrordash.nas.model.LanPhoto
 import com.sconcept.mirrordash.nas.model.SmbConnectionState
 import com.sconcept.mirrordash.nas.model.SmbResult
 import com.sconcept.mirrordash.nas.model.SmbShare
+import com.sconcept.mirrordash.settings.CLOCK_BACKGROUND_MODE_PHOTORAMA
+import com.sconcept.mirrordash.settings.PHOTORAMA_SOURCE_LOCAL
+import com.sconcept.mirrordash.settings.PHOTORAMA_SOURCE_NAS
 import com.sconcept.mirrordash.settings.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,12 +27,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 data class PhotoramaUiState(
     val isConfigured: Boolean = false,
     val connectionState: SmbConnectionState = SmbConnectionState.DISCONNECTED,
-    val currentPhoto: File? = null,
+    // A Coil-compatible image model: a cached java.io.File for the NAS source, a content:// Uri
+    // directly for the local source (no NAS-style fetch-and-cache round trip needed - see
+    // showCurrent). Coil's rememberAsyncImagePainter accepts either as `model`.
+    val currentPhoto: Any? = null,
     val hasNoPhotos: Boolean = false,
 )
 
@@ -43,6 +49,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
     AndroidViewModel(application) {
 
     private val lanPhotoRepository = LanPhotoRepository(application)
+    private val localPhotoRepository = LocalPhotoRepository(application)
     private val cacheManager = PhotoCacheManager(application)
 
     private val _uiState = MutableStateFlow(PhotoramaUiState())
@@ -58,14 +65,23 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
 
     private data class ConnectionConfig(
         val enabled: Boolean,
+        val source: String,
         val host: String,
         val share: String,
         val username: String,
         val domain: String,
         val rememberConnection: Boolean,
         val folderPath: String,
+        val localFolderUri: String,
         val includeSubfolders: Boolean,
-    )
+    ) {
+        val isConfigured: Boolean
+            get() = when (source) {
+                PHOTORAMA_SOURCE_LOCAL -> localFolderUri.isNotBlank()
+                PHOTORAMA_SOURCE_NAS -> host.isNotBlank() && share.isNotBlank() && folderPath.isNotBlank()
+                else -> false
+            }
+    }
 
     companion object {
         private const val INDEX_REFRESH_INTERVAL_MS = 15 * 60 * 1000L
@@ -92,19 +108,24 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             settingsRepository.settings
                 .map { s ->
                     ConnectionConfig(
-                        enabled = s.photoramaEnabled,
+                        // clockBackgroundMode, not photoramaEnabled, is the field ClockViewModel
+                        // actually renders off of - gating the engine on the other one risks it
+                        // running (or not) out of step with whether Photorama is really on screen.
+                        enabled = s.clockBackgroundMode == CLOCK_BACKGROUND_MODE_PHOTORAMA,
+                        source = s.photoramaSource,
                         host = s.smbHost,
                         share = s.smbShareName,
                         username = s.smbUsername,
                         domain = s.smbDomain,
                         rememberConnection = s.smbRememberConnection,
                         folderPath = s.photoramaFolderPath,
+                        localFolderUri = s.photoramaLocalFolderUri,
                         includeSubfolders = s.photoramaIncludeSubfolders,
                     )
                 }
                 .distinctUntilChanged()
                 .collectLatest { config ->
-                    if (!config.enabled || config.host.isBlank() || config.share.isBlank() || config.folderPath.isBlank()) {
+                    if (!config.enabled || !config.isConfigured) {
                         _uiState.value = PhotoramaUiState(isConfigured = false)
                         return@collectLatest
                     }
@@ -126,13 +147,20 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
 
     private suspend fun refreshIndex() {
         val settings = settingsRepository.settings.first()
-        val share = settingsRepository.smbShareWithPassword()
+        val isLocal = settings.photoramaSource == PHOTORAMA_SOURCE_LOCAL
+        // Never actually dereferenced for the local source - showCurrent/preloadNext recognize a
+        // content:// LanPhoto.url and skip the NAS cache path (and so this share) entirely.
+        val share = if (isLocal) SmbShare.EMPTY else settingsRepository.smbShareWithPassword()
         _uiState.value = _uiState.value.copy(
             connectionState = if (photos.isEmpty()) SmbConnectionState.CONNECTING else SmbConnectionState.RECONNECTING,
         )
 
         val result = withContext(Dispatchers.IO) {
-            lanPhotoRepository.scanFolder(share, settings.photoramaFolderPath, settings.photoramaIncludeSubfolders)
+            if (isLocal) {
+                localPhotoRepository.scanFolder(settings.photoramaLocalFolderUri, settings.photoramaIncludeSubfolders)
+            } else {
+                lanPhotoRepository.scanFolder(share, settings.photoramaFolderPath, settings.photoramaIncludeSubfolders)
+            }
         }
         when (result) {
             is SmbResult.Success -> onIndexed(result.value, settings.photoramaShuffle, settings.photoramaIntervalSeconds, share, settings.photoramaCacheSizeMb)
@@ -206,9 +234,14 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
         val photo = photos.getOrNull(photoIndex) ?: return
         currentPhotoUrl = photo.url
 
-        val cached = cacheManager.getCachedFile(photo)
-        val ready = cached ?: withContext(Dispatchers.IO) {
-            cacheManager.ensureCached(photo, share, cacheSizeMb * 1024L * 1024L)
+        // A local-source photo's url is its own content:// Uri - already directly readable,
+        // nothing to fetch or cache. Only the NAS source's smb:// urls go through the disk cache.
+        val ready: Any? = if (isLocalPhotoUrl(photo.url)) {
+            Uri.parse(photo.url)
+        } else {
+            cacheManager.getCachedFile(photo) ?: withContext(Dispatchers.IO) {
+                cacheManager.ensureCached(photo, share, cacheSizeMb * 1024L * 1024L)
+            }
         }
         if (ready != null) {
             _uiState.value = _uiState.value.copy(currentPhoto = ready, hasNoPhotos = false)
@@ -220,12 +253,15 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
         if (order.size <= 1) return
         val nextPos = (position + 1) % order.size
         val nextPhoto = photos.getOrNull(order[nextPos]) ?: return
+        if (isLocalPhotoUrl(nextPhoto.url)) return
         viewModelScope.launch(Dispatchers.IO) {
             if (cacheManager.getCachedFile(nextPhoto) == null) {
                 cacheManager.ensureCached(nextPhoto, share, cacheSizeMb * 1024L * 1024L)
             }
         }
     }
+
+    private fun isLocalPhotoUrl(url: String): Boolean = url.startsWith("content://")
 
     private suspend fun scheduleReconnect(intervalSeconds: Int, share: SmbShare, cacheSizeMb: Int) {
         reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(MAX_RECONNECT_ATTEMPT_SHIFT)

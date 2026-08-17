@@ -23,15 +23,15 @@ const val TEXT_WIDGET_ANIMATION_HANDWRITE = "HANDWRITE"
  * fixed fields since there's no cap on how many a user might add. */
 @Serializable
 data class CustomTextWidget(
-    val id: String,
+    override val id: String,
     val text: String = "New text",
     val fontSizeSp: Int = 28,
     val colorArgb: Int = 0xFFF5F3EF.toInt(),
     val fontFamily: String = TEXT_WIDGET_FONT_DEFAULT,
     val animation: String = TEXT_WIDGET_ANIMATION_NONE,
-    val anchorX: Float = 0.5f,
-    val anchorY: Float = 0.5f,
-)
+    override val anchorX: Float = 0.5f,
+    override val anchorY: Float = 0.5f,
+) : AnchoredWidget
 
 object TextWidgetFonts {
     val ALL = listOf(

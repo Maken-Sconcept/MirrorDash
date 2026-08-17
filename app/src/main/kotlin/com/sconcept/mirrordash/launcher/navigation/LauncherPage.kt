@@ -8,35 +8,34 @@ package com.sconcept.mirrordash.launcher.navigation
  */
 sealed class LauncherPage(val id: String, val label: String) {
     data object Clock : LauncherPage("clock", "Clock")
-    data object Photorama : LauncherPage("photorama", "Photorama")
     data object Browser : LauncherPage("browser", "Web")
     data object Jellyfin : LauncherPage("jellyfin", "Jellyfin")
     data object HomeAssistant : LauncherPage("home_assistant", "Home Assistant")
     data object Iptv : LauncherPage("iptv", "IPTV")
+    data object Kodi : LauncherPage("kodi", "Kodi")
     data object Settings : LauncherPage("settings", "Settings")
 }
 
 object LauncherPages {
     /** Clock first, Settings last, everything else in between - enforced here once instead of
      * at every call site that builds the pager. Every optional page is a function parameter
-     * rather than a fixed entry: Photorama drops out while its slideshow is being used as the
-     * Clock's own background instead (a standalone page showing the same photos the clock is
-     * already showing behind itself would be a redundant, confusing extra swipe), while Browser,
-     * Jellyfin, Home Assistant, and IPTV are opt-in entirely - "each tab can be enabled or
-     * disabled in the settings, but the clock and settings must always remain." */
+     * rather than a fixed entry: Browser, Jellyfin, Home Assistant, and IPTV are opt-in - "each
+     * tab can be enabled or disabled in the settings, but the clock and settings must always
+     * remain." Photorama has no page of its own at all - it only ever exists as the Clock's own
+     * background (see ClockViewModel/ClockScreen), configured from Clock settings directly. */
     fun ordered(
-        includePhotoramaPage: Boolean,
         includeBrowserPage: Boolean,
         includeJellyfinPage: Boolean,
         includeHomeAssistantPage: Boolean,
         includeIptvPage: Boolean,
+        includeKodiPage: Boolean,
     ): List<LauncherPage> = buildList {
         add(LauncherPage.Clock)
-        if (includePhotoramaPage) add(LauncherPage.Photorama)
         if (includeBrowserPage) add(LauncherPage.Browser)
         if (includeJellyfinPage) add(LauncherPage.Jellyfin)
         if (includeHomeAssistantPage) add(LauncherPage.HomeAssistant)
         if (includeIptvPage) add(LauncherPage.Iptv)
+        if (includeKodiPage) add(LauncherPage.Kodi)
         add(LauncherPage.Settings)
     }
 }

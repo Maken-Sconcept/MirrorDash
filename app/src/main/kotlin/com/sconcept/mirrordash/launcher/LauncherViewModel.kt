@@ -3,8 +3,8 @@ package com.sconcept.mirrordash.launcher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.sconcept.mirrordash.launcher.navigation.LauncherPage
 import com.sconcept.mirrordash.launcher.navigation.LauncherPages
-import com.sconcept.mirrordash.settings.CLOCK_BACKGROUND_MODE_PHOTORAMA
 import com.sconcept.mirrordash.settings.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,55 +25,57 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
     val initialPageIndex: StateFlow<Int?> = _initialPageIndex
 
     private data class PageAvailability(
-        val includePhotorama: Boolean,
         val includeBrowser: Boolean,
         val includeJellyfin: Boolean,
         val includeHomeAssistant: Boolean,
         val includeIptv: Boolean,
+        val includeKodi: Boolean,
     )
 
-    // Settings is always the last page regardless of how many pages exist, so "is this the last
-    // page" is all onPageSettled needs - tracked here rather than looked up by page identity,
-    // since the page list's length itself changes as optional pages toggle on/off.
-    private var currentPageCount = LauncherPages.ordered(
-        includePhotoramaPage = true,
+    // Optional pages come and go with settings, so persistence is keyed off the actual page
+    // identity at each index, not a hardcoded slot number. Settings and Kodi deliberately fall
+    // back to Clock on relaunch: Settings so Home doesn't strand you mid-configuration, Kodi
+    // because returning Home from the external Kodi app should not immediately launch it again.
+    private var currentOrderedPages = LauncherPages.ordered(
         includeBrowserPage = true,
         includeJellyfinPage = true,
         includeHomeAssistantPage = true,
         includeIptvPage = true,
-    ).size
+        includeKodiPage = true,
+    )
 
     init {
         viewModelScope.launch {
             settingsRepository.settings
                 .map {
                     PageAvailability(
-                        includePhotorama = it.clockBackgroundMode != CLOCK_BACKGROUND_MODE_PHOTORAMA,
                         includeBrowser = it.browserEnabled,
                         includeJellyfin = it.jellyfinEnabled,
                         includeHomeAssistant = it.homeAssistantEnabled,
                         includeIptv = it.iptvEnabled,
+                        includeKodi = it.kodiEnabled,
                     )
                 }
                 .distinctUntilChanged()
                 .collect { availability ->
-                    currentPageCount = LauncherPages.ordered(
-                        includePhotoramaPage = availability.includePhotorama,
+                    currentOrderedPages = LauncherPages.ordered(
                         includeBrowserPage = availability.includeBrowser,
                         includeJellyfinPage = availability.includeJellyfin,
                         includeHomeAssistantPage = availability.includeHomeAssistant,
                         includeIptvPage = availability.includeIptv,
-                    ).size
+                        includeKodiPage = availability.includeKodi,
+                    )
                     if (_initialPageIndex.value == null) {
                         val stored = settingsRepository.settings.first().lastVisitedPageIndex
-                        _initialPageIndex.value = stored.coerceIn(0, currentPageCount - 1)
+                        _initialPageIndex.value = stored.coerceIn(0, currentOrderedPages.lastIndex)
                     }
                 }
         }
     }
 
     fun onPageSettled(index: Int) {
-        val toPersist = if (index == currentPageCount - 1) 0 else index
+        val page = currentOrderedPages.getOrNull(index)
+        val toPersist = if (page == LauncherPage.Settings || page == LauncherPage.Kodi) 0 else index
         viewModelScope.launch {
             settingsRepository.update { lastVisitedPageIndex = toPersist }
         }

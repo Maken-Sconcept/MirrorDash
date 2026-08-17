@@ -1,51 +1,63 @@
 package com.sconcept.mirrordash.launcher.gestures
 
-import android.content.Context
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewConfiguration
-import androidx.compose.runtime.State
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+
+private val PAGE_SWIPE_THRESHOLD = 40.dp
 
 /**
  * A WebView (Jellyfin, Browser) locks every touch to itself via
  * `parent.requestDisallowInterceptTouchEvent(true)` so its own vertical scrolling/carousels
- * aren't stolen mid-drag by an ancestor - but that also means, once awake, a deliberate
- * left/right swipe meant for [LauncherGestureHost]'s page pager never reaches it either ("hard
- * to swipe from tab" while inside an app). This classifies the gesture the instant it clears
- * touch slop - same "decide once, never fight after" approach as the edge-zone arbiter in
- * [LauncherGestureHost] - and only relinquishes the lock when it's a clearly horizontal drag AND
- * [isAwake] is true; a tap, a vertical scroll, or anything while still Ambient behaves exactly as
- * before. Unlike the swipe-intent filter removed from LauncherGestureHost itself, this never
- * touches Compose's own `PointerInputChange.consume()` - it only flips the classic Android
- * View-system interception flag, which HorizontalPager's interop boundary already honors.
+ * aren't stolen mid-drag - but that flag is a classic Android View-system mechanism, and
+ * [LauncherGestureHost]'s HorizontalPager is pure Compose, a separate gesture architecture the
+ * flag has no leverage over. Toggling it conditionally (an earlier attempt at this) measurably
+ * did nothing.
+ *
+ * Rather than fight the WebView for ownership of its touch stream - which Compose has no clean
+ * way to win, and which the removed swipe-intent filter proved is actively dangerous to attempt
+ * mid-gesture (Compose's own detectors, including the pager's, permanently abandon a gesture the
+ * first time they see it consumed, even if consumption later stops) - this watches the SAME raw
+ * pointer stream in parallel, purely passively (`PointerEventPass.Initial`, never consuming),
+ * exactly the technique [LauncherTabBar]'s own swipe detector already uses to coexist with its
+ * label chips underneath.
+ *
+ * Fires the moment the running drag first crosses the threshold as clearly horizontal - not on
+ * release - because some WebView content (Jellyfin's own edge-swipe drawer, in particular) reacts
+ * to the SAME raw drag with its own JS gesture recognizer, racing us for it. Once that JS calls
+ * `preventDefault()` on its own touchmove, Chromium can stop forwarding further MotionEvents
+ * through the normal Android dispatch path our Initial-pass observer relies on - so the fix has
+ * to win the race by committing earlier, not just by watching harder. Only while awake, so it
+ * never interferes with the tap-and-hold wake gesture or ordinary use of the page while ambient.
  */
-internal fun swipePriorityTouchListener(context: Context, isAwake: State<Boolean>): View.OnTouchListener {
-    val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-    var downX = 0f
-    var downY = 0f
-    var classified = false
-    return View.OnTouchListener { view, motionEvent ->
-        when (motionEvent.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downX = motionEvent.x
-                downY = motionEvent.y
-                classified = false
-                view.parent?.requestDisallowInterceptTouchEvent(true)
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (!classified) {
-                    val dx = motionEvent.x - downX
-                    val dy = motionEvent.y - downY
-                    if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
-                        classified = true
-                        val isPageSwipe = isAwake.value && abs(dx) > abs(dy)
-                        view.parent?.requestDisallowInterceptTouchEvent(!isPageSwipe)
-                    }
+internal fun Modifier.pageSwipePriority(enabled: Boolean, onSwipe: (forward: Boolean) -> Unit): Modifier = composed {
+    if (!enabled) return@composed this
+    val onSwipeState = rememberUpdatedState(onSwipe)
+    pointerInput(Unit) {
+        val thresholdPx = PAGE_SWIPE_THRESHOLD.toPx()
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            var totalDx = 0f
+            var totalDy = 0f
+            var fired = false
+            while (true) {
+                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (change.changedToUpIgnoreConsumed()) break
+                totalDx += change.position.x - change.previousPosition.x
+                totalDy += change.position.y - change.previousPosition.y
+                if (!fired && abs(totalDx) >= thresholdPx && abs(totalDx) > abs(totalDy)) {
+                    fired = true
+                    onSwipeState.value(totalDx < 0f)
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> view.parent?.requestDisallowInterceptTouchEvent(false)
         }
-        false
     }
 }

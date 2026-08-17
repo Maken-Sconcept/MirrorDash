@@ -43,11 +43,14 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.VideoSettings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,15 +67,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.ui.PlayerView
+import com.sconcept.mirrordash.iptv.player.IptvPlayer
+import com.sconcept.mirrordash.iptv.player.PlayerBackend
 import com.sconcept.mirrordash.launcher.AppContainer
 import com.sconcept.mirrordash.ui.theme.MDTheme
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -92,8 +98,16 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
     val settings by container.settingsRepository.settings.collectAsState(initial = null)
     val scheduledRecordings = settings?.iptvScheduledRecordings.orEmpty()
     val recordingHistory = settings?.iptvRecordingHistory.orEmpty()
-    var showRecordingHistory by remember { mutableStateOf(false) }
+    var showDownloadManager by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    // A "download complete" notification tap bumps this (see IptvRecordingEngine.requestOpenDownloadManager's
+    // doc comment) - MirrorDashRoot reacts to the same epoch to jump to this tab in the first
+    // place, this is the other half: once here, actually open the panel. Skips the initial 0 so a
+    // fresh composition doesn't pop the panel open unprompted.
+    LaunchedEffect(recordingState.openRequestEpoch) {
+        if (recordingState.openRequestEpoch > 0) showDownloadManager = true
+    }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         when {
@@ -106,115 +120,75 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                 message = uiState.errorMessage ?: "Couldn't connect to the portal",
                 onRetry = viewModel::retry,
             )
-            uiState.pageState == IptvPageState.SLEEPING -> LoadingState()
-            uiState.channels.isEmpty() -> CenteredMessage(
-                title = "No channels",
-                subtitle = "The portal connected but didn't return any live channels.",
+            uiState.pageState == IptvPageState.BLOCKED -> AccountBlockedState(
+                accountInfo = uiState.accountInfo,
+                onRetry = viewModel::retry,
             )
-            else -> {
-                // Factored out rather than duplicated across the split-preview and full-size
-                // branches below - every param but the modifier (which controls whether this
-                // fills the screen or just the bottom 70%) and showPreview/onCollapsePreview is
-                // identical either way.
-                val guide: @Composable (modifier: Modifier, showPreview: Boolean) -> Unit = { guideModifier, showPreview ->
-                    IptvGuideOverlay(
-                        channels = uiState.displayedChannels,
-                        currentChannelId = uiState.currentChannel?.id,
-                        onSelectChannel = { viewModel.selectChannelById(it.id) },
-                        onDismiss = viewModel::toggleGuide,
-                        loadEpg = viewModel::epgFor,
-                        genres = uiState.genres,
-                        selectedGenreId = uiState.selectedGenreId,
-                        onSelectGenre = viewModel::selectGenre,
-                        scheduledRecordings = scheduledRecordings,
-                        activeRecording = recordingState.activeRecording,
-                        onScheduleProgram = { channel, program ->
-                            scope.launch {
-                                recordingEngine.scheduleRecording(
-                                    ScheduledRecording(
-                                        id = UUID.randomUUID().toString(),
-                                        channelId = channel.id,
-                                        channelName = channel.name,
-                                        channelNumber = channel.number,
-                                        channelCmd = channel.cmd,
-                                        programTitle = program.title,
-                                        startEpochSeconds = program.startEpochSeconds,
-                                        endEpochSeconds = program.endEpochSeconds,
-                                    ),
-                                )
-                            }
-                        },
-                        onCancelScheduled = { id -> scope.launch { recordingEngine.cancelScheduledRecording(id) } },
-                        onRecordLiveProgram = { channel, program -> recordingEngine.startUntil(channel, program.endEpochSeconds) },
-                        onStopRecording = { recordingEngine.stop() },
-                        onCollapsePreview = if (showPreview) viewModel::collapseGuidePreview else null,
-                        modifier = guideModifier,
-                    )
-                }
+            uiState.pageState == IptvPageState.SLEEPING -> LoadingState()
+            else -> Column(modifier = Modifier.fillMaxSize()) {
+                // One row above everything else, regardless of which content type is currently
+                // shown below it - see [IptvContentTab]. Live TV having no channels (next) or a
+                // Movies/Series category coming back empty doesn't affect whether the *other*
+                // tabs are reachable, so this sits outside all three branches rather than only
+                // appearing once live TV specifically is ready.
+                IptvContentTabsRow(selected = uiState.contentTab, onSelect = viewModel::selectContentTab)
 
-                if (uiState.showGuide && uiState.guideShowsPreview) {
-                    // Video on top, Guide below, both visible at once - the preview a channel tap
-                    // from the Guide starts (see [IptvUiState.guideShowsPreview]'s doc comment).
-                    // 30/70 via Column weights, not two overlapping fillMaxSize Boxes - simpler to
-                    // reason about than z-order + manual height math, and Compose's own layout
-                    // pass keeps the two regions from ever fighting over space.
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = Modifier.fillMaxWidth().weight(GUIDE_PREVIEW_HEIGHT_FRACTION).background(Color.Black)) {
-                            PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
-                            if (uiState.isBuffering) {
-                                CircularProgressIndicator(
-                                    color = MDTheme.colors.accent,
-                                    modifier = Modifier.align(Alignment.Center).size(28.dp),
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    when (uiState.contentTab) {
+                        IptvContentTab.LIVE -> if (uiState.channels.isEmpty()) {
+                            CenteredMessage(
+                                title = "No channels",
+                                subtitle = "The portal connected but didn't return any live channels.",
+                            )
+                        } else {
+                            LiveTvContent(
+                                uiState = uiState,
+                                viewModel = viewModel,
+                                recordingEngine = recordingEngine,
+                                recordingState = recordingState,
+                                scheduledRecordings = scheduledRecordings,
+                                onToggleHistory = { showDownloadManager = !showDownloadManager },
+                                scope = scope,
+                            )
+                        }
+                        IptvContentTab.MOVIES, IptvContentTab.SERIES -> {
+                            val contentType = if (uiState.contentTab == IptvContentTab.MOVIES) VodContentType.MOVIES else VodContentType.SERIES
+                            IptvVodBrowser(
+                                uiState = uiState,
+                                contentType = contentType,
+                                onSelectCategory = if (contentType == VodContentType.MOVIES) viewModel::selectVodCategory else viewModel::selectSeriesCategory,
+                                onLoadMore = if (contentType == VodContentType.MOVIES) viewModel::loadMoreVodItems else viewModel::loadMoreSeriesItems,
+                                onSetViewMode = { mode -> viewModel.setViewMode(contentType, mode) },
+                                onDeepSearch = if (contentType == VodContentType.MOVIES) viewModel::searchVodDeep else viewModel::searchSeriesDeep,
+                                onClearDeepSearch = if (contentType == VodContentType.MOVIES) viewModel::clearVodDeepSearch else viewModel::clearSeriesDeepSearch,
+                                onCheckHealth = viewModel::checkHealth,
+                                onPlay = viewModel::playVodItem,
+                                onDownload = { item -> recordingEngine.downloadVodItem(item) },
+                            )
+                            uiState.playingVodItem?.let { item ->
+                                VodPlayerScreen(
+                                    uiState = uiState,
+                                    viewModel = viewModel,
+                                    recordingEngine = recordingEngine,
+                                    recordingState = recordingState,
+                                    item = item,
+                                    onToggleHistory = { showDownloadManager = !showDownloadManager },
                                 )
                             }
                         }
-                        guide(Modifier.fillMaxWidth().weight(1f - GUIDE_PREVIEW_HEIGHT_FRACTION), true)
-                    }
-                } else {
-                    PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
-                    if (uiState.isBuffering) {
-                        CircularProgressIndicator(
-                            color = MDTheme.colors.accent,
-                            modifier = Modifier.align(Alignment.Center).size(40.dp),
-                        )
-                    }
-                    PlaybackControls(
-                        uiState = uiState,
-                        recordingState = recordingState,
-                        onPlayPause = viewModel::togglePlayPause,
-                        onPrevious = viewModel::previousChannel,
-                        onNext = viewModel::nextChannel,
-                        onToggleChannelList = viewModel::toggleChannelList,
-                        onToggleGuide = viewModel::toggleGuide,
-                        onVolumeChange = viewModel::setVolume,
-                        onToggleMute = viewModel::toggleMute,
-                        onRecordNow = { channel -> recordingEngine.startManual(channel) },
-                        onRecordTimed = { channel, minutes -> recordingEngine.startFixedDuration(channel, minutes) },
-                        onOpenGuideToSchedule = viewModel::toggleGuide,
-                        onStopRecording = { recordingEngine.stop() },
-                        onToggleHistory = { showRecordingHistory = !showRecordingHistory },
-                        modifier = Modifier.align(Alignment.BottomCenter),
-                    )
-                    if (uiState.showChannelList) {
-                        ChannelListPanel(
-                            channels = uiState.displayedChannels,
-                            currentChannelId = uiState.currentChannel?.id,
-                            onSelect = { viewModel.selectChannelById(it.id) },
-                            onDismiss = viewModel::toggleChannelList,
-                            modifier = Modifier.align(Alignment.CenterEnd),
-                        )
-                    }
-                    if (uiState.showGuide) {
-                        guide(Modifier.fillMaxSize(), false)
                     }
                 }
             }
         }
 
-        if (showRecordingHistory) {
-            RecordingHistoryPanel(
+        if (showDownloadManager) {
+            DownloadManagerPanel(
+                activeRecording = recordingState.activeRecording,
+                pending = scheduledRecordings,
                 recordings = recordingHistory,
-                onDismiss = { showRecordingHistory = false },
+                onStop = { recordingEngine.stop() },
+                onCancelPending = { id -> scope.launch { recordingEngine.cancelScheduledRecording(id) } },
+                onDismiss = { showDownloadManager = false },
             )
         }
 
@@ -225,6 +199,182 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                 onDismiss = viewModel::dismissPinChallenge,
             )
         }
+    }
+}
+
+/** The live-TV player/controls/Guide/channel-list, exactly as it behaved before Movies/Series
+ * existed - factored out of [IptvScreen] purely so [IptvContentTab.LIVE] is one branch alongside
+ * the other two rather than the only thing that Composable could ever render. */
+@Composable
+private fun LiveTvContent(
+    uiState: IptvUiState,
+    viewModel: IptvViewModel,
+    recordingEngine: IptvRecordingEngine,
+    recordingState: RecordingEngineUiState,
+    scheduledRecordings: List<ScheduledRecording>,
+    onToggleHistory: () -> Unit,
+    scope: CoroutineScope,
+) {
+    // Factored out rather than duplicated across the split-preview and full-size
+    // branches below - every param but the modifier (which controls whether this
+    // fills the screen or just the bottom 70%) and showPreview/onCollapsePreview is
+    // identical either way.
+    val guide: @Composable (modifier: Modifier, showPreview: Boolean) -> Unit = { guideModifier, showPreview ->
+        IptvGuideOverlay(
+            channels = uiState.displayedChannels,
+            currentChannelId = uiState.currentChannel?.id,
+            onSelectChannel = { viewModel.selectChannelById(it.id) },
+            onDismiss = viewModel::toggleGuide,
+            loadEpg = viewModel::epgFor,
+            genres = uiState.genres,
+            selectedGenreId = uiState.selectedGenreId,
+            onSelectGenre = viewModel::selectGenre,
+            scheduledRecordings = scheduledRecordings,
+            activeRecording = recordingState.activeRecording,
+            onScheduleProgram = { channel, program ->
+                scope.launch {
+                    recordingEngine.scheduleRecording(
+                        ScheduledRecording(
+                            id = UUID.randomUUID().toString(),
+                            channelId = channel.id,
+                            channelName = channel.name,
+                            channelNumber = channel.number,
+                            channelCmd = channel.cmd,
+                            programTitle = program.title,
+                            startEpochSeconds = program.startEpochSeconds,
+                            endEpochSeconds = program.endEpochSeconds,
+                        ),
+                    )
+                }
+            },
+            onCancelScheduled = { id -> scope.launch { recordingEngine.cancelScheduledRecording(id) } },
+            onRecordLiveProgram = { channel, program -> recordingEngine.startUntil(channel, program.endEpochSeconds) },
+            onStopRecording = { recordingEngine.stop() },
+            onCollapsePreview = if (showPreview) viewModel::collapseGuidePreview else null,
+            modifier = guideModifier,
+        )
+    }
+
+    if (uiState.showGuide && uiState.guideShowsPreview) {
+        // Video on top, Guide below, both visible at once - the preview a channel tap
+        // from the Guide starts (see [IptvUiState.guideShowsPreview]'s doc comment).
+        // 30/70 via Column weights, not two overlapping fillMaxSize Boxes - simpler to
+        // reason about than z-order + manual height math, and Compose's own layout
+        // pass keeps the two regions from ever fighting over space.
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.fillMaxWidth().weight(GUIDE_PREVIEW_HEIGHT_FRACTION).background(Color.Black)) {
+                PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
+                if (uiState.isBuffering) {
+                    CircularProgressIndicator(
+                        color = MDTheme.colors.accent,
+                        modifier = Modifier.align(Alignment.Center).size(28.dp),
+                    )
+                }
+            }
+            guide(Modifier.fillMaxWidth().weight(1f - GUIDE_PREVIEW_HEIGHT_FRACTION), true)
+        }
+    } else {
+        Box(modifier = Modifier.fillMaxSize()) {
+            PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
+            if (uiState.isBuffering) {
+                CircularProgressIndicator(
+                    color = MDTheme.colors.accent,
+                    modifier = Modifier.align(Alignment.Center).size(40.dp),
+                )
+            }
+            PlaybackControls(
+                title = uiState.currentChannel?.let { "${it.number}  ${it.name}" } ?: "",
+                isPlaying = uiState.isPlaying,
+                volume = uiState.volume,
+                playerBackend = uiState.playerBackend,
+                onPlayPause = viewModel::togglePlayPause,
+                onPrevious = viewModel::previousChannel,
+                onNext = viewModel::nextChannel,
+                onToggleChannelList = viewModel::toggleChannelList,
+                onToggleGuide = viewModel::toggleGuide,
+                onVolumeChange = viewModel::setVolume,
+                onToggleMute = viewModel::toggleMute,
+                onToggleHistory = onToggleHistory,
+                onSelectPlayerBackend = viewModel::setPlayerBackend,
+                recordSlot = {
+                    RecordButton(
+                        hasTarget = uiState.currentChannel != null,
+                        recordingState = recordingState,
+                        onStart = { uiState.currentChannel?.let { recordingEngine.startManual(it) } },
+                        onStartTimed = { minutes -> uiState.currentChannel?.let { recordingEngine.startFixedDuration(it, minutes) } },
+                        onOpenSchedule = viewModel::toggleGuide,
+                        onStop = { recordingEngine.stop() },
+                    )
+                },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+            if (uiState.showChannelList) {
+                ChannelListPanel(
+                    displayedChannels = uiState.displayedChannels,
+                    allChannels = uiState.channels,
+                    currentChannelId = uiState.currentChannel?.id,
+                    onSelect = { viewModel.selectChannelById(it.id) },
+                    onDismiss = viewModel::toggleChannelList,
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                )
+            }
+            if (uiState.showGuide) {
+                guide(Modifier.fillMaxSize(), false)
+            }
+        }
+    }
+}
+
+/** Movies/Series playback - reuses [PlayerSurface]/[PlaybackControls]/[RecordButton] verbatim
+ * rather than a second, Media3-native-controller implementation (mid-session feedback: the bottom
+ * controls looked and behaved differently for Movies/Series than for live TV, and that was
+ * unwanted - the same bar, not two codebases for it). A movie/series item is still just "the one
+ * thing currently on the shared [IptvPlayer]" (see [IptvViewModel.playVodItem]), the same shape
+ * live TV's player already handles - the one real difference is a seek bar, since a VOD file
+ * (unlike a live stream) can be scrubbed; [PlaybackControls] renders that itself whenever
+ * [PlaybackControls]'s `seekPlayer` param is non-null. */
+@Composable
+private fun VodPlayerScreen(
+    uiState: IptvUiState,
+    viewModel: IptvViewModel,
+    recordingEngine: IptvRecordingEngine,
+    recordingState: RecordingEngineUiState,
+    item: StalkerVodItem,
+    onToggleHistory: () -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        PlayerSurface(playerEpoch = uiState.playerEpoch, getPlayer = viewModel::currentPlayer)
+        if (uiState.isBuffering) {
+            CircularProgressIndicator(color = MDTheme.colors.accent, modifier = Modifier.align(Alignment.Center).size(40.dp))
+        }
+        RoundIconButton(
+            icon = Icons.Filled.Close,
+            contentDescription = "Close",
+            onClick = viewModel::stopVodPlayback,
+            modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+        )
+        PlaybackControls(
+            title = item.name,
+            isPlaying = uiState.isPlaying,
+            volume = uiState.volume,
+            playerBackend = uiState.playerBackend,
+            onPlayPause = viewModel::togglePlayPause,
+            onVolumeChange = viewModel::setVolume,
+            onToggleMute = viewModel::toggleMute,
+            onToggleHistory = onToggleHistory,
+            onSelectPlayerBackend = viewModel::setPlayerBackend,
+            recordSlot = {
+                RecordButton(
+                    hasTarget = true,
+                    recordingState = recordingState,
+                    onStart = { recordingEngine.downloadVodItem(item) },
+                    onStop = { recordingEngine.stop() },
+                )
+            },
+            seekPlayer = viewModel::currentPlayer,
+            seekEpoch = uiState.playerEpoch,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 
@@ -324,41 +474,51 @@ private fun PinKey(
     }
 }
 
-/** [playerEpoch] isn't read directly - passing it in is what makes this composable (and so its
- * `update` block below, which re-reads [getPlayer] and rebinds the view) recompose whenever the
- * ViewModel tears down/recreates the underlying player, e.g. across a sleep/wake cycle. */
+/** [playerEpoch] isn't read directly - passing it in is what makes this composable recompose (and
+ * so re-fetch a fresh render view via [getPlayer]) whenever the ViewModel tears down/recreates/
+ * swaps the underlying player, e.g. across a sleep/wake cycle or a [PlayerBackend] switch. Each
+ * backend owns a different concrete View subclass ([IptvPlayer.view]'s doc comment), so unlike the
+ * single-backend version of this composable, `update` can't just rebind a `PlayerView.player`
+ * property - a backend switch needs the whole View recreated, which `key(playerEpoch)` already
+ * forces by disposing and re-running `factory` from scratch. */
 @Composable
-private fun PlayerSurface(playerEpoch: Int, getPlayer: () -> androidx.media3.exoplayer.ExoPlayer?) {
+private fun PlayerSurface(playerEpoch: Int, getPlayer: () -> IptvPlayer?) {
     androidx.compose.runtime.key(playerEpoch) {
         AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
-                    player = getPlayer()
-                }
-            },
-            update = { view -> view.player = getPlayer() },
+            factory = { ctx -> getPlayer()?.view(ctx) ?: android.view.View(ctx) },
             modifier = Modifier.fillMaxSize(),
         )
     }
 }
 
+/** Shared, single implementation for both the live-TV tab and Movies/Series playback - a mid-
+ * session request specifically asked that these not be two different controls/two codebases (VOD
+ * previously used Media3's own native [PlayerView] controller, which looked and behaved
+ * differently from this bar). [onPrevious]/[onNext]/[onToggleChannelList]/[onToggleGuide] are
+ * null for VOD (there's no channel-up/down or guide concept for a single on-demand item) and
+ * simply hide that button rather than disabling it - [recordSlot] is always supplied since both
+ * contexts have *something* to start capturing, just via a different [RecordButton] call
+ * ([IptvViewModel.playVodItem]/[IptvRecordingEngine.downloadVodItem] vs.
+ * [IptvRecordingEngine.startManual]/`startFixedDuration`). [seekPlayer] non-null renders a seek
+ * bar above the button row - only VOD passes one, a live stream has no scrubbable timeline. */
 @Composable
 private fun PlaybackControls(
-    uiState: IptvUiState,
-    recordingState: RecordingEngineUiState,
+    title: String,
+    isPlaying: Boolean,
+    volume: Float,
+    playerBackend: PlayerBackend,
     onPlayPause: () -> Unit,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    onToggleChannelList: () -> Unit,
-    onToggleGuide: () -> Unit,
     onVolumeChange: (Float) -> Unit,
     onToggleMute: () -> Unit,
-    onRecordNow: (StalkerChannel) -> Unit,
-    onRecordTimed: (StalkerChannel, Int) -> Unit,
-    onOpenGuideToSchedule: () -> Unit,
-    onStopRecording: () -> Unit,
     onToggleHistory: () -> Unit,
+    onSelectPlayerBackend: (PlayerBackend) -> Unit,
+    recordSlot: @Composable () -> Unit,
+    onPrevious: (() -> Unit)? = null,
+    onNext: (() -> Unit)? = null,
+    onToggleChannelList: (() -> Unit)? = null,
+    onToggleGuide: (() -> Unit)? = null,
+    seekPlayer: (() -> IptvPlayer?)? = null,
+    seekEpoch: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -367,56 +527,155 @@ private fun PlaybackControls(
             .background(Color.Black.copy(alpha = 0.55f))
             .padding(horizontal = 24.dp, vertical = 16.dp),
     ) {
-        Text(
-            uiState.currentChannel?.let { "${it.number}  ${it.name}" } ?: "",
-            style = MDTheme.type.settingTitle,
-            color = Color.White,
-        )
+        Text(title, style = MDTheme.type.settingTitle, color = Color.White)
+        if (seekPlayer != null) {
+            Spacer(Modifier.height(6.dp))
+            SeekRow(getPlayer = seekPlayer, playerEpoch = seekEpoch)
+        }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            RoundIconButton(icon = Icons.Filled.SkipPrevious, contentDescription = "Previous channel", onClick = onPrevious)
+            if (onPrevious != null) RoundIconButton(icon = Icons.Filled.SkipPrevious, contentDescription = "Previous", onClick = onPrevious)
             RoundIconButton(
-                icon = if (uiState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (uiState.isPlaying) "Pause" else "Play",
+                icon = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isPlaying) "Pause" else "Play",
                 onClick = onPlayPause,
             )
-            RoundIconButton(icon = Icons.Filled.SkipNext, contentDescription = "Next channel", onClick = onNext)
+            if (onNext != null) RoundIconButton(icon = Icons.Filled.SkipNext, contentDescription = "Next", onClick = onNext)
             Spacer(Modifier.width(8.dp))
-            RoundIconButton(icon = Icons.AutoMirrored.Filled.List, contentDescription = "Channel list", onClick = onToggleChannelList)
-            RoundIconButton(icon = Icons.Filled.GridView, contentDescription = "Guide", onClick = onToggleGuide)
-            RecordButton(
-                currentChannel = uiState.currentChannel,
-                recordingState = recordingState,
-                onRecordNow = onRecordNow,
-                onRecordTimed = onRecordTimed,
-                onOpenGuideToSchedule = onOpenGuideToSchedule,
-                onStopRecording = onStopRecording,
-            )
-            RoundIconButton(icon = Icons.Filled.History, contentDescription = "Recording history", onClick = onToggleHistory)
-            VolumeButton(volume = uiState.volume, onVolumeChange = onVolumeChange, onToggleMute = onToggleMute)
+            if (onToggleChannelList != null) {
+                RoundIconButton(icon = Icons.AutoMirrored.Filled.List, contentDescription = "Channel list", onClick = onToggleChannelList)
+            }
+            if (onToggleGuide != null) RoundIconButton(icon = Icons.Filled.GridView, contentDescription = "Guide", onClick = onToggleGuide)
+            recordSlot()
+            RoundIconButton(icon = Icons.Filled.History, contentDescription = "Download Manager", onClick = onToggleHistory)
+            PlayerBackendButton(current = playerBackend, onSelect = onSelectPlayerBackend)
+            VolumeButton(volume = volume, onVolumeChange = onVolumeChange, onToggleMute = onToggleMute)
         }
+    }
+}
+
+/** Quick in-player switch between [PlayerBackend]s (brief: "add a player option next to the
+ * volume button") - same expand-in-place shape as [VolumeButton]/[RecordButton]: collapsed, a
+ * round icon; tapped, it expands into one chip per backend (reusing [RecordChip] rather than a
+ * parallel chip composable), the current one highlighted. Picking one calls
+ * [IptvViewModel.setPlayerBackend], which both hot-swaps playback immediately and remembers the
+ * choice as the new Settings default - this button doesn't track any state of its own beyond
+ * whether it's expanded. */
+@Composable
+private fun PlayerBackendButton(current: PlayerBackend, onSelect: (PlayerBackend) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .animateContentSize()
+            .height(48.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Color.White.copy(alpha = 0.14f)),
+    ) {
+        IconButton(onClick = { expanded = !expanded }, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Filled.VideoSettings, contentDescription = "Player: ${current.displayName}", tint = Color.White)
+        }
+        if (expanded) {
+            PlayerBackend.entries.forEach { backend ->
+                RecordChip(if (backend == current) "${backend.displayName} ✓" else backend.displayName) {
+                    onSelect(backend)
+                    expanded = false
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+        }
+    }
+}
+
+/** A thin position/duration row with a drag-to-seek [Slider] - the one piece live TV's controls
+ * never needed (a live stream has nothing to scrub to) that Movies/Series playback does, now that
+ * VOD no longer gets that for free from Media3's own controller (see [PlaybackControls]'s doc
+ * comment). Polls [getPlayer]'s position on a timer rather than subscribing to a position Flow -
+ * none of the three [PlayerBackend]s expose one, only discontinuity/state-change callbacks, so
+ * periodic polling is the one approach that works the same regardless of which is active. */
+@Composable
+private fun SeekRow(getPlayer: () -> IptvPlayer?, playerEpoch: Int) {
+    var positionMs by remember { mutableStateOf(0L) }
+    var durationMs by remember { mutableStateOf(0L) }
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(playerEpoch) {
+        while (true) {
+            if (!isDragging) {
+                getPlayer()?.let { player ->
+                    positionMs = player.currentPositionMs.coerceAtLeast(0L)
+                    durationMs = player.durationMs.coerceAtLeast(0L)
+                }
+            }
+            delay(500)
+        }
+    }
+
+    val fraction = if (durationMs > 0) {
+        if (isDragging) dragFraction else (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            formatPlaybackTime(if (isDragging) (dragFraction * durationMs).toLong() else positionMs),
+            style = MDTheme.type.caption,
+            color = Color.White.copy(alpha = 0.8f),
+        )
+        Slider(
+            value = fraction,
+            onValueChange = { isDragging = true; dragFraction = it },
+            onValueChangeFinished = {
+                if (durationMs > 0) getPlayer()?.seekTo((dragFraction * durationMs).toLong())
+                isDragging = false
+            },
+            colors = SliderDefaults.colors(
+                thumbColor = MDTheme.colors.accent,
+                activeTrackColor = MDTheme.colors.accent,
+                inactiveTrackColor = Color.White.copy(alpha = 0.25f),
+            ),
+            modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+        )
+        Text(formatPlaybackTime(durationMs), style = MDTheme.type.caption, color = Color.White.copy(alpha = 0.8f))
+    }
+}
+
+private fun formatPlaybackTime(ms: Long): String {
+    val totalSeconds = (ms / 1000).coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(java.util.Locale.US, "%d:%02d", minutes, seconds)
     }
 }
 
 /**
  * Same expand-in-place shape as [VolumeButton] - the icon itself grows into the control, not a
- * popup elsewhere - but with three destinations instead of one continuous control, since "record"
- * isn't a single value to drag, it's a choice of *how* (brief: "when clicking record, the 3
- * options are offered"). Collapsed: a round icon, red when idle so it reads as "record" at a
- * glance (the one place here that breaks from the neutral white icon language on purpose - red
+ * popup elsewhere - but with up to three destinations instead of one continuous control, since
+ * "record" isn't a single value to drag, it's a choice of *how* (brief: "when clicking record,
+ * the 3 options are offered"). Collapsed: a round icon, red when idle so it reads as "record" at
+ * a glance (the one place here that breaks from the neutral white icon language on purpose - red
  * already means "record" everywhere else, overriding that for visual consistency would cost more
- * than it gains). Expanded while idle: three chips - Now / Timed / Schedule. While actively
- * recording: collapses that choice to the one that still applies, Stop, with a live elapsed/size
- * readout standing in for the percentage the volume control shows in the same slot.
+ * than it gains). Expanded while idle: chips for whichever of [onStart] (always available, live's
+ * "Now"/VOD's only option)/[onStartTimed] (live only)/[onOpenSchedule] (live only) are non-null.
+ * While actively recording/downloading: collapses that choice to the one that still applies,
+ * Stop, with a live elapsed/size readout standing in for the percentage the volume control shows
+ * in the same slot. Shared between live TV and VOD (see [PlaybackControls]'s doc comment) - which
+ * context is calling only changes which of the nullable params are supplied, not this function's
+ * own logic.
  */
 @Composable
 private fun RecordButton(
-    currentChannel: StalkerChannel?,
+    hasTarget: Boolean,
     recordingState: RecordingEngineUiState,
-    onRecordNow: (StalkerChannel) -> Unit,
-    onRecordTimed: (StalkerChannel, Int) -> Unit,
-    onOpenGuideToSchedule: () -> Unit,
-    onStopRecording: () -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onStartTimed: ((Int) -> Unit)? = null,
+    onOpenSchedule: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showDurationPicker by remember { mutableStateOf(false) }
@@ -435,7 +694,7 @@ private fun RecordButton(
         IconButton(
             onClick = {
                 if (active != null) {
-                    onStopRecording()
+                    onStop()
                 } else {
                     expanded = !expanded
                     showDurationPicker = false
@@ -445,7 +704,7 @@ private fun RecordButton(
         ) {
             Icon(
                 if (active != null) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
-                contentDescription = if (active != null) "Stop recording" else "Record",
+                contentDescription = if (active != null) "Stop" else "Record",
                 tint = RecordRed,
             )
         }
@@ -457,15 +716,15 @@ private fun RecordButton(
                 color = Color.White,
                 modifier = Modifier.padding(start = 4.dp, end = 16.dp),
             )
-        } else if (expanded && currentChannel != null) {
-            if (showDurationPicker) {
+        } else if (expanded && hasTarget) {
+            if (showDurationPicker && onStartTimed != null) {
                 listOf(30, 60, 90).forEach { minutes ->
-                    RecordChip("${minutes}m") { onRecordTimed(currentChannel, minutes); expanded = false }
+                    RecordChip("${minutes}m") { onStartTimed(minutes); expanded = false }
                 }
             } else {
-                RecordChip("Now") { onRecordNow(currentChannel); expanded = false }
-                RecordChip("Timed") { showDurationPicker = true }
-                RecordChip("Schedule") { expanded = false; onOpenGuideToSchedule() }
+                RecordChip("Now") { onStart(); expanded = false }
+                if (onStartTimed != null) RecordChip("Timed") { showDurationPicker = true }
+                if (onOpenSchedule != null) RecordChip("Schedule") { expanded = false; onOpenSchedule() }
             }
             Spacer(Modifier.width(6.dp))
         }
@@ -632,10 +891,15 @@ private fun VolumeSlider(volume: Float, onVolumeChange: (Float) -> Unit, modifie
 }
 
 @Composable
-private fun RoundIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, contentDescription: String, onClick: () -> Unit) {
+private fun RoundIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     IconButton(
         onClick = onClick,
-        modifier = Modifier
+        modifier = modifier
             .size(48.dp)
             .clip(CircleShape)
             .background(Color.White.copy(alpha = 0.14f)),
@@ -644,14 +908,27 @@ private fun RoundIconButton(icon: androidx.compose.ui.graphics.vector.ImageVecto
     }
 }
 
+/** [displayedChannels] is [IptvUiState.displayedChannels] (already narrowed to the selected
+ * genre) - what [IptvSearchMode.FILTER] searches within. [allChannels] is the full, unfiltered
+ * [IptvUiState.channels] - what [IptvSearchMode.DEEP] searches instead, ignoring the genre
+ * selection entirely (brief: "deep search... directly query for all"). Unlike Movies/Series, this
+ * needs no portal round-trip either way - [StalkerPortalClient.fetchChannels] already loads every
+ * channel up front, so "deep" here just means "search the full list instead of the narrowed one",
+ * not a network request. */
 @Composable
 private fun ChannelListPanel(
-    channels: List<StalkerChannel>,
+    displayedChannels: List<StalkerChannel>,
+    allChannels: List<StalkerChannel>,
     currentChannelId: String?,
     onSelect: (StalkerChannel) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var query by remember { mutableStateOf("") }
+    var searchMode by remember { mutableStateOf(IptvSearchMode.FILTER) }
+    val baseList = if (searchMode == IptvSearchMode.DEEP) allChannels else displayedChannels
+    val filtered = remember(baseList, query) { baseList.filter { matchesSearch(it.name, query) } }
+
     Box(
         modifier = modifier
             .fillMaxHeight()
@@ -670,28 +947,43 @@ private fun ChannelListPanel(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            LazyColumn {
-                items(channels, key = { it.id }) { channel ->
-                    val selected = channel.id == currentChannelId
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(if (selected) MDTheme.colors.accent.copy(alpha = 0.22f) else Color.Transparent)
-                            .clickable { onSelect(channel) }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                    ) {
-                        Text(
-                            channel.number,
-                            style = MDTheme.type.settingSubtitle,
-                            color = if (selected) MDTheme.colors.accent else Color.White.copy(alpha = 0.6f),
-                            modifier = Modifier.width(40.dp),
-                        )
-                        Text(
-                            channel.name,
-                            style = MDTheme.type.body,
-                            color = Color.White,
-                        )
+            SearchBox(query = query, onQueryChange = { query = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+            Spacer(Modifier.height(8.dp))
+            SearchModeToggle(mode = searchMode, onSelect = { searchMode = it }, modifier = Modifier.padding(horizontal = 16.dp))
+            Spacer(Modifier.height(8.dp))
+            if (filtered.isEmpty() && query.isNotBlank()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (searchMode == IptvSearchMode.DEEP) "No channels match \"$query\"." else "No matches in this category - try Deep search.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = Color.White.copy(alpha = 0.6f),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            } else {
+                LazyColumn {
+                    items(filtered, key = { it.id }) { channel ->
+                        val selected = channel.id == currentChannelId
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (selected) MDTheme.colors.accent.copy(alpha = 0.22f) else Color.Transparent)
+                                .clickable { onSelect(channel) }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                        ) {
+                            Text(
+                                channel.number,
+                                style = MDTheme.type.settingSubtitle,
+                                color = if (selected) MDTheme.colors.accent else Color.White.copy(alpha = 0.6f),
+                                modifier = Modifier.width(40.dp),
+                            )
+                            Text(
+                                channel.name,
+                                style = MDTheme.type.body,
+                                color = Color.White,
+                            )
+                        }
                     }
                 }
             }
@@ -699,15 +991,41 @@ private fun ChannelListPanel(
     }
 }
 
+private enum class DownloadManagerTab { PENDING, CURRENT, HISTORY }
+
 /** Full-screen, not a side panel like [ChannelListPanel] - each row carries enough metadata
- * (when, how long, how big, where it landed) that it needs the width. Newest first, matching how
- * [MirrorDashSettings.iptvRecordingHistory] is already stored (see [IptvRecordingEngine]'s
- * `finally` block) - no separate sort needed here. */
+ * (when, how long, how big, where it landed) that it needs the width. Three tabs:
+ * [DownloadManagerTab.PENDING] is every not-yet-started [ScheduledRecording] (brief: scheduling
+ * one from the Guide now shows it here too, not just as a marker in the Guide itself), soonest
+ * first - these fire on their own via `AlarmManager`/`ScheduledRecordingReceiver`
+ * (`IptvRecordingEngine.rearmPendingRecordings`/`startScheduled`), independent of whether the IPTV
+ * tab or even this panel is open. [DownloadManagerTab.CURRENT] is the live progress of whatever
+ * [activeRecording] is right now (a channel recording or a Movies/Series download - same engine,
+ * see [IptvRecordingEngine]), [DownloadManagerTab.HISTORY] is the archived, completed ones, newest
+ * first, matching how [MirrorDashSettings.iptvRecordingHistory] is already stored (see
+ * [IptvRecordingEngine]'s `finally` block) - no separate sort needed here. Which tab opens first
+ * is decided once, from whatever's most immediately actionable at the moment this panel is opened
+ * (active, else pending, else history) - not re-decided afterward, so it doesn't yank the user
+ * back out from under them just because something starts/finishes while they're looking elsewhere. */
 @Composable
-private fun RecordingHistoryPanel(
+private fun DownloadManagerPanel(
+    activeRecording: ActiveRecording?,
+    pending: List<ScheduledRecording>,
     recordings: List<CompletedRecording>,
+    onStop: () -> Unit,
+    onCancelPending: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var tab by remember {
+        mutableStateOf(
+            when {
+                activeRecording != null -> DownloadManagerTab.CURRENT
+                pending.isNotEmpty() -> DownloadManagerTab.PENDING
+                else -> DownloadManagerTab.HISTORY
+            },
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -720,7 +1038,7 @@ private fun RecordingHistoryPanel(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
             ) {
                 Text(
-                    "Recording history",
+                    "Download Manager",
                     style = MDTheme.type.sectionTitle.copy(fontSize = MDTheme.type.settingTitle.fontSize),
                     color = Color.White,
                     modifier = Modifier.weight(1f),
@@ -729,19 +1047,49 @@ private fun RecordingHistoryPanel(
                     Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            if (recordings.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            ) {
+                listOf(
+                    DownloadManagerTab.PENDING to "Pending",
+                    DownloadManagerTab.CURRENT to "Current",
+                    DownloadManagerTab.HISTORY to "History",
+                ).forEach { (value, label) ->
+                    val selected = tab == value
                     Text(
-                        "Nothing recorded yet",
+                        label,
                         style = MDTheme.type.settingSubtitle,
-                        color = Color.White.copy(alpha = 0.6f),
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (selected) MDTheme.colors.accent else Color.White.copy(alpha = 0.65f),
+                        modifier = Modifier.clickable { tab = value },
                     )
                 }
-            } else {
-                LazyColumn(modifier = Modifier.padding(horizontal = 24.dp)) {
-                    items(recordings, key = { it.finishedAtEpochSeconds.toString() + it.path }) { recording ->
-                        RecordingHistoryRow(recording)
+            }
+            Spacer(Modifier.height(8.dp))
+            when (tab) {
+                DownloadManagerTab.PENDING -> if (pending.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Nothing scheduled", style = MDTheme.type.settingSubtitle, color = Color.White.copy(alpha = 0.6f))
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.padding(horizontal = 24.dp)) {
+                        items(pending.sortedBy { it.startEpochSeconds }, key = { it.id }) { scheduled ->
+                            PendingRecordingRow(scheduled = scheduled, onCancel = { onCancelPending(scheduled.id) })
+                        }
+                    }
+                }
+                DownloadManagerTab.CURRENT -> CurrentDownloadContent(active = activeRecording, onStop = onStop)
+                DownloadManagerTab.HISTORY -> if (recordings.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Nothing recorded yet", style = MDTheme.type.settingSubtitle, color = Color.White.copy(alpha = 0.6f))
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.padding(horizontal = 24.dp)) {
+                        items(recordings, key = { it.finishedAtEpochSeconds.toString() + it.path }) { recording ->
+                            DownloadHistoryRow(recording)
+                        }
                     }
                 }
             }
@@ -750,13 +1098,136 @@ private fun RecordingHistoryPanel(
 }
 
 @Composable
-private fun RecordingHistoryRow(recording: CompletedRecording) {
+private fun PendingRecordingRow(scheduled: ScheduledRecording, onCancel: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(scheduled.programTitle, style = MDTheme.type.body, color = Color.White)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "${scheduled.channelNumber}  ${scheduled.channelName}",
+                style = MDTheme.type.caption,
+                color = Color.White.copy(alpha = 0.6f),
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                formatScheduleWindow(scheduled.startEpochSeconds, scheduled.endEpochSeconds),
+                style = MDTheme.type.caption,
+                color = MDTheme.colors.accent,
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(Icons.Filled.Close, contentDescription = "Cancel", tint = Color.White.copy(alpha = 0.7f))
+        }
+    }
+}
+
+/** e.g. "Aug 17, 8:00 PM – 9:00 PM" - the end time drops the date since a scheduled recording
+ * crossing midnight is rare enough not to be worth the extra clutter on every other row. */
+private fun formatScheduleWindow(startEpochSeconds: Long, endEpochSeconds: Long): String {
+    val start = java.text.SimpleDateFormat("MMM d, h:mm a", java.util.Locale.getDefault()).format(java.util.Date(startEpochSeconds * 1000))
+    val end = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date(endEpochSeconds * 1000))
+    return "$start – $end"
+}
+
+/** Circular progress + percentage when [ActiveRecording.totalBytes] is known (a VOD download,
+ * essentially always), an indeterminate spinner when it isn't (a live-channel recording, an
+ * open-ended stream with no "percentage of what" to show) - both alongside the same
+ * speed/downloaded-so-far/ETA readout, which degrades gracefully field by field as each piece
+ * becomes computable rather than waiting for every one of them at once. */
+@Composable
+private fun CurrentDownloadContent(active: ActiveRecording?, onStop: () -> Unit) {
+    if (active == null) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Nothing downloading right now", style = MDTheme.type.settingSubtitle, color = Color.White.copy(alpha = 0.6f))
+        }
+        return
+    }
+    val total = active.totalBytes
+    val fraction = total?.let { (active.bytesWritten.toFloat() / it).coerceIn(0f, 1f) }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(12.dp))
+        Box(modifier = Modifier.size(96.dp), contentAlignment = Alignment.Center) {
+            if (fraction != null) {
+                CircularProgressIndicator(
+                    progress = { fraction },
+                    color = MDTheme.colors.accent,
+                    trackColor = Color.White.copy(alpha = 0.15f),
+                    strokeWidth = 6.dp,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Text("${(fraction * 100).toInt()}%", style = MDTheme.type.settingTitle, color = Color.White)
+            } else {
+                CircularProgressIndicator(color = MDTheme.colors.accent, strokeWidth = 6.dp, modifier = Modifier.fillMaxSize())
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(active.channelName, style = MDTheme.type.settingTitle, color = Color.White, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (total != null) "${formatMegabytes(active.bytesWritten)} of ${formatMegabytes(total)}" else formatMegabytes(active.bytesWritten),
+            style = MDTheme.type.settingSubtitle,
+            color = Color.White.copy(alpha = 0.75f),
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(formatSpeed(active.bytesPerSecond), style = MDTheme.type.caption, color = Color.White.copy(alpha = 0.6f))
+            if (total != null && active.bytesPerSecond > 0) {
+                val remainingBytes = (total - active.bytesWritten).coerceAtLeast(0)
+                Text("${formatEta(remainingBytes / active.bytesPerSecond)} remaining", style = MDTheme.type.caption, color = Color.White.copy(alpha = 0.6f))
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Button(
+            onClick = onStop,
+            colors = ButtonDefaults.buttonColors(containerColor = RecordRed, contentColor = Color.White),
+        ) {
+            Text("Stop")
+        }
+    }
+}
+
+private fun formatSpeed(bytesPerSecond: Long): String = when {
+    bytesPerSecond <= 0 -> "—"
+    bytesPerSecond >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB/s", bytesPerSecond / (1024f * 1024f))
+    else -> String.format(java.util.Locale.US, "%.0f KB/s", bytesPerSecond / 1024f)
+}
+
+private fun formatEta(remainingSeconds: Long): String {
+    val hours = remainingSeconds / 3600
+    val minutes = (remainingSeconds % 3600) / 60
+    val seconds = remainingSeconds % 60
+    return when {
+        hours > 0 -> "${hours}h ${minutes}m"
+        minutes > 0 -> "${minutes}m ${seconds}s"
+        else -> "${seconds}s"
+    }
+}
+
+@Composable
+private fun DownloadHistoryRow(recording: CompletedRecording) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp),
     ) {
-        Text(recording.channelName, style = MDTheme.type.body, color = Color.White)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(recording.channelName, style = MDTheme.type.body, color = Color.White)
+            if (recording.trigger == RecordingTrigger.DOWNLOAD) {
+                Text(
+                    "DOWNLOAD",
+                    style = MDTheme.type.caption,
+                    color = MDTheme.colors.accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MDTheme.colors.accent.copy(alpha = 0.16f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
         Spacer(Modifier.height(2.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
@@ -828,6 +1299,46 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 64.dp),
         )
+        Spacer(Modifier.height(20.dp))
+        Button(
+            onClick = onRetry,
+            colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
+        ) {
+            Text("Retry")
+        }
+    }
+}
+
+/** Shown instead of [ErrorState] when [StalkerPortalClient.blockMessage] is set - the handshake
+ * itself succeeded (this isn't "can't reach the portal"), the account just can't stream right
+ * now. [accountInfo] is best-effort (see [StalkerPortalClient.fetchAccountInfo]'s doc comment) -
+ * this still renders with just the block reason if the portal didn't return anything else. */
+@Composable
+private fun AccountBlockedState(accountInfo: StalkerAccountInfo?, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(Icons.Filled.Lock, contentDescription = null, tint = MDTheme.colors.danger, modifier = Modifier.size(40.dp))
+        Spacer(Modifier.height(12.dp))
+        Text("Account blocked", style = MDTheme.type.settingTitle, color = Color.White)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            accountInfo?.blockMessage?.ifBlank { null } ?: "This account can't stream right now - check your subscription/credit with your provider.",
+            style = MDTheme.type.settingSubtitle,
+            color = Color.White.copy(alpha = 0.7f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 64.dp),
+        )
+        accountInfo?.expiryEpochSeconds?.let { expiry ->
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Expires ${formatAccountExpiry(expiry)}",
+                style = MDTheme.type.settingSubtitle,
+                color = Color.White.copy(alpha = 0.85f),
+            )
+        }
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = onRetry,

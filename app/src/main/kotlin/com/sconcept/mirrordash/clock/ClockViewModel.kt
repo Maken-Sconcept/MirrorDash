@@ -7,12 +7,18 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sconcept.mirrordash.settings.CLOCK_BACKGROUND_MODE_PHOTORAMA
 import com.sconcept.mirrordash.settings.SettingsRepository
+import com.sconcept.mirrordash.settings.isPhotoramaScheduleActive
 import com.sconcept.mirrordash.ui.theme.DEFAULT_CLOCK_FONT_SIZE_SP
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.Calendar
 
 data class ClockAppearance(
     val fontSizeSp: Int = DEFAULT_CLOCK_FONT_SIZE_SP,
@@ -21,6 +27,12 @@ data class ClockAppearance(
     val clockAnchor: OverlayAnchor = OverlayAnchor(0.06f, 0.82f),
     val weatherWidgets: List<WeatherWidget> = emptyList(),
     val textWidgets: List<CustomTextWidget> = emptyList(),
+    val calendarWidgets: List<CalendarWidget> = emptyList(),
+    val tasksWidgets: List<TasksWidget> = emptyList(),
+    val stocksWidgets: List<StocksWidget> = emptyList(),
+    val newsWidgets: List<NewsWidget> = emptyList(),
+    val showTime: Boolean = true,
+    val showWidgets: Boolean = true,
 )
 
 /**
@@ -31,12 +43,25 @@ data class ClockAppearance(
  */
 class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewModel() {
 
-    val appearance: StateFlow<ClockAppearance> = settingsRepository.settings
+    // Re-emits once a minute so a Photorama schedule's start/end boundary flips the background
+    // live, without requiring any other state to change first - settings alone wouldn't fire
+    // again on their own just because the clock ticked past 22:00.
+    private val minuteTicker: Flow<Unit> = flow {
+        while (true) {
+            emit(Unit)
+            val now = Calendar.getInstance()
+            val msToNextMinute = 60_000L - (now.get(Calendar.SECOND) * 1000L + now.get(Calendar.MILLISECOND))
+            delay(msToNextMinute.coerceAtLeast(1000L))
+        }
+    }
+
+    val appearance: StateFlow<ClockAppearance> = combine(settingsRepository.settings, minuteTicker) { settings, _ -> settings }
         .map {
+            val photoramaActive = it.clockBackgroundMode == CLOCK_BACKGROUND_MODE_PHOTORAMA && isPhotoramaScheduleActive(it)
             ClockAppearance(
                 fontSizeSp = it.clockFontSizeSp,
                 textColor = Color(it.clockTextColorArgb),
-                background = if (it.clockBackgroundMode == CLOCK_BACKGROUND_MODE_PHOTORAMA) {
+                background = if (photoramaActive) {
                     ClockBackground.Photorama
                 } else {
                     ClockBackground.SolidColor(Color(it.clockBackgroundColorArgb))
@@ -44,6 +69,12 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
                 clockAnchor = OverlayAnchor(it.clockAnchorX, it.clockAnchorY),
                 weatherWidgets = it.weatherWidgets,
                 textWidgets = it.customTextWidgets,
+                calendarWidgets = it.calendarWidgets,
+                tasksWidgets = it.tasksWidgets,
+                stocksWidgets = it.stocksWidgets,
+                newsWidgets = it.newsWidgets,
+                showTime = it.clockShowTime,
+                showWidgets = it.clockShowWidgets,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ClockAppearance())
@@ -113,6 +144,63 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
             settingsRepository.update {
                 customTextWidgets = customTextWidgets.map {
                     if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
+                }
+            }
+        }
+    }
+
+    fun setCalendarWidgetAnchor(id: String, anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        viewModelScope.launch {
+            settingsRepository.update {
+                calendarWidgets = calendarWidgets.map {
+                    if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
+                }
+            }
+        }
+    }
+
+    fun setTasksWidgetAnchor(id: String, anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        viewModelScope.launch {
+            settingsRepository.update {
+                tasksWidgets = tasksWidgets.map {
+                    if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
+                }
+            }
+        }
+    }
+
+    fun setStocksWidgetAnchor(id: String, anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        viewModelScope.launch {
+            settingsRepository.update {
+                stocksWidgets = stocksWidgets.map {
+                    if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
+                }
+            }
+        }
+    }
+
+    fun setNewsWidgetAnchor(id: String, anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        viewModelScope.launch {
+            settingsRepository.update {
+                newsWidgets = newsWidgets.map {
+                    if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
+                }
+            }
+        }
+    }
+
+    /** A plain tap directly on a Tasks widget on the Clock page toggles that item - the widget's
+     * own [DraggableAnchor] only reacts to long-press-drag, so this never fights with placement. */
+    fun setTaskItemCompleted(widgetId: String, itemId: String, completed: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.update {
+                tasksWidgets = tasksWidgets.map { widget ->
+                    if (widget.id != widgetId) return@map widget
+                    widget.copy(items = widget.items.map { if (it.id == itemId) it.copy(completed = completed) else it })
                 }
             }
         }

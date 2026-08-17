@@ -106,12 +106,28 @@ dependencies {
     implementation("eu.agno3.jcifs:jcifs-ng:2.1.10")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // Photorama's local-storage source - browsing a user-picked SAF folder tree (see
+    // LocalPhotoRepository), the same abstraction the system folder picker itself returns.
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     // IPTV tab's player - HLS/TS live streams off a Stalker/Ministra portal (see the iptv
     // package). Not used by AirPlay, which decodes its own H.264/H.265 mirror stream natively.
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.webkit:webkit:1.16.0")
+
+    // Alternate IPTV player backends (see iptv/player) - selectable in Settings, with automatic
+    // fallback between all three if one fails on a given stream. Both are ffmpeg-based, unlike
+    // ExoPlayer, so they tolerate malformed/unusual streams ExoPlayer sometimes rejects outright.
+    implementation("org.videolan.android:libvlc-all:3.3.10")
+    // Community fork (Tencent's iot-ijkplayer) published straight to Maven Central - upstream
+    // bilibili/ijkplayer is archived/unmaintained and its old jcenter artifacts no longer resolve
+    // at all, so this is the only buildable source for it left, not a preference over the
+    // original.
+    implementation("com.tencent.iot.thirdparty.android:ijkplayer-java:2.0.19")
+    implementation("com.tencent.iot.thirdparty.android:ijkplayer-armv7a:2.0.7")
+    implementation("com.tencent.iot.thirdparty.android:ijkplayer-arm64:2.0.10")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

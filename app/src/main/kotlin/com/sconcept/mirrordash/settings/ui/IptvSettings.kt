@@ -1,12 +1,17 @@
 package com.sconcept.mirrordash.settings.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
@@ -16,8 +21,15 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.sconcept.mirrordash.iptv.DEFAULT_PARENTAL_CONTROL_PIN
@@ -25,6 +37,10 @@ import com.sconcept.mirrordash.iptv.IptvMac
 import com.sconcept.mirrordash.iptv.MAX_PARENTAL_CONTROL_PIN_LENGTH
 import com.sconcept.mirrordash.iptv.ParentalControlMode
 import com.sconcept.mirrordash.iptv.RecordingDestinationMode
+import com.sconcept.mirrordash.iptv.StalkerAccountInfo
+import com.sconcept.mirrordash.iptv.formatAccountExpiry
+import com.sconcept.mirrordash.iptv.player.PlayerBackend
+import com.sconcept.mirrordash.launcher.AppContainer
 import com.sconcept.mirrordash.settings.SettingsUiState
 import com.sconcept.mirrordash.settings.SettingsViewModel
 import com.sconcept.mirrordash.ui.theme.MDTheme
@@ -102,6 +118,42 @@ fun IptvSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) 
         if (settings.iptvMacAddress.isNotBlank() && !IptvMac.isValid(settings.iptvMacAddress)) {
             Spacer(Modifier.height(6.dp))
             Text("Expected format: 00:1A:79:XX:XX:XX", style = MDTheme.type.caption, color = MDTheme.colors.danger)
+        }
+    }
+
+    if (settings.iptvPortalUrl.isNotBlank() && IptvMac.isValid(settings.iptvMacAddress)) {
+        Spacer(Modifier.height(28.dp))
+        IptvAccountCard(portalUrl = settings.iptvPortalUrl, macAddress = settings.iptvMacAddress)
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Player") {
+        Text(
+            "Which engine plays live TV and Movies/Series. If the selected one can't play a " +
+                "given stream, MirrorDash automatically tries the other two before showing an " +
+                "error - this only picks which one to start with (also changeable per-stream from " +
+                "the player controls themselves). VLC and IjkPlayer both tolerate unusual/malformed " +
+                "streams ExoPlayer sometimes rejects outright. IjkPlayer is a community-maintained " +
+                "fork of a project with no official support left - the most capable fallback of " +
+                "the three, but also the least maintained.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        val currentBackend = PlayerBackend.fromStorageKey(settings.iptvPlayerBackend)
+        PlayerBackend.entries.forEach { backend ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            ) {
+                RadioButton(
+                    selected = currentBackend == backend,
+                    onClick = { viewModel.setIptvPlayerBackend(backend) },
+                    colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
+                )
+                Text(backend.displayName, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+            }
         }
     }
 
@@ -279,6 +331,25 @@ fun IptvSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) 
 
     Spacer(Modifier.height(28.dp))
 
+    SettingGroup(title = "Download folder") {
+        Text(
+            "Where movies/series downloaded from the Movies and Series tabs are saved. Leave " +
+                "blank to use the same folder as recordings above.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        BufferedTextField(
+            persistedValue = settings.iptvDownloadFolderName,
+            onValueChange = viewModel::setIptvDownloadFolderName,
+            placeholder = { Text("Same as recordings") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
     SettingGroup(title = "Local storage cap") {
         Text(
             "Oldest local recordings are deleted first once this is exceeded - local storage on " +
@@ -305,4 +376,106 @@ fun IptvSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) 
         style = MDTheme.type.caption,
         color = MDTheme.colors.textTertiary,
     )
+}
+
+private sealed class AccountCardState {
+    object Loading : AccountCardState()
+    data class Error(val message: String) : AccountCardState()
+    data class Loaded(val info: StalkerAccountInfo) : AccountCardState()
+}
+
+/** Auto-fetches and shows whatever the portal returns for this account once a valid portal
+ * URL/MAC are both set - see [com.sconcept.mirrordash.iptv.StalkerPortalClient.fetchAccountInfo].
+ * Goes through [AppContainer.iptvSessionCoordinator] rather than opening its own
+ * [com.sconcept.mirrordash.iptv.StalkerPortalClient] - this portal allows only one active session
+ * per MAC (see [com.sconcept.mirrordash.iptv.IptvSessionCoordinator]'s doc comment), and the IPTV
+ * tab may still be holding one (SLEEPING, not yet timed out) while Settings is open, so a second,
+ * independent handshake here would silently kill it. */
+@Composable
+private fun IptvAccountCard(portalUrl: String, macAddress: String) {
+    val context = LocalContext.current
+    val sessionCoordinator = remember { AppContainer.get(context).iptvSessionCoordinator }
+    var state by remember { mutableStateOf<AccountCardState>(AccountCardState.Loading) }
+
+    LaunchedEffect(portalUrl, macAddress) {
+        state = AccountCardState.Loading
+        sessionCoordinator.acquire(portalUrl, macAddress)
+            .onSuccess { client ->
+                val result = client.fetchAccountInfo()
+                sessionCoordinator.release()
+                state = result.fold(
+                    onSuccess = { info -> AccountCardState.Loaded(info) },
+                    onFailure = { error -> AccountCardState.Error(error.message ?: "Couldn't load account details") },
+                )
+            }
+            .onFailure { error -> state = AccountCardState.Error(error.message ?: "Couldn't connect to the portal") }
+    }
+
+    SettingGroup(title = "Account") {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MDTheme.colors.surfaceElevated)
+                .padding(16.dp),
+        ) {
+            when (val s = state) {
+                is AccountCardState.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MDTheme.colors.accent)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Checking account…", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+                }
+                is AccountCardState.Error -> Text(s.message, style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+                is AccountCardState.Loaded -> AccountCardContent(s.info)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccountCardContent(info: StalkerAccountInfo) {
+    if (info.blocked) {
+        Text(
+            "BLOCKED",
+            style = MDTheme.type.caption,
+            color = MDTheme.colors.danger,
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(MDTheme.colors.danger.copy(alpha = 0.16f))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            info.blockMessage?.ifBlank { null } ?: "This account can't stream right now.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+    }
+
+    val rows = listOfNotNull(
+        info.expiryEpochSeconds?.let { (if (info.blocked) "Expired" else "Expires") to formatAccountExpiry(it) },
+        info.fullName?.let { "Name" to it },
+        info.login?.let { "Login" to it },
+        info.tariffPlan?.let { "Plan" to it },
+        info.phone?.let { "Phone" to it },
+        info.email?.let { "Email" to it },
+        "MAC" to info.mac,
+    )
+    if (rows.size == 1 && !info.blocked) {
+        // Only MAC came back - the provider didn't return anything else worth a card for.
+        Text(
+            "This provider didn't return any additional account details.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        return
+    }
+    rows.forEachIndexed { index, (label, value) ->
+        if (index > 0) Spacer(Modifier.height(6.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(label, style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary, modifier = Modifier.width(90.dp))
+            Text(value, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+        }
+    }
 }

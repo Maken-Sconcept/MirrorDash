@@ -11,6 +11,7 @@ import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Environment
 import android.os.Message
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -63,7 +64,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,7 +80,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
-import com.sconcept.mirrordash.launcher.gestures.swipePriorityTouchListener
 import com.sconcept.mirrordash.settings.BROWSER_EMPTY_START_PAGE_URL
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import java.net.URLEncoder
@@ -91,11 +90,9 @@ fun BrowserScreen(
     homeUrl: String,
     persistedUrl: String,
     onPersistCurrentUrl: (String) -> Unit,
-    isAwake: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val isAwakeState = rememberUpdatedState(isAwake)
     val lifecycleOwner = LocalLifecycleOwner.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -441,7 +438,13 @@ fun BrowserScreen(
                                     mimeType = mimeType,
                                 )
                             }
-                            setOnTouchListener(swipePriorityTouchListener(viewContext, isAwakeState))
+                            setOnTouchListener { _, motionEvent ->
+                                when (motionEvent.actionMasked) {
+                                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> parent?.requestDisallowInterceptTouchEvent(true)
+                                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> parent?.requestDisallowInterceptTouchEvent(false)
+                                }
+                                false
+                            }
                             webViewRef = this
                             if (initialUrl != BROWSER_EMPTY_START_PAGE_URL) {
                                 loadUrl(initialUrl)

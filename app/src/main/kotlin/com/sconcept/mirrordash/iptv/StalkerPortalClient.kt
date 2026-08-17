@@ -31,7 +31,21 @@ class StalkerPortalClient(
     private var token: String = ""
     private val timezoneId: String = java.util.TimeZone.getDefault().id
 
-    /** Handshake + get_profile. Must succeed before [fetchChannels]/[resolveStreamUrl]. */
+    /** Non-null once [connect] has completed and `get_profile` came back with a `block_msg` -
+     * e.g. no credit/expired subscription/banned MAC. Deliberately doesn't fail [connect] itself
+     * (see that function's doc comment): the handshake/token are still perfectly valid for
+     * [fetchAccountInfo] even while blocked from actually streaming, which is exactly what a
+     * blocked-account screen needs to show *why* and *until when*. */
+    var blockMessage: String? = null
+        private set
+
+    /** Handshake + get_profile. Must succeed before [fetchChannels]/[resolveStreamUrl] - but
+     * succeeding here does *not* mean the account can stream: a blocked/expired account still
+     * completes a handshake and gets a token (real STB firmware needs that much just to show its
+     * own "blocked" screen), it only sets [blockMessage] rather than failing outright. Callers
+     * that actually need working playback (fetchChannels, resolveStreamUrl, recording) must check
+     * [blockMessage] themselves after a successful connect - see [IptvViewModel.beginConnect] and
+     * [IptvRecordingEngine]'s session acquisition. */
     suspend fun connect(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val endpoint = resolveEndpoint()
@@ -152,6 +166,142 @@ class StalkerPortalClient(
         }
     }
 
+    /** `type=vod&action=get_categories` - the standard Ministra/Stalker-portal-fork shape for
+     * movie categories, analogous to [fetchGenres] for live TV. Unlike [fetchGenres] this has
+     * *not* been confirmed live against this app's actual portal - if a provider's VOD catalog
+     * uses different field names this comes back empty (best-effort, same as [fetchGenres]) and
+     * [IptvViewModel] shows the Movies tab as unsupported rather than failing anything else. */
+    suspend fun fetchVodCategories(): Result<List<StalkerVodCategory>> = withContext(Dispatchers.IO) {
+        runCatching { fetchCategories(type = "vod") }
+    }
+
+    /** `type=series&action=get_categories` - see [fetchVodCategories]'s doc comment; same
+     * unverified-shape caveat applies. */
+    suspend fun fetchSeriesCategories(): Result<List<StalkerVodCategory>> = withContext(Dispatchers.IO) {
+        runCatching { fetchCategories(type = "series") }
+    }
+
+    private fun fetchCategories(type: String): List<StalkerVodCategory> {
+        val endpoint = resolvedEndpoint ?: error("connect() must succeed first")
+        val js = requestArray(endpoint, mapOf("type" to type, "action" to "get_categories"))
+        return (0 until js.length()).mapNotNull { i ->
+            val obj = js.optJSONObject(i) ?: return@mapNotNull null
+            val id = obj.optString("id").ifBlank { return@mapNotNull null }
+            StalkerVodCategory(id = id, title = obj.optString("title").ifBlank { "Unknown" })
+        }
+    }
+
+    /** `type=vod&action=get_ordered_list&category=<id>` - movies in one category, fetched in a
+     * bounded chunk rather than the whole category (see [VodPage]'s doc comment: some providers'
+     * catalogs run into the thousands, and nothing here needs more than what's currently visible/
+     * searched). [IptvViewModel.selectVodCategory] calls this with [startPage] 1 for the first
+     * chunk; [IptvViewModel.loadMoreVodItems] resumes from [VodPage.nextPage] for each further
+     * one. Same unverified-shape caveat as [fetchVodCategories]. */
+    suspend fun fetchVodItems(categoryId: String, startPage: Int = 1, limit: Int = 100): Result<VodPage> = withContext(Dispatchers.IO) {
+        runCatching { fetchOrderedList(type = "vod", categoryId = categoryId, contentType = VodContentType.MOVIES, startPage = startPage, limit = limit) }
+    }
+
+    /** `type=series&action=get_ordered_list&category=<id>` - series entries in one category,
+     * shipped as a flat list (see [StalkerVodItem]'s doc comment): each entry plays/downloads
+     * through the same `cmd` a movie would, with no season/episode drill-down in this version.
+     * Chunked the same way as [fetchVodItems]. */
+    suspend fun fetchSeriesItems(categoryId: String, startPage: Int = 1, limit: Int = 100): Result<VodPage> = withContext(Dispatchers.IO) {
+        runCatching { fetchOrderedList(type = "series", categoryId = categoryId, contentType = VodContentType.SERIES, startPage = startPage, limit = limit) }
+    }
+
+    /** "Deep search" (see [IptvSearchMode.DEEP]) for movies - `category=<`[ALL_GENRES_ID]`>` plus
+     * a `search` param, asking the portal itself to match against its whole VOD catalog rather
+     * than whatever chunk of one category happens to be loaded locally. `search` as a
+     * `get_ordered_list` parameter is the standard Ministra/Stalker-fork shape for this, same
+     * unverified-against-this-provider caveat as the rest of this file's VOD methods - and unlike
+     * [matchesSearch]'s accent-insensitive local matching, whether *this* is accent/case-
+     * insensitive depends entirely on the portal's own search implementation, outside this app's
+     * control. Chunked exactly like [fetchVodItems] in case a query matches a lot. */
+    suspend fun searchVod(query: String, startPage: Int = 1, limit: Int = 100): Result<VodPage> = withContext(Dispatchers.IO) {
+        runCatching {
+            fetchOrderedList(type = "vod", categoryId = ALL_GENRES_ID, contentType = VodContentType.MOVIES, startPage = startPage, limit = limit, search = query)
+        }
+    }
+
+    /** Same as [searchVod], for series. */
+    suspend fun searchSeries(query: String, startPage: Int = 1, limit: Int = 100): Result<VodPage> = withContext(Dispatchers.IO) {
+        runCatching {
+            fetchOrderedList(type = "series", categoryId = ALL_GENRES_ID, contentType = VodContentType.SERIES, startPage = startPage, limit = limit, search = query)
+        }
+    }
+
+    /** Pages from [startPage] until either [limit] items are collected or a page comes back
+     * empty - deliberately not also comparing against the portal's own `total_items` the way
+     * [fetchCensoredGenreChannels] does: that field describes the *whole category*, not what's
+     * left after some number of earlier chunks, and threading a running total through every
+     * caller just to use it as a second, redundant end-of-catalog signal isn't worth it when an
+     * empty page already means the same thing unambiguously. The one cost is a single extra
+     * request, at the very end of a category, that comes back empty - harmless. [search], when
+     * non-blank, is [searchVod]/[searchSeries]'s deep search; omitted, this is ordinary
+     * category browsing ([fetchVodItems]/[fetchSeriesItems]). */
+    private fun fetchOrderedList(
+        type: String,
+        categoryId: String,
+        contentType: VodContentType,
+        startPage: Int,
+        limit: Int,
+        search: String? = null,
+    ): VodPage {
+        val endpoint = resolvedEndpoint ?: error("connect() must succeed first")
+        val results = mutableListOf<StalkerVodItem>()
+        var page = startPage
+        var reachedEnd = false
+        var pagesFetched = 0
+        var totalItems = 0
+        val baseParams = mapOf("type" to type, "action" to "get_ordered_list", "category" to categoryId) +
+            (if (search.isNullOrBlank()) emptyMap() else mapOf("search" to search))
+        while (results.size < limit && pagesFetched < MAX_PAGES_PER_BATCH) {
+            val js = request(endpoint, baseParams + mapOf("p" to page.toString()))
+            val data = js.optJSONArray("data") ?: JSONArray()
+            pagesFetched++
+            totalItems = js.optInt("total_items", totalItems)
+            if (data.length() == 0) {
+                reachedEnd = true
+                break
+            }
+            (0 until data.length()).mapNotNullTo(results) { i ->
+                val obj = data.optJSONObject(i) ?: return@mapNotNullTo null
+                val cmd = obj.optString("cmd").ifBlank { return@mapNotNullTo null }
+                val id = obj.optString("id").ifBlank { return@mapNotNullTo null }
+                StalkerVodItem(
+                    id = id,
+                    name = obj.optString("name").ifBlank { "Untitled" },
+                    cmd = cmd,
+                    categoryId = categoryId,
+                    logoUrl = obj.optString("screenshot_uri").ifBlank { obj.optString("logo").ifBlank { null } },
+                    contentType = contentType,
+                    description = obj.optString("description").ifBlank { null },
+                    ratingImdb = obj.optString("rating_imdb").ifBlank { null },
+                    ratingTomatoes = firstNonBlank(obj, "rating_tomatoes", "rating_rt", "rating_rotten_tomatoes"),
+                )
+            }
+            page++
+        }
+        return VodPage(items = results, nextPage = page, hasMore = !reachedEnd, totalItems = totalItems)
+    }
+
+    /** `type=vod&action=create_link&cmd=<item.cmd>` - the same action Ministra-style portals use
+     * to resolve both movies and series entries to a playable URL, mirroring how [resolveStreamUrl]
+     * does it for live channels. */
+    suspend fun resolveVodStreamUrl(item: StalkerVodItem): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val endpoint = resolvedEndpoint ?: error("connect() must succeed first")
+            val js = request(
+                endpoint,
+                mapOf("type" to "vod", "action" to "create_link", "cmd" to item.cmd, "forced_storage" to "undefined", "disable_ad" to "0"),
+            )
+            val raw = js.optString("cmd").ifBlank {
+                throw StalkerPortalError.InvalidResponse("Portal returned no stream URL for ${item.name}")
+            }
+            extractStreamUrl(raw)
+        }
+    }
+
     /** Next few programs for one channel, in order - confirmed live against edge.bz (empty
      * `[]` for channels the portal genuinely has no schedule for, real entries otherwise).
      * [count] trades off request cost against how far into the guide's time window this
@@ -250,9 +400,48 @@ class StalkerPortalClient(
             "timezone" to timezoneId,
         )
         val js = request(endpoint, params, authToken)
-        if (js.optString("block_msg").isNotBlank()) {
-            throw StalkerPortalError.PortalRejected(js.optString("block_msg"))
+        blockMessage = js.optString("block_msg").ifBlank { null }
+    }
+
+    /** `type=account_info&action=get_main_info` - the standard Ministra/Stalker-portal-fork
+     * action for subscriber/account details (login, expiry, contact info), separate from
+     * `get_profile`'s device-registration fields. Not confirmed live against this app's actual
+     * portal (same caveat as [fetchVodCategories]): field names below are the common shape, but a
+     * provider that customizes this may return some/none of them, so every field except [mac] is
+     * nullable and a missing one just means that field isn't shown in the account card rather
+     * than the whole fetch failing. Safe to call whether or not [blockMessage] is set - a blocked
+     * account still needs this to show why, and until when. */
+    suspend fun fetchAccountInfo(): Result<StalkerAccountInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val endpoint = resolvedEndpoint ?: error("connect() must succeed first")
+            val js = request(endpoint, mapOf("type" to "account_info", "action" to "get_main_info"))
+            StalkerAccountInfo(
+                mac = macAddress,
+                login = firstNonBlank(js, "login", "id"),
+                fullName = firstNonBlank(js, "full_name", "fname", "name"),
+                phone = firstNonBlank(js, "phone", "phone_number"),
+                email = firstNonBlank(js, "email"),
+                tariffPlan = firstNonBlank(js, "tariff_plan", "tariff"),
+                expiryEpochSeconds = parsePortalDate(firstNonBlank(js, "end_date", "tariff_expired_date", "expire_billing_date")),
+                blocked = blockMessage != null,
+                blockMessage = blockMessage,
+            )
         }
+    }
+
+    private fun firstNonBlank(js: JSONObject, vararg keys: String): String? =
+        keys.asSequence().map { js.optString(it) }.firstOrNull { it.isNotBlank() && it != "0000-00-00 00:00:00" }
+
+    /** Portals overwhelmingly send account dates as `yyyy-MM-dd HH:mm:ss` in their own local
+     * time - confirmed only by convention across public Stalker/Ministra client implementations,
+     * not against this app's actual portal (same caveat as the rest of `account_info`). A date
+     * that fails to parse just means the account card omits an expiry rather than crashing. */
+    private fun parsePortalDate(raw: String?): Long? {
+        if (raw.isNullOrBlank()) return null
+        raw.toLongOrNull()?.let { return it } // some forks send a raw epoch instead
+        return runCatching {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).parse(raw)?.time?.let { it / 1000L }
+        }.getOrNull()
     }
 
     /** Most actions (`handshake`, `get_profile`, `create_link`, `get_all_channels`) wrap their
@@ -309,5 +498,12 @@ class StalkerPortalClient(
          * pathological/misreported `total_items` looping forever; 200 pages x 14 items is far
          * beyond any real censored-genre channel count seen in practice (360 on edge.bz). */
         private const val MAX_CENSORED_GENRE_PAGES = 200
+
+        /** Safety cap on a single [fetchVodItems]/[fetchSeriesItems] chunk's own page-fetch loop -
+         * a VOD/series category's page size isn't confirmed against this provider, so this
+         * protects against a pathologically small one (e.g. 1-2 items/page) looping far past the
+         * chunk's own `limit` worth of requests; any real portal's page size reaches `limit`
+         * (default 100) well before this. */
+        private const val MAX_PAGES_PER_BATCH = 100
     }
 }

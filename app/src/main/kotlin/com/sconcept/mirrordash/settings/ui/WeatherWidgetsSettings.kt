@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -23,10 +22,6 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,47 +39,23 @@ import com.sconcept.mirrordash.ui.theme.MDTheme
 
 @Composable
 fun WeatherWidgetsSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) {
-    val widgets = uiState.settings.weatherWidgets
-    var editingId by remember { mutableStateOf<String?>(null) }
-    val editing = widgets.firstOrNull { it.id == editingId }
-
-    if (editing != null) {
-        WeatherWidgetEditor(
-            widget = editing,
-            onBack = { editingId = null },
-            onChange = { transform -> viewModel.updateWeatherWidget(editing.id, transform) },
-            onDelete = {
-                viewModel.removeWeatherWidget(editing.id)
-                editingId = null
-            },
-        )
-        return
-    }
-
-    if (widgets.isEmpty()) {
-        Text(
-            "No weather widgets yet.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textTertiary,
-        )
-        Spacer(Modifier.height(16.dp))
-    } else {
-        widgets.forEach { widget ->
-            WeatherWidgetRow(
+    WidgetListEditor(
+        items = uiState.settings.weatherWidgets,
+        itemId = { it.id },
+        emptyLabel = "No weather widgets yet.",
+        addLabel = "Add weather widget",
+        onAdd = viewModel::addWeatherWidget,
+        onDelete = viewModel::removeWeatherWidget,
+        row = { widget, onClick, onDelete -> WeatherWidgetRow(widget, onClick, onDelete) },
+        editor = { widget, onBack, onDelete ->
+            WeatherWidgetEditor(
                 widget = widget,
-                onClick = { editingId = widget.id },
-                onDelete = { viewModel.removeWeatherWidget(widget.id) },
+                onBack = onBack,
+                onChange = { transform -> viewModel.updateWeatherWidget(widget.id, transform) },
+                onDelete = onDelete,
             )
-            Spacer(Modifier.height(2.dp))
-        }
-        Spacer(Modifier.height(16.dp))
-    }
-
-    TextButton(onClick = viewModel::addWeatherWidget) {
-        Icon(Icons.Filled.Add, contentDescription = null, tint = MDTheme.colors.accent)
-        Spacer(Modifier.width(6.dp))
-        Text("Add weather widget", color = MDTheme.colors.accent)
-    }
+        },
+    )
 }
 
 @Composable

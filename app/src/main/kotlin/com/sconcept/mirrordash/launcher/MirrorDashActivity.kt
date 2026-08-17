@@ -36,37 +36,41 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sconcept.mirrordash.airplay.AirPlayReceiverService
 import com.sconcept.mirrordash.browser.BrowserScreen
+import com.sconcept.mirrordash.calendar.CalendarAgendaViewModel
 import com.sconcept.mirrordash.brightness.BRIGHTNESS_FAILSAFE_HOLD_MS
 import com.sconcept.mirrordash.brightness.BRIGHTNESS_FAILSAFE_WARNING_LEAD_MS
 import com.sconcept.mirrordash.brightness.BacklightController
 import com.sconcept.mirrordash.brightness.BrightnessDimOverlay
 import com.sconcept.mirrordash.brightness.BrightnessFailsafe
 import com.sconcept.mirrordash.brightness.BrightnessMath
-import com.sconcept.mirrordash.clock.ClockBackground
 import com.sconcept.mirrordash.clock.ClockScreen
 import com.sconcept.mirrordash.clock.ClockViewModel
 import com.sconcept.mirrordash.clock.NightClockScreen
 import com.sconcept.mirrordash.clock.OverlayAnchor
 import com.sconcept.mirrordash.homeassistant.HomeAssistantScreen
+import com.sconcept.mirrordash.iptv.EXTRA_OPEN_DOWNLOAD_MANAGER
 import com.sconcept.mirrordash.iptv.IptvScreen
 import com.sconcept.mirrordash.iptv.IptvViewModel
 import com.sconcept.mirrordash.jellyfin.JellyfinScreen
+import com.sconcept.mirrordash.kodi.KodiScreen
 import com.sconcept.mirrordash.launcher.apps.AppDrawerScreen
 import com.sconcept.mirrordash.launcher.display.DisplayOrientationController
 import com.sconcept.mirrordash.launcher.display.DisplayOrientationMode
 import com.sconcept.mirrordash.launcher.apps.AppDrawerViewModel
 import com.sconcept.mirrordash.launcher.gestures.LauncherGestureHost
 import com.sconcept.mirrordash.launcher.gestures.LauncherInteractionState
+import com.sconcept.mirrordash.launcher.gestures.pageSwipePriority
 import com.sconcept.mirrordash.launcher.navigation.LauncherPage
 import com.sconcept.mirrordash.launcher.navigation.LauncherPages
 import com.sconcept.mirrordash.launcher.notifications.NotificationRepository
 import com.sconcept.mirrordash.launcher.notifications.NotificationsScreen
 import com.sconcept.mirrordash.launcher.onboarding.OnboardingOverlay
-import com.sconcept.mirrordash.photorama.PhotoramaScreen
+import com.sconcept.mirrordash.news.NewsFeedViewModel
 import com.sconcept.mirrordash.photorama.PhotoramaViewModel
 import com.sconcept.mirrordash.settings.BRIGHTNESS_DIM_TARGET_TEXT_ONLY
 import com.sconcept.mirrordash.settings.ui.SettingsScreen
 import com.sconcept.mirrordash.settings.SettingsViewModel
+import com.sconcept.mirrordash.stocks.StocksViewModel
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import com.sconcept.mirrordash.ui.theme.MirrorDashTheme
 import com.sconcept.mirrordash.walkietalkie.PttButton
@@ -88,6 +92,9 @@ class MirrorDashActivity : ComponentActivity() {
     private val launcherViewModel: LauncherViewModel by viewModels { LauncherViewModel.factory(container.settingsRepository) }
     private val clockViewModel: ClockViewModel by viewModels { ClockViewModel.factory(container.settingsRepository) }
     private val weatherViewModel: WeatherViewModel by viewModels { WeatherViewModel.factory(container.settingsRepository) }
+    private val calendarAgendaViewModel: CalendarAgendaViewModel by viewModels { CalendarAgendaViewModel.factory(application) }
+    private val stocksViewModel: StocksViewModel by viewModels { StocksViewModel.factory(container.settingsRepository) }
+    private val newsFeedViewModel: NewsFeedViewModel by viewModels { NewsFeedViewModel.factory(container.settingsRepository) }
     private val photoramaViewModel: PhotoramaViewModel by viewModels {
         PhotoramaViewModel.factory(application, container.settingsRepository)
     }
@@ -106,6 +113,9 @@ class MirrorDashActivity : ComponentActivity() {
     private val requestMicPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val requestNotificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val requestHomeRole = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {}
+    private val requestCalendarPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        calendarAgendaViewModel.refreshNow()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -124,6 +134,8 @@ class MirrorDashActivity : ComponentActivity() {
         ) {
             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+
+        handleOpenDownloadManagerIntent(intent)
 
         photoramaViewModel.ensureStarted()
 
@@ -188,6 +200,9 @@ class MirrorDashActivity : ComponentActivity() {
                     launcherViewModel = launcherViewModel,
                     clockViewModel = clockViewModel,
                     weatherViewModel = weatherViewModel,
+                    calendarAgendaViewModel = calendarAgendaViewModel,
+                    stocksViewModel = stocksViewModel,
+                    newsFeedViewModel = newsFeedViewModel,
                     photoramaViewModel = photoramaViewModel,
                     appDrawerViewModel = appDrawerViewModel,
                     settingsViewModel = settingsViewModel,
@@ -196,6 +211,7 @@ class MirrorDashActivity : ComponentActivity() {
                     onRequestNotificationAccess = {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     },
+                    onRequestCalendarAccess = { requestCalendarPermission.launch(Manifest.permission.READ_CALENDAR) },
                     onRequestWriteSettingsAccess = {
                         startActivity(
                             Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName")),
@@ -218,6 +234,22 @@ class MirrorDashActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemBars()
+    }
+
+    // singleTask (see the manifest) means a tap on the "download complete" notification while
+    // this Activity is already running/backgrounded delivers here rather than a fresh onCreate -
+    // both paths funnel through the same handler so the deep link works regardless of which one
+    // actually fires.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpenDownloadManagerIntent(intent)
+    }
+
+    private fun handleOpenDownloadManagerIntent(intent: Intent) {
+        if (intent.getBooleanExtra(EXTRA_OPEN_DOWNLOAD_MANAGER, false)) {
+            container.iptvRecordingEngine.requestOpenDownloadManager()
+        }
     }
 
     private var volumeFailsafeJob: Job? = null
@@ -261,12 +293,16 @@ private fun MirrorDashRoot(
     launcherViewModel: LauncherViewModel,
     clockViewModel: ClockViewModel,
     weatherViewModel: WeatherViewModel,
+    calendarAgendaViewModel: CalendarAgendaViewModel,
+    stocksViewModel: StocksViewModel,
+    newsFeedViewModel: NewsFeedViewModel,
     photoramaViewModel: PhotoramaViewModel,
     appDrawerViewModel: AppDrawerViewModel,
     settingsViewModel: SettingsViewModel,
     iptvViewModel: IptvViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
+    onRequestCalendarAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
     onRequestOverlayAccess: () -> Unit,
     onRequestBrightnessFailsafe: () -> Unit,
@@ -287,24 +323,23 @@ private fun MirrorDashRoot(
     }
 
     val pageIndex = initialPageIndex ?: return
-    // Photorama drops out while doubling as the Clock's own background (a standalone page
-    // repeating the exact photos already showing behind the clock would just be a redundant
-    // swipe); Browser/Jellyfin/Home Assistant/IPTV are opt-in entirely - "each tab can be
-    // enabled or disabled in the settings, but the clock and settings must always remain" (see
-    // LauncherPages' doc comment).
+    // Photorama only ever exists as the Clock's own background now (see ClockViewModel/
+    // ClockScreen) - there is no standalone page for it anymore. Browser/Jellyfin/Home
+    // Assistant/IPTV are still opt-in - "each tab can be enabled or disabled in the settings, but
+    // the clock and settings must always remain" (see LauncherPages' doc comment).
     val orderedPages = remember(
-        clockAppearance.background,
         settingsUiState.settings.browserEnabled,
         settingsUiState.settings.jellyfinEnabled,
         settingsUiState.settings.homeAssistantEnabled,
         settingsUiState.settings.iptvEnabled,
+        settingsUiState.settings.kodiEnabled,
     ) {
         LauncherPages.ordered(
-            includePhotoramaPage = clockAppearance.background !is ClockBackground.Photorama,
             includeBrowserPage = settingsUiState.settings.browserEnabled,
             includeJellyfinPage = settingsUiState.settings.jellyfinEnabled,
             includeHomeAssistantPage = settingsUiState.settings.homeAssistantEnabled,
             includeIptvPage = settingsUiState.settings.iptvEnabled,
+            includeKodiPage = settingsUiState.settings.kodiEnabled,
         )
     }
     var currentPageIndex by remember { mutableStateOf(pageIndex) }
@@ -320,6 +355,28 @@ private fun MirrorDashRoot(
     var requestedPage by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(airPlayUiState.isSessionActive) {
         requestedPage = clockPageIndex.takeIf { airPlayUiState.isSessionActive }
+    }
+
+    // Tapping a "download complete" notification (see IptvRecordingEngine.requestOpenDownloadManager)
+    // should jump to the IPTV tab regardless of which one is currently showing - same shape as the
+    // AirPlay jump above, but driven by an ever-incrementing epoch (there's no natural "session
+    // ended" edge here the way AirPlay's isSessionActive going false gives it) rather than a
+    // boolean, so a second tap still counts as fresh even if the user never left the IPTV tab in
+    // between. IptvScreen reacts to the same epoch to actually open the Download Manager panel
+    // once there.
+    val recordingEngine = remember { AppContainer.get(context).iptvRecordingEngine }
+    val recordingEngineUiState by recordingEngine.uiState.collectAsStateWithLifecycle()
+    val iptvPageIndex = remember(orderedPages) { orderedPages.indexOf(LauncherPage.Iptv).takeIf { it >= 0 } }
+    LaunchedEffect(recordingEngineUiState.openRequestEpoch) {
+        if (recordingEngineUiState.openRequestEpoch == 0) return@LaunchedEffect
+        val target = iptvPageIndex ?: return@LaunchedEffect
+        requestedPage = target
+        // Reset back to null rather than leaving it pinned at target - LauncherGestureHost's own
+        // requestedPage effect only re-navigates on a genuinely distinct value (see its doc
+        // comment), so a *second* tap that resolves to this same target needs requestedPage to
+        // have moved away from it in between to still register as a fresh request.
+        delay(300)
+        requestedPage = null
     }
 
     // The IPTV tab's whole sleep/off lifecycle (brief: "sleeping state when not active" / "shut
@@ -365,14 +422,24 @@ private fun MirrorDashRoot(
                     page = orderedPages.getOrElse(index) { LauncherPage.Clock },
                     isJellyfinPageActive = orderedPages.getOrNull(currentPageIndex) == LauncherPage.Jellyfin &&
                         orderedPages.getOrElse(index) { LauncherPage.Clock } == LauncherPage.Jellyfin,
+                    isKodiPageActive = orderedPages.getOrNull(currentPageIndex) == LauncherPage.Kodi &&
+                        orderedPages.getOrElse(index) { LauncherPage.Clock } == LauncherPage.Kodi,
                     isAwake = interactionState == LauncherInteractionState.Travel,
+                    onSwipePage = { forward ->
+                        val target = index + if (forward) 1 else -1
+                        if (target in orderedPages.indices) requestedPage = target
+                    },
                     clockViewModel = clockViewModel,
                     weatherViewModel = weatherViewModel,
+                    calendarAgendaViewModel = calendarAgendaViewModel,
+                    stocksViewModel = stocksViewModel,
+                    newsFeedViewModel = newsFeedViewModel,
                     photoramaViewModel = photoramaViewModel,
                     settingsViewModel = settingsViewModel,
                     iptvViewModel = iptvViewModel,
                     onRequestHomeRole = onRequestHomeRole,
                     onRequestNotificationAccess = onRequestNotificationAccess,
+                    onRequestCalendarAccess = onRequestCalendarAccess,
                     onRequestWriteSettingsAccess = onRequestWriteSettingsAccess,
                     onRequestOverlayAccess = onRequestOverlayAccess,
                     clockContentDimAlpha = if (textOnlyDim) effectiveDimAlpha else 0f,
@@ -470,14 +537,20 @@ private fun MirrorDashRoot(
 private fun LauncherPageContent(
     page: LauncherPage,
     isJellyfinPageActive: Boolean,
+    isKodiPageActive: Boolean,
     isAwake: Boolean,
+    onSwipePage: (forward: Boolean) -> Unit,
     clockViewModel: ClockViewModel,
     weatherViewModel: WeatherViewModel,
+    calendarAgendaViewModel: CalendarAgendaViewModel,
+    stocksViewModel: StocksViewModel,
+    newsFeedViewModel: NewsFeedViewModel,
     photoramaViewModel: PhotoramaViewModel,
     settingsViewModel: SettingsViewModel,
     iptvViewModel: IptvViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
+    onRequestCalendarAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
     onRequestOverlayAccess: () -> Unit,
     clockContentDimAlpha: Float = 0f,
@@ -487,6 +560,9 @@ private fun LauncherPageContent(
             val context = LocalContext.current
             val appearance by clockViewModel.appearance.collectAsStateWithLifecycle()
             val weather by weatherViewModel.uiState.collectAsStateWithLifecycle()
+            val calendar by calendarAgendaViewModel.uiState.collectAsStateWithLifecycle()
+            val stocks by stocksViewModel.uiState.collectAsStateWithLifecycle()
+            val news by newsFeedViewModel.uiState.collectAsStateWithLifecycle()
             val photorama by photoramaViewModel.uiState.collectAsStateWithLifecycle()
             val airPlayEngine = remember { AppContainer.get(context).airPlayEngine }
             val airPlay by airPlayEngine.uiState.collectAsStateWithLifecycle()
@@ -496,27 +572,38 @@ private fun LauncherPageContent(
                 showEdgeAffordance = true,
                 onClockAnchorChange = clockViewModel::setClockAnchor,
                 onWeatherWidgetAnchorChange = clockViewModel::setWeatherWidgetAnchor,
-                photoramaBackground = photorama.currentPhoto,
+                photoramaState = photorama,
                 // Active mirroring must always be allowed to take over the Clock page; the
                 // separate "show clock widget" setting only controls the idle/status chip, not
                 // whether live video is visible at all.
                 airPlayStatus = airPlay,
                 onTextWidgetAnchorChange = clockViewModel::setTextWidgetAnchor,
+                calendar = calendar,
+                onCalendarWidgetAnchorChange = clockViewModel::setCalendarWidgetAnchor,
+                onTasksWidgetAnchorChange = clockViewModel::setTasksWidgetAnchor,
+                onTaskItemToggle = clockViewModel::setTaskItemCompleted,
+                stocks = stocks,
+                onStocksWidgetAnchorChange = clockViewModel::setStocksWidgetAnchor,
+                news = news,
+                onNewsWidgetAnchorChange = clockViewModel::setNewsWidgetAnchor,
                 contentDimAlpha = clockContentDimAlpha,
             )
         }
-        LauncherPage.Photorama -> {
-            val state by photoramaViewModel.uiState.collectAsStateWithLifecycle()
-            PhotoramaScreen(state = state)
-        }
         LauncherPage.Browser -> {
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
-            BrowserScreen(
-                homeUrl = settingsState.settings.browserHomeUrl,
-                persistedUrl = settingsState.settings.browserLastVisitedUrl,
-                onPersistCurrentUrl = settingsViewModel::setBrowserLastVisitedUrl,
-                isAwake = isAwake,
-            )
+            // WebView-backed pages lock every touch to themselves (see WebViewSwipePriority.kt's
+            // doc comment) - this passive sibling watches the same raw drag and drives the page
+            // change itself, rather than trying to win the WebView's touch away from it. Always
+            // on, not gated to Travel mode like the rest of the launcher chrome - requiring a
+            // separate long-press-to-wake before a swipe even registers made leaving these pages
+            // feel like a two-step gesture instead of a plain swipe.
+            Box(Modifier.fillMaxSize().pageSwipePriority(enabled = true, onSwipe = onSwipePage)) {
+                BrowserScreen(
+                    homeUrl = settingsState.settings.browserHomeUrl,
+                    persistedUrl = settingsState.settings.browserLastVisitedUrl,
+                    onPersistCurrentUrl = settingsViewModel::setBrowserLastVisitedUrl,
+                )
+            }
         }
         LauncherPage.Jellyfin -> {
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
@@ -528,18 +615,19 @@ private fun LauncherPageContent(
             LaunchedEffect(settingsState.settings.jellyfinAutoAuth) {
                 autoAuthPassword = if (settingsState.settings.jellyfinAutoAuth) settingsViewModel.jellyfinPassword() else null
             }
-            JellyfinScreen(
-                serverUrl = settingsState.settings.jellyfinServerUrl,
-                startPath = settingsState.settings.jellyfinStartPath,
-                desktopMode = settingsState.settings.jellyfinDesktopMode,
-                reloadOnOpen = settingsState.settings.jellyfinReloadOnOpen,
-                openExternalLinks = settingsState.settings.jellyfinOpenExternalLinks,
-                isActive = isJellyfinPageActive,
-                isAwake = isAwake,
-                autoAuthUsername = settingsState.settings.jellyfinUsername,
-                autoAuthPassword = autoAuthPassword.orEmpty(),
-                autoAuthEnabled = settingsState.settings.jellyfinAutoAuth && autoAuthPassword != null,
-            )
+            Box(Modifier.fillMaxSize().pageSwipePriority(enabled = true, onSwipe = onSwipePage)) {
+                JellyfinScreen(
+                    serverUrl = settingsState.settings.jellyfinServerUrl,
+                    startPath = settingsState.settings.jellyfinStartPath,
+                    desktopMode = settingsState.settings.jellyfinDesktopMode,
+                    reloadOnOpen = settingsState.settings.jellyfinReloadOnOpen,
+                    openExternalLinks = settingsState.settings.jellyfinOpenExternalLinks,
+                    isActive = isJellyfinPageActive,
+                    autoAuthUsername = settingsState.settings.jellyfinUsername,
+                    autoAuthPassword = autoAuthPassword.orEmpty(),
+                    autoAuthEnabled = settingsState.settings.jellyfinAutoAuth && autoAuthPassword != null,
+                )
+            }
         }
         LauncherPage.HomeAssistant -> {
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
@@ -547,21 +635,38 @@ private fun LauncherPageContent(
             LaunchedEffect(settingsState.settings.homeAssistantAutoAuth) {
                 autoAuthPassword = if (settingsState.settings.homeAssistantAutoAuth) settingsViewModel.homeAssistantPassword() else null
             }
-            HomeAssistantScreen(
-                url = settingsState.settings.homeAssistantUrl,
-                autoAuthUsername = settingsState.settings.homeAssistantUsername,
-                autoAuthPassword = autoAuthPassword.orEmpty(),
-                autoAuthEnabled = settingsState.settings.homeAssistantAutoAuth && autoAuthPassword != null,
-            )
+            Box(Modifier.fillMaxSize().pageSwipePriority(enabled = true, onSwipe = onSwipePage)) {
+                HomeAssistantScreen(
+                    url = settingsState.settings.homeAssistantUrl,
+                    autoAuthUsername = settingsState.settings.homeAssistantUsername,
+                    autoAuthPassword = autoAuthPassword.orEmpty(),
+                    autoAuthEnabled = settingsState.settings.homeAssistantAutoAuth && autoAuthPassword != null,
+                )
+            }
         }
         LauncherPage.Iptv -> {
             IptvScreen(viewModel = iptvViewModel)
+        }
+        LauncherPage.Kodi -> {
+            // Not wrapped in pageSwipePriority like the WebView-backed pages - this is plain
+            // Compose content (a landing card, not an embedded WebView), so nothing locks the
+            // touch away from HorizontalPager's own native drag handling here in the first place.
+            // Adding the extra passive detector on top would double-fire on the same swipe: the
+            // pager's own native drag already moves pages here, and pageSwipePriority would then
+            // ALSO call requestedPage on release, competing with a still-in-flight native fling.
+            val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+            KodiScreen(
+                packageName = settingsState.settings.kodiPackageName,
+                isActive = isKodiPageActive,
+                autoLaunchOnOpen = settingsState.settings.kodiAutoLaunchOnOpen,
+            )
         }
         LauncherPage.Settings -> {
             SettingsScreen(
                 viewModel = settingsViewModel,
                 onRequestHomeRole = onRequestHomeRole,
                 onRequestNotificationAccess = onRequestNotificationAccess,
+                onRequestCalendarAccess = onRequestCalendarAccess,
                 onRequestWriteSettingsAccess = onRequestWriteSettingsAccess,
                 onRequestOverlayAccess = onRequestOverlayAccess,
             )

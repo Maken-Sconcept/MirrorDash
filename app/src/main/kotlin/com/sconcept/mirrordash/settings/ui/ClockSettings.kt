@@ -34,7 +34,7 @@ private enum class ClockSettingsTab(val title: String) {
 }
 
 @Composable
-fun ClockSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) {
+fun ClockSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel, onRequestCalendarAccess: () -> Unit) {
     var selectedTab by remember { mutableStateOf(ClockSettingsTab.CLOCK) }
 
     Text(
@@ -79,14 +79,14 @@ fun ClockSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel)
         Column(modifier = Modifier.fillMaxWidth()) {
             when (tab) {
                 ClockSettingsTab.CLOCK -> AppearanceSettingsContent(uiState, viewModel)
-                ClockSettingsTab.WIDGETS -> WidgetsSettingsContent(uiState, viewModel)
+                ClockSettingsTab.WIDGETS -> WidgetsSettingsContent(uiState, viewModel, onRequestCalendarAccess)
             }
         }
     }
 }
 
 @Composable
-private fun WidgetsSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) {
+private fun WidgetsSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel, onRequestCalendarAccess: () -> Unit) {
     Text(
         "Long-press and drag widgets directly on the Clock page to place them.",
         style = MDTheme.type.settingSubtitle,
@@ -112,5 +112,29 @@ private fun WidgetsSettingsContent(uiState: SettingsUiState, viewModel: Settings
             viewModel = viewModel,
             showDragHint = false,
         )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Calendar widgets") {
+        CalendarWidgetsSettingsContent(uiState, viewModel, onRequestCalendarAccess)
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Tasks widgets") {
+        TasksWidgetsSettingsContent(uiState, viewModel)
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Stocks widgets") {
+        StocksWidgetsSettingsContent(uiState, viewModel)
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "News widgets") {
+        NewsWidgetsSettingsContent(uiState, viewModel)
     }
 }

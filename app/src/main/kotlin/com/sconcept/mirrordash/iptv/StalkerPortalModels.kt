@@ -40,5 +40,30 @@ data class EpgProgram(
 sealed class StalkerPortalError(message: String) : Exception(message) {
     class Network(message: String) : StalkerPortalError(message)
     class InvalidResponse(message: String) : StalkerPortalError(message)
-    class PortalRejected(message: String) : StalkerPortalError(message)
 }
+
+/** Subscriber/account details from `type=account_info&action=get_main_info` - see
+ * [StalkerPortalClient.fetchAccountInfo]. Every field but [mac] is nullable since which ones a
+ * given provider's portal actually returns varies. */
+data class StalkerAccountInfo(
+    val mac: String,
+    val login: String? = null,
+    val fullName: String? = null,
+    val phone: String? = null,
+    val email: String? = null,
+    val tariffPlan: String? = null,
+    /** Subscription/tariff expiry, epoch seconds - null if the portal didn't return one (or it
+     * came back as the "never expires" sentinel some forks use, `0000-00-00 00:00:00`). */
+    val expiryEpochSeconds: Long? = null,
+    /** Mirrors [StalkerPortalClient.blockMessage] at fetch time - carried here too so a caller
+     * that only has a [StalkerAccountInfo] (e.g. the Settings account card) doesn't need the
+     * client itself just to know whether the account is blocked. */
+    val blocked: Boolean = false,
+    val blockMessage: String? = null,
+)
+
+/** Shared by the blocked-account screen ([IptvScreen]) and the Settings account card
+ * ([com.sconcept.mirrordash.settings.ui.IptvSettingsContent]) so an expiry date reads the same
+ * in both places. */
+fun formatAccountExpiry(epochSeconds: Long): String =
+    java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault()).format(java.util.Date(epochSeconds * 1000))

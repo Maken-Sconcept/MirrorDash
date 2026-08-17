@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
 import android.net.Uri
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -34,7 +35,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +42,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.sconcept.mirrordash.launcher.gestures.swipePriorityTouchListener
 import com.sconcept.mirrordash.ui.theme.MDTheme
 
 /**
@@ -59,7 +58,6 @@ fun JellyfinScreen(
     reloadOnOpen: Boolean,
     openExternalLinks: Boolean,
     isActive: Boolean,
-    isAwake: Boolean,
     autoAuthUsername: String = "",
     autoAuthPassword: String = "",
     autoAuthEnabled: Boolean = false,
@@ -83,7 +81,6 @@ fun JellyfinScreen(
                 reloadOnOpen = reloadOnOpen,
                 openExternalLinks = openExternalLinks,
                 isActive = isActive,
-                isAwake = isAwake,
                 autoAuthScript = remember(autoAuthEnabled, autoAuthUsername, autoAuthPassword) {
                     if (autoAuthEnabled && autoAuthUsername.isNotBlank()) {
                         jellyfinAutoAuthScript(autoAuthUsername, autoAuthPassword)
@@ -105,13 +102,7 @@ private fun JellyfinWebView(
     reloadOnOpen: Boolean,
     openExternalLinks: Boolean,
     isActive: Boolean,
-    isAwake: Boolean,
 ) {
-    // A plain captured Boolean would freeze at whatever isAwake was when the WebView's factory
-    // lambda ran (once, ever) - the touch listener needs the CURRENT value on every touch, so it
-    // reads through this State instead, the same way `update = {}` keeps other WebView state
-    // fresh across recompositions without recreating the View.
-    val isAwakeState = rememberUpdatedState(isAwake)
     var loadError by remember(initialUrl, desktopMode, openExternalLinks) { mutableStateOf<String?>(null) }
     var reloadToken by remember(initialUrl, desktopMode, openExternalLinks) { mutableStateOf(0) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
@@ -230,7 +221,13 @@ private fun JellyfinWebView(
                         webViewClient = webClient
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        setOnTouchListener(swipePriorityTouchListener(context, isAwakeState))
+                        setOnTouchListener { _, motionEvent ->
+                            when (motionEvent.actionMasked) {
+                                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> parent?.requestDisallowInterceptTouchEvent(true)
+                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> parent?.requestDisallowInterceptTouchEvent(false)
+                            }
+                            false
+                        }
                         webViewRef = this
                         loadUrl(initialUrl)
                     }

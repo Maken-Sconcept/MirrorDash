@@ -8,9 +8,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sconcept.mirrordash.airplay.AirPlayUiState
+import com.sconcept.mirrordash.clock.CalendarWidget
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.NewsWidget
+import com.sconcept.mirrordash.clock.StocksWidget
+import com.sconcept.mirrordash.clock.TasksWidget
 import com.sconcept.mirrordash.clock.WEATHER_WIDGET_MODE_FORECAST_CARD
 import com.sconcept.mirrordash.clock.WeatherWidget
+import com.sconcept.mirrordash.clock.defaultCalendarWidget
+import com.sconcept.mirrordash.clock.defaultNewsWidget
+import com.sconcept.mirrordash.clock.defaultStocksWidget
+import com.sconcept.mirrordash.clock.defaultTasksWidget
 import com.sconcept.mirrordash.clock.defaultWeatherWidget
 import com.sconcept.mirrordash.nas.SmbRepository
 import com.sconcept.mirrordash.nas.SmbPaths
@@ -120,17 +128,6 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { clockBackgroundColorArgb = color.toArgb() }
     }
 
-    /** Turning this on also enables the Photorama engine itself - otherwise the clock would sit
-     * on a background that never receives a photo unless the user separately visited the
-     * Photorama section and flipped its own switch too, same trap "Enable Photorama" used to be
-     * before selecting a folder auto-enabled it. Turning it back off leaves Photorama's own
-     * enabled state untouched, since that page becomes visible again and may still be wanted. */
-    fun setClockBackgroundMode(usePhotorama: Boolean) = viewModelScope.launch {
-        settingsRepository.update {
-            clockBackgroundMode = if (usePhotorama) CLOCK_BACKGROUND_MODE_PHOTORAMA else CLOCK_BACKGROUND_MODE_SOLID
-            if (usePhotorama) photoramaEnabled = true
-        }
-    }
 
     /** Long-press-and-drag directly on the Clock page moves the clock/weather clusters; this
      * is the escape hatch back to the shipped layout without hunting for the right drag. */
@@ -191,6 +188,98 @@ class SettingsViewModel(application: Application, private val settingsRepository
         val current = uiState.value.settings.weatherWidgets
         settingsRepository.update {
             weatherWidgets = current.filterNot { it.id == id }
+        }
+    }
+
+    // --- Calendar widgets ----------------------------------------------------------------------
+
+    fun addCalendarWidget() = viewModelScope.launch {
+        val current = uiState.value.settings.calendarWidgets
+        settingsRepository.update {
+            calendarWidgets = current + defaultCalendarWidget()
+        }
+    }
+
+    fun updateCalendarWidget(id: String, transform: (CalendarWidget) -> CalendarWidget) = viewModelScope.launch {
+        val current = uiState.value.settings.calendarWidgets
+        settingsRepository.update {
+            calendarWidgets = current.map { if (it.id == id) transform(it) else it }
+        }
+    }
+
+    fun removeCalendarWidget(id: String) = viewModelScope.launch {
+        val current = uiState.value.settings.calendarWidgets
+        settingsRepository.update {
+            calendarWidgets = current.filterNot { it.id == id }
+        }
+    }
+
+    // --- Tasks widgets ---------------------------------------------------------------------
+
+    fun addTasksWidget() = viewModelScope.launch {
+        val current = uiState.value.settings.tasksWidgets
+        settingsRepository.update {
+            tasksWidgets = current + defaultTasksWidget()
+        }
+    }
+
+    fun updateTasksWidget(id: String, transform: (TasksWidget) -> TasksWidget) = viewModelScope.launch {
+        val current = uiState.value.settings.tasksWidgets
+        settingsRepository.update {
+            tasksWidgets = current.map { if (it.id == id) transform(it) else it }
+        }
+    }
+
+    fun removeTasksWidget(id: String) = viewModelScope.launch {
+        val current = uiState.value.settings.tasksWidgets
+        settingsRepository.update {
+            tasksWidgets = current.filterNot { it.id == id }
+        }
+    }
+
+    // --- Stocks widgets --------------------------------------------------------------------
+
+    fun addStocksWidget() = viewModelScope.launch {
+        val current = uiState.value.settings.stocksWidgets
+        settingsRepository.update {
+            stocksWidgets = current + defaultStocksWidget()
+        }
+    }
+
+    fun updateStocksWidget(id: String, transform: (StocksWidget) -> StocksWidget) = viewModelScope.launch {
+        val current = uiState.value.settings.stocksWidgets
+        settingsRepository.update {
+            stocksWidgets = current.map { if (it.id == id) transform(it) else it }
+        }
+    }
+
+    fun removeStocksWidget(id: String) = viewModelScope.launch {
+        val current = uiState.value.settings.stocksWidgets
+        settingsRepository.update {
+            stocksWidgets = current.filterNot { it.id == id }
+        }
+    }
+
+    // --- News widgets ----------------------------------------------------------------------
+
+    fun addNewsWidget() = viewModelScope.launch {
+        val current = uiState.value.settings.newsWidgets
+        settingsRepository.update {
+            newsWidgets = current + defaultNewsWidget()
+        }
+    }
+
+    fun updateNewsWidget(id: String, transform: (NewsWidget) -> NewsWidget) = viewModelScope.launch {
+        val current = uiState.value.settings.newsWidgets
+        settingsRepository.update {
+            newsWidgets = current.map { if (it.id == id) transform(it) else it }
+        }
+    }
+
+    fun removeNewsWidget(id: String) = viewModelScope.launch {
+        val current = uiState.value.settings.newsWidgets
+        settingsRepository.update {
+            newsWidgets = current.filterNot { it.id == id }
         }
     }
 
@@ -273,16 +362,24 @@ class SettingsViewModel(application: Application, private val settingsRepository
     }
 
     private fun browseTo(path: String) {
+        android.util.Log.d("NasBrowse", "browseTo('$path') starting")
         _extra.update { it.copy(browser = (it.browser ?: NasBrowserState()).copy(path = path, isLoading = true, errorMessage = null)) }
         viewModelScope.launch {
             val share = settingsRepository.smbShareWithPassword()
+            android.util.Log.d("NasBrowse", "listDirectories host=${share.host} share=${share.share} path='$path'")
             val result = withContext(Dispatchers.IO) { smbRepository.listDirectories(share, path) }
             when (result) {
-                is SmbResult.Success -> _extra.update {
-                    it.copy(browser = it.browser?.copy(items = result.value, isLoading = false))
+                is SmbResult.Success -> {
+                    android.util.Log.d("NasBrowse", "success, ${result.value.size} folders: ${result.value.map { it.name }}")
+                    _extra.update {
+                        it.copy(browser = it.browser?.copy(items = result.value, isLoading = false))
+                    }
                 }
-                is SmbResult.Failure -> _extra.update {
-                    it.copy(browser = it.browser?.copy(isLoading = false, errorMessage = result.message))
+                is SmbResult.Failure -> {
+                    android.util.Log.d("NasBrowse", "failure: ${result.state} - ${result.message}")
+                    _extra.update {
+                        it.copy(browser = it.browser?.copy(isLoading = false, errorMessage = result.message))
+                    }
                 }
             }
         }
@@ -292,16 +389,60 @@ class SettingsViewModel(application: Application, private val settingsRepository
         val path = _extra.value.browser?.path ?: return@launch
         // Picking a folder is the last step of setup - there's no reason to leave the slideshow
         // configured-but-off after this, so it turns itself on here rather than requiring a
-        // separate trip to the "Enable Photorama" switch further down the page.
+        // separate trip back to the "Enable Photorama" switch above it.
         settingsRepository.update {
             photoramaFolderPath = path
+            photoramaSource = PHOTORAMA_SOURCE_NAS
             photoramaEnabled = true
+            clockBackgroundMode = CLOCK_BACKGROUND_MODE_PHOTORAMA
         }
         _extra.update { it.copy(browser = null) }
     }
 
+    /** The one Photorama on/off switch - keeps `photoramaEnabled` (what
+     * [com.sconcept.mirrordash.photorama.PhotoramaViewModel] watches to start/stop) and
+     * `clockBackgroundMode` (what [com.sconcept.mirrordash.clock.ClockViewModel] watches to pick
+     * the Clock's background) permanently in lockstep, so there's exactly one place this is ever
+     * toggled - the previous split between a separate Photorama-section "enable" switch and this
+     * Clock setting's "use as background" toggle was exactly the kind of drift that caused the
+     * two to disagree. With no source chosen yet, turning this on is what the Clock settings UI
+     * reads as "show the Local storage / NAS chooser." */
     fun setPhotoramaEnabled(enabled: Boolean) = viewModelScope.launch {
-        settingsRepository.update { photoramaEnabled = enabled }
+        settingsRepository.update {
+            photoramaEnabled = enabled
+            clockBackgroundMode = if (enabled) CLOCK_BACKGROUND_MODE_PHOTORAMA else CLOCK_BACKGROUND_MODE_SOLID
+        }
+    }
+
+    /** Answers the Local storage / NAS chooser, or switches sources later via "Change source" -
+     * either way this alone doesn't clear the other source's already-filled-in fields (a NAS
+     * connection stays remembered while Local is active, and vice versa), so flipping back and
+     * forth doesn't mean re-entering anything. */
+    fun setPhotoramaSource(source: String) = viewModelScope.launch {
+        settingsRepository.update { photoramaSource = source }
+    }
+
+    /** Back to the chooser without turning Photorama off - the "Change source" control. */
+    fun resetPhotoramaSource() = viewModelScope.launch {
+        settingsRepository.update { photoramaSource = "" }
+    }
+
+    /** Persists the grant from the system folder picker (`ActivityResultContracts.OpenDocumentTree`)
+     * so it survives reboots - without this, the URI would still resolve today but throw a
+     * `SecurityException` the next time the process starts fresh. */
+    fun setPhotoramaLocalFolderUri(uri: android.net.Uri) = viewModelScope.launch {
+        runCatching {
+            getApplication<Application>().contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        settingsRepository.update {
+            photoramaLocalFolderUri = uri.toString()
+            photoramaSource = PHOTORAMA_SOURCE_LOCAL
+            photoramaEnabled = true
+            clockBackgroundMode = CLOCK_BACKGROUND_MODE_PHOTORAMA
+        }
     }
 
     fun setPhotoramaIncludeSubfolders(value: Boolean) = viewModelScope.launch {
@@ -314,6 +455,26 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setPhotoramaShuffle(value: Boolean) = viewModelScope.launch {
         settingsRepository.update { photoramaShuffle = value }
+    }
+
+    fun setPhotoramaScheduleEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { photoramaScheduleEnabled = enabled }
+    }
+
+    fun setPhotoramaScheduleStartMinutes(minutes: Int) = viewModelScope.launch {
+        settingsRepository.update { photoramaScheduleStartMinutes = minutes }
+    }
+
+    fun setPhotoramaScheduleEndMinutes(minutes: Int) = viewModelScope.launch {
+        settingsRepository.update { photoramaScheduleEndMinutes = minutes }
+    }
+
+    fun setClockShowTime(show: Boolean) = viewModelScope.launch {
+        settingsRepository.update { clockShowTime = show }
+    }
+
+    fun setClockShowWidgets(show: Boolean) = viewModelScope.launch {
+        settingsRepository.update { clockShowWidgets = show }
     }
 
     // --- Walkie-Talkie ------------------------------------------------------------------------
@@ -491,6 +652,20 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     suspend fun homeAssistantPassword(): String = settingsRepository.homeAssistantPassword()
 
+    // --- Kodi ---------------------------------------------------------------------------------
+
+    fun setKodiEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { kodiEnabled = enabled }
+    }
+
+    fun setKodiPackageName(packageName: String) = viewModelScope.launch {
+        settingsRepository.update { kodiPackageName = packageName.trim() }
+    }
+
+    fun setKodiAutoLaunchOnOpen(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { kodiAutoLaunchOnOpen = enabled }
+    }
+
     // --- IPTV ----------------------------------------------------------------------------------
 
     fun setIptvEnabled(enabled: Boolean) = viewModelScope.launch {
@@ -553,6 +728,14 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setIptvRecordingLocalCapMb(mb: Int) = viewModelScope.launch {
         settingsRepository.update { iptvRecordingLocalCapMb = mb }
+    }
+
+    fun setIptvDownloadFolderName(folder: String) = viewModelScope.launch {
+        settingsRepository.update { iptvDownloadFolderName = folder }
+    }
+
+    fun setIptvPlayerBackend(backend: com.sconcept.mirrordash.iptv.player.PlayerBackend) = viewModelScope.launch {
+        settingsRepository.update { iptvPlayerBackend = backend.storageKey }
     }
 
     // --- Launcher ------------------------------------------------------------------------------

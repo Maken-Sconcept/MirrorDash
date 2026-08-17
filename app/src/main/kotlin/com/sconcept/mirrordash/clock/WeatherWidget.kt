@@ -12,15 +12,15 @@ const val WEATHER_WIDGET_FORECAST_DAILY = "DAILY"
 
 @Serializable
 data class WeatherWidget(
-    val id: String,
+    override val id: String,
     val mode: String = WEATHER_WIDGET_MODE_LINE,
     val forecastMode: String = WEATHER_WIDGET_FORECAST_HOURLY,
     val itemCount: Int = 6,
     val scalePercent: Int = 100,
     val showLocation: Boolean = true,
-    val anchorX: Float = DEFAULT_WEATHER_ANCHOR_X,
-    val anchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
-)
+    override val anchorX: Float = DEFAULT_WEATHER_ANCHOR_X,
+    override val anchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
+) : AnchoredWidget
 
 fun defaultWeatherWidget(
     id: String = java.util.UUID.randomUUID().toString(),

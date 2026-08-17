@@ -1,11 +1,18 @@
 package com.sconcept.mirrordash.iptv
 
 import android.app.AlarmManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.StatFs
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import com.sconcept.mirrordash.R
+import com.sconcept.mirrordash.launcher.MirrorDashActivity
 import com.sconcept.mirrordash.nas.SmbPaths
 import com.sconcept.mirrordash.nas.SmbRepository
 import com.sconcept.mirrordash.settings.MirrorDashSettings
@@ -33,6 +40,18 @@ import java.util.Locale
 
 private const val TAG = "IptvRecordingEngine"
 
+/** Read by [MirrorDashActivity] (`onCreate`/`onNewIntent`) - set on the "download complete"
+ * notification's [PendingIntent] so tapping it opens straight to the Download Manager, on the
+ * IPTV tab, rather than just whatever page the launcher happened to be showing. */
+const val EXTRA_OPEN_DOWNLOAD_MANAGER = "com.sconcept.mirrordash.OPEN_DOWNLOAD_MANAGER"
+
+private const val DOWNLOAD_COMPLETE_CHANNEL_ID = "iptv_download_complete"
+
+/** Fixed rather than per-download - a new download's own completion is a fresh event worth its
+ * own notification, but there's no need for more than the *latest* completed download to still be
+ * sitting in the shade; [NotificationManager.notify] with the same ID just replaces it. */
+private const val DOWNLOAD_COMPLETE_NOTIFICATION_ID = 4203
+
 /** Below this, a destination refuses to even open for a new recording, and an already-running
  * one stops itself rather than write a device (or NAS share) down to 0 bytes free. */
 private const val MIN_FREE_SPACE_BYTES = 300L * 1024 * 1024
@@ -50,6 +69,14 @@ data class RecordingEngineUiState(
     val activeRecording: ActiveRecording? = null,
     val lastCompleted: CompletedRecording? = null,
     val lastError: String? = null,
+    /** Bumped by [IptvRecordingEngine.requestOpenDownloadManager] - a "download complete"
+     * notification's tap target has no view of Compose navigation state, so it goes through this
+     * app-wide singleton instead (same shape as `AirPlayEngine`'s own session-active signal
+     * driving [com.sconcept.mirrordash.launcher.MirrorDashActivity]'s page jump). Every collector
+     * only cares that this changed, not its actual value - a plain counter rather than a Boolean
+     * so two requests in a row (rare, but e.g. two notification taps) both register as a distinct
+     * edge instead of the second being silently swallowed by `distinctUntilChanged`. */
+    val openRequestEpoch: Int = 0,
 )
 
 /**
@@ -128,84 +155,161 @@ class IptvRecordingEngine private constructor(
         recordingJob?.cancel()
     }
 
+    /** Called by [MirrorDashActivity] when it's launched/resumed via the "download complete"
+     * notification's [PendingIntent] - see [RecordingEngineUiState.openRequestEpoch]'s doc
+     * comment for why a counter bump, observed from both the page-jump logic in
+     * `MirrorDashRoot` and the Download Manager panel's own open state, is how that's threaded
+     * through rather than a direct navigation call (nothing here has a reference to Compose
+     * navigation state to call it *with*). */
+    fun requestOpenDownloadManager() {
+        _uiState.update { it.copy(openRequestEpoch = it.openRequestEpoch + 1) }
+    }
+
+    /** One-shot, finite download of a Movies/Series item to the same destination machinery live
+     * recording uses - not open-ended like [start] ([stopAtEpochSeconds] is always null, so
+     * [copyStream] just runs to the source's natural EOF), and to a separate, independently
+     * configurable folder ([MirrorDashSettings.iptvDownloadFolderName], falling back to the same
+     * folder recordings use when left blank) rather than always [RECORDINGS_FOLDER_NAME]. Shares
+     * [runCapture] with [start] rather than duplicating the connect/destination/copy/history
+     * plumbing - see that function for what's common between the two. */
+    fun downloadVodItem(item: StalkerVodItem) {
+        if (_uiState.value.activeRecording != null) return
+        recordingJob?.cancel()
+        IptvRecordingService.start(appContext)
+        recordingJob = scope.launch {
+            runCapture(
+                id = item.id,
+                name = item.name,
+                trigger = RecordingTrigger.DOWNLOAD,
+                stopAtEpochSeconds = null,
+                resolveUrl = { client -> client.resolveVodStreamUrl(item) },
+                folderNameFor = { settings -> settings.iptvDownloadFolderName.ifBlank { RECORDINGS_FOLDER_NAME } },
+                smbFolderNameFor = { settings -> settings.iptvDownloadFolderName.ifBlank { settings.iptvRecordingSmbFolder } },
+                fileName = { streamUrl -> buildFileName(item, streamUrl) },
+            )
+        }
+    }
+
     private fun start(channel: StalkerChannel, trigger: RecordingTrigger, stopAtEpochSeconds: Long?) {
         if (_uiState.value.activeRecording != null) return
         recordingJob?.cancel()
         IptvRecordingService.start(appContext)
 
         recordingJob = scope.launch {
-            var destination: OutputStream? = null
-            var usedSharedSession = false
-            var openedHandle: DestinationHandle? = null
-            var stoppedForLowStorage = false
-            try {
-                val settings = settingsRepository.settings.first()
-                require(settings.iptvPortalUrl.isNotBlank() && settings.iptvMacAddress.isNotBlank()) {
-                    "IPTV isn't configured"
-                }
-                val dedicatedMac = settings.iptvRecordingMacAddress
-                val client = if (dedicatedMac.isNotBlank()) {
-                    val portal = settings.iptvRecordingPortalUrl.ifBlank { settings.iptvPortalUrl }
-                    StalkerPortalClient(portal, dedicatedMac).also { it.connect().getOrThrow() }
-                } else {
-                    usedSharedSession = true
-                    sessionCoordinator.acquire(settings.iptvPortalUrl, settings.iptvMacAddress).getOrThrow()
-                }
-                val streamUrl = client.resolveStreamUrl(channel).getOrThrow()
+            runCapture(
+                id = channel.id,
+                name = channel.name,
+                trigger = trigger,
+                stopAtEpochSeconds = stopAtEpochSeconds,
+                resolveUrl = { client -> client.resolveStreamUrl(channel) },
+                folderNameFor = { RECORDINGS_FOLDER_NAME },
+                smbFolderNameFor = { settings -> settings.iptvRecordingSmbFolder },
+                fileName = { buildFileName(channel) },
+            )
+        }
+    }
 
-                val opened = openDestination(channel, settings)
-                openedHandle = opened
-                destination = opened.stream
-
-                _uiState.update {
-                    it.copy(
-                        activeRecording = ActiveRecording(
-                            channelId = channel.id,
-                            channelName = channel.name,
-                            trigger = trigger,
-                            destinationLabel = opened.label,
-                            startedAtEpochSeconds = nowSeconds(),
-                            stopAtEpochSeconds = stopAtEpochSeconds,
-                        ),
-                        lastError = null,
-                    )
-                }
-
-                stoppedForLowStorage = copyStream(streamUrl, opened.stream, stopAtEpochSeconds, opened.freeSpaceBytes)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // stop() cancelling this job - not a failure, just the ordinary way a recording
-                // ends. Left to propagate so finally still runs and structured cancellation isn't
-                // broken, but not logged/surfaced as lastError like a genuine failure would be.
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Recording failed: ${e.message}", e)
-                _uiState.update { it.copy(lastError = e.message ?: "Recording failed") }
-            } finally {
-                val active = _uiState.value.activeRecording
-                val bytesWritten = active?.bytesWritten ?: 0L
-                runCatching { destination?.close() }
-                if (usedSharedSession) sessionCoordinator.release()
-                // Only when a destination actually got opened - an error before that point (e.g.
-                // couldn't reach the portal) never wrote anything worth pointing at or keeping.
-                val completed = openedHandle?.let { handle ->
-                    CompletedRecording(
-                        channelName = channel.name,
-                        destinationLabel = handle.label,
-                        path = handle.path,
-                        bytesWritten = bytesWritten,
-                        startedAtEpochSeconds = active?.startedAtEpochSeconds ?: nowSeconds(),
-                        finishedAtEpochSeconds = nowSeconds(),
-                        stoppedForLowStorage = stoppedForLowStorage,
-                    )
-                }
-                _uiState.update { it.copy(activeRecording = null, lastCompleted = completed ?: it.lastCompleted) }
-                if (completed != null) {
-                    settingsRepository.update {
-                        iptvRecordingHistory = (listOf(completed) + iptvRecordingHistory).take(RECORDING_HISTORY_LIMIT)
-                    }
-                }
-                IptvRecordingService.stop(appContext)
+    /** What [start] (live channel, open-ended or bounded by [stopAtEpochSeconds]) and
+     * [downloadVodItem] (Movies/Series item, always runs to EOF) share: acquire a portal session,
+     * resolve a stream URL, open a destination, copy bytes, record history - everything that
+     * differs between the two is passed in rather than branched on internally. */
+    private suspend fun runCapture(
+        id: String,
+        name: String,
+        trigger: RecordingTrigger,
+        stopAtEpochSeconds: Long?,
+        resolveUrl: suspend (StalkerPortalClient) -> Result<String>,
+        folderNameFor: (MirrorDashSettings) -> String,
+        smbFolderNameFor: (MirrorDashSettings) -> String,
+        fileName: (streamUrl: String) -> String,
+    ) {
+        var destination: OutputStream? = null
+        var usedSharedSession = false
+        var openedHandle: DestinationHandle? = null
+        var stoppedForLowStorage = false
+        var wasCancelled = false
+        try {
+            val settings = settingsRepository.settings.first()
+            require(settings.iptvPortalUrl.isNotBlank() && settings.iptvMacAddress.isNotBlank()) {
+                "IPTV isn't configured"
             }
+            val dedicatedMac = settings.iptvRecordingMacAddress
+            val client = if (dedicatedMac.isNotBlank()) {
+                val portal = settings.iptvRecordingPortalUrl.ifBlank { settings.iptvPortalUrl }
+                StalkerPortalClient(portal, dedicatedMac).also { it.connect().getOrThrow() }
+            } else {
+                usedSharedSession = true
+                sessionCoordinator.acquire(settings.iptvPortalUrl, settings.iptvMacAddress).getOrThrow()
+            }
+            // connect() itself no longer fails a blocked account (see StalkerPortalClient.blockMessage's
+            // doc comment) - a recording/download needs actual playback, so this is where that
+            // now needs to be checked explicitly instead.
+            client.blockMessage?.let { throw IOException("Account blocked: $it") }
+            val streamUrl = resolveUrl(client).getOrThrow()
+
+            val opened = openDestination(fileName(streamUrl), folderNameFor(settings), smbFolderNameFor(settings), settings)
+            openedHandle = opened
+            destination = opened.stream
+
+            _uiState.update {
+                it.copy(
+                    activeRecording = ActiveRecording(
+                        channelId = id,
+                        channelName = name,
+                        trigger = trigger,
+                        destinationLabel = opened.label,
+                        startedAtEpochSeconds = nowSeconds(),
+                        stopAtEpochSeconds = stopAtEpochSeconds,
+                    ),
+                    lastError = null,
+                )
+            }
+
+            stoppedForLowStorage = copyStream(streamUrl, opened.stream, stopAtEpochSeconds, opened.freeSpaceBytes)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // stop() cancelling this job - not a failure, just the ordinary way a recording
+            // ends. Left to propagate so finally still runs and structured cancellation isn't
+            // broken, but not logged/surfaced as lastError like a genuine failure would be.
+            // Recorded so the finally block below doesn't post a "download complete" notification
+            // over something the user themselves just stopped.
+            wasCancelled = true
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Recording failed: ${e.message}", e)
+            _uiState.update { it.copy(lastError = e.message ?: "Recording failed") }
+        } finally {
+            val active = _uiState.value.activeRecording
+            val bytesWritten = active?.bytesWritten ?: 0L
+            runCatching { destination?.close() }
+            if (usedSharedSession) sessionCoordinator.release()
+            // Only when a destination actually got opened - an error before that point (e.g.
+            // couldn't reach the portal) never wrote anything worth pointing at or keeping.
+            val completed = openedHandle?.let { handle ->
+                CompletedRecording(
+                    channelName = name,
+                    destinationLabel = handle.label,
+                    path = handle.path,
+                    bytesWritten = bytesWritten,
+                    startedAtEpochSeconds = active?.startedAtEpochSeconds ?: nowSeconds(),
+                    finishedAtEpochSeconds = nowSeconds(),
+                    stoppedForLowStorage = stoppedForLowStorage,
+                    trigger = trigger,
+                )
+            }
+            _uiState.update { it.copy(activeRecording = null, lastCompleted = completed ?: it.lastCompleted) }
+            if (completed != null) {
+                settingsRepository.update {
+                    iptvRecordingHistory = (listOf(completed) + iptvRecordingHistory).take(RECORDING_HISTORY_LIMIT)
+                }
+                // Only for downloads (not live recordings, which have no comparable "you're done,
+                // go look at it" moment - they either run until manually stopped or a schedule
+                // ends them) and only when this actually ran to completion rather than being
+                // stopped by the user, who was already right there when they tapped Stop.
+                if (trigger == RecordingTrigger.DOWNLOAD && !wasCancelled) {
+                    notifyDownloadComplete(completed)
+                }
+            }
+            IptvRecordingService.stop(appContext)
         }
     }
 
@@ -227,10 +331,16 @@ class IptvRecordingEngine private constructor(
         )
         var stoppedForLowStorage = false
         try {
+            // A VOD download almost always has one (it's a finite file); a live channel's
+            // open-ended stream never does - see ActiveRecording.totalBytes's doc comment for
+            // what a missing one means to the Download Manager UI.
+            val contentLength = connection.contentLengthLong.takeIf { it > 0 }
+            _uiState.update { state -> state.copy(activeRecording = state.activeRecording?.copy(totalBytes = contentLength)) }
             connection.inputStream.use { input ->
                 val buffer = ByteArray(64 * 1024)
-                var totalBytes = 0L
+                var writtenBytes = 0L
                 var lastUiUpdateAtMs = 0L
+                var bytesAtLastUiUpdate = 0L
                 var lastSpaceCheckAtMs = 0L
                 while (isActive) {
                     if (stopAtEpochSeconds != null && nowSeconds() >= stopAtEpochSeconds) break
@@ -250,13 +360,18 @@ class IptvRecordingEngine private constructor(
                     val read = input.read(buffer)
                     if (read == -1) break
                     destination.write(buffer, 0, read)
-                    totalBytes += read
+                    writtenBytes += read
                     // Updating on every chunk would spam the StateFlow at network speed - once
-                    // a second is plenty for a "recording... 42MB" indicator to feel live.
+                    // a second is plenty for a "recording... 42MB" indicator to feel live. Speed
+                    // is the delta since the *previous* tick over however long that tick actually
+                    // took (rarely exactly 1000ms), not an assumed-1s rate.
                     if (now - lastUiUpdateAtMs > 1000) {
+                        val elapsedMs = (now - lastUiUpdateAtMs).takeIf { lastUiUpdateAtMs > 0 } ?: 1000L
+                        val bytesPerSecond = ((writtenBytes - bytesAtLastUiUpdate) * 1000L) / elapsedMs
                         lastUiUpdateAtMs = now
+                        bytesAtLastUiUpdate = writtenBytes
                         _uiState.update { state ->
-                            state.copy(activeRecording = state.activeRecording?.copy(bytesWritten = totalBytes))
+                            state.copy(activeRecording = state.activeRecording?.copy(bytesWritten = writtenBytes, bytesPerSecond = bytesPerSecond))
                         }
                     }
                 }
@@ -277,8 +392,16 @@ class IptvRecordingEngine private constructor(
         val freeSpaceBytes: () -> Long,
     )
 
-    private suspend fun openDestination(channel: StalkerChannel, settings: MirrorDashSettings): DestinationHandle {
-        val fileName = buildFileName(channel)
+    /** [localFolderName]/[smbFolderName] let [downloadVodItem] land in a different folder than
+     * [start]'s live recordings (see [MirrorDashSettings.iptvDownloadFolderName]) while sharing
+     * every other destination-selection/failsafe rule - both always default to the same folder
+     * live recordings use ([RECORDINGS_FOLDER_NAME]/[MirrorDashSettings.iptvRecordingSmbFolder]). */
+    private suspend fun openDestination(
+        fileName: String,
+        localFolderName: String,
+        smbFolderName: String,
+        settings: MirrorDashSettings,
+    ): DestinationHandle {
         val primary = RecordingDestinationMode.fromStorageKey(settings.iptvRecordingDestination)
         val order = if (primary == RecordingDestinationMode.SMB_PRIMARY) {
             listOf(RecordingDestinationMode.SMB_PRIMARY, RecordingDestinationMode.LOCAL_PRIMARY)
@@ -289,8 +412,8 @@ class IptvRecordingEngine private constructor(
         for (mode in order) {
             try {
                 return when (mode) {
-                    RecordingDestinationMode.SMB_PRIMARY -> openSmbDestination(fileName, settings)
-                    RecordingDestinationMode.LOCAL_PRIMARY -> openLocalDestination(fileName, settings)
+                    RecordingDestinationMode.SMB_PRIMARY -> openSmbDestination(fileName, smbFolderName, settings)
+                    RecordingDestinationMode.LOCAL_PRIMARY -> openLocalDestination(fileName, localFolderName, settings)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "${mode.storageKey} recording destination unavailable: ${e.message}")
@@ -300,14 +423,14 @@ class IptvRecordingEngine private constructor(
         throw lastError ?: IOException("No recording destination available")
     }
 
-    private suspend fun openSmbDestination(fileName: String, settings: MirrorDashSettings): DestinationHandle {
+    private suspend fun openSmbDestination(fileName: String, folderName: String, settings: MirrorDashSettings): DestinationHandle {
         val share = settingsRepository.smbShareWithPassword()
         require(share.isConfigured) { "No NAS connection configured" }
         val free = smbRepository.freeSpaceBytes(share)
         if (free < MIN_FREE_SPACE_BYTES) {
             throw IOException("NAS share has less than ${MIN_FREE_SPACE_BYTES / (1024 * 1024)}MB free")
         }
-        val path = SmbPaths.childPath(settings.iptvRecordingSmbFolder, fileName)
+        val path = SmbPaths.childPath(folderName, fileName)
         return DestinationHandle(
             stream = smbRepository.openOutputStream(share, path),
             label = "NAS",
@@ -316,10 +439,10 @@ class IptvRecordingEngine private constructor(
         )
     }
 
-    private fun openLocalDestination(fileName: String, settings: MirrorDashSettings): DestinationHandle {
+    private fun openLocalDestination(fileName: String, folderName: String, settings: MirrorDashSettings): DestinationHandle {
         // App-private external storage - no storage permission needed on any API level, unlike
         // shared/public storage.
-        val dir = File(appContext.getExternalFilesDir(null), "iptv_recordings")
+        val dir = File(appContext.getExternalFilesDir(null), folderName)
         dir.mkdirs()
         enforceLocalCap(dir, settings.iptvRecordingLocalCapMb)
         val free = StatFs(dir.path).availableBytes
@@ -329,7 +452,7 @@ class IptvRecordingEngine private constructor(
         return DestinationHandle(
             stream = FileOutputStream(File(dir, fileName)),
             label = "Local storage",
-            path = "iptv_recordings/$fileName",
+            path = "$folderName/$fileName",
             freeSpaceBytes = { StatFs(dir.path).availableBytes },
         )
     }
@@ -349,6 +472,19 @@ class IptvRecordingEngine private constructor(
         val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
         val safeName = channel.name.replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifBlank { "channel" }
         return "${safeName}_$timestamp.ts"
+    }
+
+    /** Unlike [buildFileName]'s live-channel `.ts` (an open-ended capture of whatever plain
+     * MPEG-TS the portal is streaming right now), a VOD/series item is a finite file the portal
+     * serves from a real, resolved [streamUrl] - its own extension is used when recognizable,
+     * `.mp4` otherwise (the safe assumption, since that's what these portals overwhelmingly
+     * actually serve VOD as). */
+    private fun buildFileName(item: StalkerVodItem, streamUrl: String): String {
+        val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
+        val safeName = item.name.replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifBlank { "video" }
+        val extension = Regex("\\.(mp4|mkv|avi|mov|m4v|ts)(?:\\?|$)", RegexOption.IGNORE_CASE)
+            .find(streamUrl)?.groupValues?.get(1)?.lowercase() ?: "mp4"
+        return "${safeName}_$timestamp.$extension"
     }
 
     // --- Scheduling ------------------------------------------------------------------------
@@ -409,9 +545,63 @@ class IptvRecordingEngine private constructor(
     private fun stopPendingIntent(recording: ScheduledRecording): PendingIntent =
         ScheduledRecordingReceiver.pendingIntent(appContext, recording.id, ScheduledRecordingReceiver.ACTION_STOP)
 
+    // --- Download-complete notification --------------------------------------------------
+
+    /** Separate, higher-priority channel from [IptvRecordingService]'s own ongoing-recording one -
+     * that one is silent/low-priority by design (it exists only to keep the process alive while
+     * something's in progress), this is a one-shot "you're done, go look at it" alert and should
+     * behave like a normal notification (sound/visible), not blend into the ambient one. */
+    private fun ensureDownloadCompleteChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = appContext.getSystemService(NotificationManager::class.java) ?: return
+        if (manager.getNotificationChannel(DOWNLOAD_COMPLETE_CHANNEL_ID) != null) return
+        manager.createNotificationChannel(
+            NotificationChannel(DOWNLOAD_COMPLETE_CHANNEL_ID, "Download complete", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Shown once a Movies/Series download finishes"
+            },
+        )
+    }
+
+    /** Best-effort: [NotificationManagerCompat.areNotificationsEnabled] can be false (permission
+     * never granted/revoked) since this runs from a plain singleton, not an Activity that could
+     * itself request it - a finished download not being reported this way is a minor miss, not
+     * worth surfacing as a [lastError] over. */
+    private fun notifyDownloadComplete(completed: CompletedRecording) {
+        ensureDownloadCompleteChannel()
+        val manager = NotificationManagerCompat.from(appContext)
+        if (!manager.areNotificationsEnabled()) return
+        val openIntent = PendingIntent.getActivity(
+            appContext,
+            0,
+            Intent(appContext, MirrorDashActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_OPEN_DOWNLOAD_MANAGER, true)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(appContext, DOWNLOAD_COMPLETE_CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Download complete")
+            .setContentText("${completed.channelName} — ${formatMegabytes(completed.bytesWritten)}")
+            .setContentIntent(openIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        runCatching { manager.notify(DOWNLOAD_COMPLETE_NOTIFICATION_ID, notification) }
+            .onFailure { e -> Log.w(TAG, "Couldn't post download-complete notification: ${e.message}") }
+    }
+
+    private fun formatMegabytes(bytes: Long): String = String.format(Locale.US, "%.1f MB", bytes / (1024f * 1024f))
+
     private fun nowSeconds(): Long = System.currentTimeMillis() / 1000L
 
     companion object {
+        /** The local-storage folder name (and default SMB folder fallback point) live recordings
+         * have always used - kept as a named constant now that [downloadVodItem] needs to refer
+         * to it too as its own default, rather than the folder name only ever appearing as a
+         * string literal inside [openLocalDestination]. */
+        private const val RECORDINGS_FOLDER_NAME = "iptv_recordings"
+
         @Volatile
         private var instance: IptvRecordingEngine? = null
 

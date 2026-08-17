@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,10 +24,6 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,23 +53,6 @@ fun TextWidgetsSettingsContent(
     viewModel: SettingsViewModel,
     showDragHint: Boolean = true,
 ) {
-    val widgets = uiState.settings.customTextWidgets
-    var editingId by remember { mutableStateOf<String?>(null) }
-    val editing = widgets.firstOrNull { it.id == editingId }
-
-    if (editing != null) {
-        TextWidgetEditor(
-            widget = editing,
-            onBack = { editingId = null },
-            onChange = { transform -> viewModel.updateTextWidget(editing.id, transform) },
-            onDelete = {
-                viewModel.removeTextWidget(editing.id)
-                editingId = null
-            },
-        )
-        return
-    }
-
     if (showDragHint) {
         Text(
             "Long-press and drag any text on the Clock page to move it.",
@@ -84,32 +62,23 @@ fun TextWidgetsSettingsContent(
         Spacer(Modifier.height(20.dp))
     }
 
-    if (widgets.isEmpty()) {
-        Text(
-            "No text widgets yet.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textTertiary,
-        )
-        Spacer(Modifier.height(16.dp))
-    } else {
-        Column {
-            widgets.forEach { widget ->
-                TextWidgetRow(
-                    widget = widget,
-                    onClick = { editingId = widget.id },
-                    onDelete = { viewModel.removeTextWidget(widget.id) },
-                )
-                Spacer(Modifier.height(2.dp))
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-    }
-
-    TextButton(onClick = viewModel::addTextWidget) {
-        Icon(Icons.Filled.Add, contentDescription = null, tint = MDTheme.colors.accent)
-        Spacer(Modifier.width(6.dp))
-        Text("Add text widget", color = MDTheme.colors.accent)
-    }
+    WidgetListEditor(
+        items = uiState.settings.customTextWidgets,
+        itemId = { it.id },
+        emptyLabel = "No text widgets yet.",
+        addLabel = "Add text widget",
+        onAdd = viewModel::addTextWidget,
+        onDelete = viewModel::removeTextWidget,
+        row = { widget, onClick, onDelete -> TextWidgetRow(widget, onClick, onDelete) },
+        editor = { widget, onBack, onDelete ->
+            TextWidgetEditor(
+                widget = widget,
+                onBack = onBack,
+                onChange = { transform -> viewModel.updateTextWidget(widget.id, transform) },
+                onDelete = onDelete,
+            )
+        },
+    )
 }
 
 @Composable

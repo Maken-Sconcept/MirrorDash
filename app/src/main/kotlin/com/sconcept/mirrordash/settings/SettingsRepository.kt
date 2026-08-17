@@ -9,7 +9,11 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.sconcept.mirrordash.clock.CalendarWidget
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.NewsWidget
+import com.sconcept.mirrordash.clock.StocksWidget
+import com.sconcept.mirrordash.clock.TasksWidget
 import com.sconcept.mirrordash.clock.WeatherWidget
 import com.sconcept.mirrordash.clock.defaultWeatherWidget
 import com.sconcept.mirrordash.iptv.CompletedRecording
@@ -17,6 +21,8 @@ import com.sconcept.mirrordash.iptv.DEFAULT_PARENTAL_CONTROL_PIN
 import com.sconcept.mirrordash.iptv.ParentalControlMode
 import com.sconcept.mirrordash.iptv.RecordingDestinationMode
 import com.sconcept.mirrordash.iptv.ScheduledRecording
+import com.sconcept.mirrordash.iptv.VodViewMode
+import com.sconcept.mirrordash.iptv.player.PlayerBackend
 import com.sconcept.mirrordash.nas.model.SmbShare
 import com.sconcept.mirrordash.security.CredentialId
 import com.sconcept.mirrordash.security.SecureCredentialStore
@@ -38,6 +44,11 @@ const val DEFAULT_WALKIE_TALKIE_PORT = 45454
 const val CLOCK_BACKGROUND_MODE_SOLID = "SOLID"
 const val CLOCK_BACKGROUND_MODE_PHOTORAMA = "PHOTORAMA"
 
+const val PHOTORAMA_SOURCE_NAS = "nas"
+const val PHOTORAMA_SOURCE_LOCAL = "local"
+const val DEFAULT_PHOTORAMA_SCHEDULE_START_MINUTES = 8 * 60
+const val DEFAULT_PHOTORAMA_SCHEDULE_END_MINUTES = 22 * 60
+
 const val AIRPLAY_AUTH_MODE_OPEN = "open"
 const val AIRPLAY_AUTH_MODE_RANDOM_PIN = "random_pin"
 const val AIRPLAY_AUTH_MODE_PASSWORD = "password"
@@ -46,6 +57,7 @@ const val AIRPLAY_MIRROR_PRESET_720P = "720p"
 const val AIRPLAY_MIRROR_PRESET_1080P = "1080p"
 const val AIRPLAY_MIRROR_PRESET_4K = "4k"
 const val DEFAULT_DEVICE_NAME = "MirrorDash"
+const val DEFAULT_KODI_PACKAGE_NAME = "org.xbmc.kodi"
 
 const val BRIGHTNESS_DIM_TARGET_WHOLE_SCREEN = "WHOLE_SCREEN"
 const val BRIGHTNESS_DIM_TARGET_TEXT_ONLY = "TEXT_ONLY"
@@ -108,6 +120,10 @@ data class MirrorDashSettings(
     val weatherAnchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
     val weatherWidgets: List<WeatherWidget> = emptyList(),
     val customTextWidgets: List<CustomTextWidget> = emptyList(),
+    val calendarWidgets: List<CalendarWidget> = emptyList(),
+    val tasksWidgets: List<TasksWidget> = emptyList(),
+    val stocksWidgets: List<StocksWidget> = emptyList(),
+    val newsWidgets: List<NewsWidget> = emptyList(),
 
     // Weather
     val weatherEnabled: Boolean = true,
@@ -124,13 +140,31 @@ data class MirrorDashSettings(
     val smbDomain: String = "",
     val smbRememberConnection: Boolean = false,
 
-    // Photorama
+    // Photorama - fused into Clock settings, not its own tab (see ClockViewModel/ClockScreen).
+    // photoramaEnabled is the one on/off switch, shared by the Clock's "Use Photorama as
+    // background" toggle - there is deliberately no separate enable flag anymore.
     val photoramaEnabled: Boolean = false,
+    // "" means unset - the Clock settings chooser (Local storage / NAS) hasn't been answered yet.
+    val photoramaSource: String = "",
     val photoramaFolderPath: String = "",
+    // SAF tree URI string (content://...) for the LOCAL source - "" until a folder is picked.
+    // Persisted alongside a ContentResolver.takePersistableUriPermission grant so it survives
+    // reboots (see LocalPhotoRepository).
+    val photoramaLocalFolderUri: String = "",
     val photoramaIncludeSubfolders: Boolean = false,
     val photoramaIntervalSeconds: Int = 60,
     val photoramaShuffle: Boolean = true,
     val photoramaCacheSizeMb: Int = 250,
+    // Optional refinement on top of photoramaEnabled - off means "always on when enabled" (the
+    // original behavior), on gates it to a daily start/end window (see PhotoramaSchedule).
+    val photoramaScheduleEnabled: Boolean = false,
+    val photoramaScheduleStartMinutes: Int = DEFAULT_PHOTORAMA_SCHEDULE_START_MINUTES,
+    val photoramaScheduleEndMinutes: Int = DEFAULT_PHOTORAMA_SCHEDULE_END_MINUTES,
+
+    // Clock page visibility - global, not Photorama-specific, though turning both off is how a
+    // fullscreen Photorama photo-frame look (nothing overlaid) is achieved.
+    val clockShowTime: Boolean = true,
+    val clockShowWidgets: Boolean = true,
 
     // Walkie-Talkie
     val walkieTalkieEnabled: Boolean = false,
@@ -178,6 +212,11 @@ data class MirrorDashSettings(
     val homeAssistantUsername: String = "",
     val homeAssistantAutoAuth: Boolean = true,
 
+    // Kodi runs as its own Android app, so this tab is a launcher surface, not an embedded view.
+    val kodiEnabled: Boolean = false,
+    val kodiPackageName: String = DEFAULT_KODI_PACKAGE_NAME,
+    val kodiAutoLaunchOnOpen: Boolean = true,
+
     // IPTV (Stalker/Ministra portal - see the iptv package)
     val iptvEnabled: Boolean = false,
     val iptvPortalUrl: String = "",
@@ -187,6 +226,9 @@ data class MirrorDashSettings(
     // always full volume / the first channel - see IptvViewModel's connect flow.
     val iptvVolume: Float = 1f,
     val iptvLastChannelId: String = "",
+    // Default player engine (see iptv/player) - IptvViewModel.setPlayerBackend also writes this
+    // when the in-player quick switcher is used, so it's remembered as the new default too.
+    val iptvPlayerBackend: String = PlayerBackend.EXOPLAYER.storageKey,
     // Recording (see IptvRecordingEngine). Both destinations are always implemented - this only
     // picks which is tried first, the other is the automatic fallback if it fails to open.
     //
@@ -205,6 +247,11 @@ data class MirrorDashSettings(
     val iptvRecordingDestination: String = RecordingDestinationMode.SMB_PRIMARY.storageKey,
     val iptvRecordingSmbFolder: String = "MirrorDash Recordings",
     val iptvRecordingLocalCapMb: Int = DEFAULT_RECORDING_LOCAL_CAP_MB,
+    // Blank means "use the same folder live recordings do" - see IptvRecordingEngine.downloadVodItem.
+    val iptvDownloadFolderName: String = "",
+    // Grid vs list, remembered independently per content type - see IptvViewModel.setViewMode.
+    val iptvMoviesViewMode: String = VodViewMode.GRID.storageKey,
+    val iptvSeriesViewMode: String = VodViewMode.GRID.storageKey,
     val iptvScheduledRecordings: List<ScheduledRecording> = emptyList(),
     // Newest first, capped at IPTV_RECORDING_HISTORY_LIMIT entries - see IptvRecordingEngine's
     // finally block, the one place this ever gets appended to.
@@ -350,6 +397,22 @@ class SettingsRepository(context: Context) {
         val textWidgets = textWidgetsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<CustomTextWidget>>(raw) }.getOrDefault(emptyList())
         } ?: emptyList()
+        val calendarWidgetsRaw = this[Keys.CALENDAR_WIDGETS]
+        val calendarWidgets = calendarWidgetsRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<CalendarWidget>>(raw) }.getOrDefault(emptyList())
+        } ?: emptyList()
+        val tasksWidgetsRaw = this[Keys.TASKS_WIDGETS]
+        val tasksWidgets = tasksWidgetsRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<TasksWidget>>(raw) }.getOrDefault(emptyList())
+        } ?: emptyList()
+        val stocksWidgetsRaw = this[Keys.STOCKS_WIDGETS]
+        val stocksWidgets = stocksWidgetsRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<StocksWidget>>(raw) }.getOrDefault(emptyList())
+        } ?: emptyList()
+        val newsWidgetsRaw = this[Keys.NEWS_WIDGETS]
+        val newsWidgets = newsWidgetsRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<NewsWidget>>(raw) }.getOrDefault(emptyList())
+        } ?: emptyList()
         val scheduledRecordingsRaw = this[Keys.IPTV_SCHEDULED_RECORDINGS]
         val scheduledRecordings = scheduledRecordingsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<ScheduledRecording>>(raw) }.getOrDefault(emptyList())
@@ -371,6 +434,10 @@ class SettingsRepository(context: Context) {
             weatherAnchorY = this[Keys.WEATHER_ANCHOR_Y] ?: defaults.weatherAnchorY,
             weatherWidgets = normalizeWeatherWidgets(weatherWidgets),
             customTextWidgets = textWidgets,
+            calendarWidgets = calendarWidgets,
+            tasksWidgets = tasksWidgets,
+            stocksWidgets = stocksWidgets,
+            newsWidgets = newsWidgets,
             weatherEnabled = this[Keys.WEATHER_ENABLED] ?: defaults.weatherEnabled,
             weatherLocationQuery = this[Keys.WEATHER_LOCATION_QUERY] ?: defaults.weatherLocationQuery,
             weatherLocationLabel = this[Keys.WEATHER_LOCATION_LABEL] ?: defaults.weatherLocationLabel,
@@ -383,11 +450,18 @@ class SettingsRepository(context: Context) {
             smbDomain = this[Keys.SMB_DOMAIN] ?: defaults.smbDomain,
             smbRememberConnection = this[Keys.SMB_REMEMBER] ?: defaults.smbRememberConnection,
             photoramaEnabled = this[Keys.PHOTORAMA_ENABLED] ?: defaults.photoramaEnabled,
+            photoramaSource = this[Keys.PHOTORAMA_SOURCE] ?: defaults.photoramaSource,
             photoramaFolderPath = this[Keys.PHOTORAMA_FOLDER_PATH] ?: defaults.photoramaFolderPath,
+            photoramaLocalFolderUri = this[Keys.PHOTORAMA_LOCAL_FOLDER_URI] ?: defaults.photoramaLocalFolderUri,
             photoramaIncludeSubfolders = this[Keys.PHOTORAMA_INCLUDE_SUBFOLDERS] ?: defaults.photoramaIncludeSubfolders,
             photoramaIntervalSeconds = this[Keys.PHOTORAMA_INTERVAL_SECONDS] ?: defaults.photoramaIntervalSeconds,
             photoramaShuffle = this[Keys.PHOTORAMA_SHUFFLE] ?: defaults.photoramaShuffle,
             photoramaCacheSizeMb = this[Keys.PHOTORAMA_CACHE_SIZE_MB] ?: defaults.photoramaCacheSizeMb,
+            photoramaScheduleEnabled = this[Keys.PHOTORAMA_SCHEDULE_ENABLED] ?: defaults.photoramaScheduleEnabled,
+            photoramaScheduleStartMinutes = this[Keys.PHOTORAMA_SCHEDULE_START_MINUTES] ?: defaults.photoramaScheduleStartMinutes,
+            photoramaScheduleEndMinutes = this[Keys.PHOTORAMA_SCHEDULE_END_MINUTES] ?: defaults.photoramaScheduleEndMinutes,
+            clockShowTime = this[Keys.CLOCK_SHOW_TIME] ?: defaults.clockShowTime,
+            clockShowWidgets = this[Keys.CLOCK_SHOW_WIDGETS] ?: defaults.clockShowWidgets,
             walkieTalkieEnabled = this[Keys.WALKIE_TALKIE_ENABLED] ?: defaults.walkieTalkieEnabled,
             walkieTalkiePeers = peers,
             walkieTalkieTarget = this[Keys.WALKIE_TALKIE_TARGET] ?: defaults.walkieTalkieTarget,
@@ -421,12 +495,16 @@ class SettingsRepository(context: Context) {
             homeAssistantUrl = this[Keys.HOME_ASSISTANT_URL] ?: defaults.homeAssistantUrl,
             homeAssistantUsername = this[Keys.HOME_ASSISTANT_USERNAME] ?: defaults.homeAssistantUsername,
             homeAssistantAutoAuth = this[Keys.HOME_ASSISTANT_AUTO_AUTH] ?: defaults.homeAssistantAutoAuth,
+            kodiEnabled = this[Keys.KODI_ENABLED] ?: defaults.kodiEnabled,
+            kodiPackageName = this[Keys.KODI_PACKAGE_NAME] ?: defaults.kodiPackageName,
+            kodiAutoLaunchOnOpen = this[Keys.KODI_AUTO_LAUNCH_ON_OPEN] ?: defaults.kodiAutoLaunchOnOpen,
             iptvEnabled = this[Keys.IPTV_ENABLED] ?: defaults.iptvEnabled,
             iptvPortalUrl = this[Keys.IPTV_PORTAL_URL] ?: defaults.iptvPortalUrl,
             iptvMacAddress = this[Keys.IPTV_MAC_ADDRESS] ?: defaults.iptvMacAddress,
             iptvSleepTimeoutSeconds = this[Keys.IPTV_SLEEP_TIMEOUT_SECONDS] ?: defaults.iptvSleepTimeoutSeconds,
             iptvVolume = this[Keys.IPTV_VOLUME] ?: defaults.iptvVolume,
             iptvLastChannelId = this[Keys.IPTV_LAST_CHANNEL_ID] ?: defaults.iptvLastChannelId,
+            iptvPlayerBackend = this[Keys.IPTV_PLAYER_BACKEND] ?: defaults.iptvPlayerBackend,
             iptvRecordingPortalUrl = this[Keys.IPTV_RECORDING_PORTAL_URL] ?: defaults.iptvRecordingPortalUrl,
             iptvRecordingMacAddress = this[Keys.IPTV_RECORDING_MAC_ADDRESS] ?: defaults.iptvRecordingMacAddress,
             parentalControlPin = this[Keys.PARENTAL_CONTROL_PIN] ?: defaults.parentalControlPin,
@@ -434,6 +512,9 @@ class SettingsRepository(context: Context) {
             iptvRecordingDestination = this[Keys.IPTV_RECORDING_DESTINATION] ?: defaults.iptvRecordingDestination,
             iptvRecordingSmbFolder = this[Keys.IPTV_RECORDING_SMB_FOLDER] ?: defaults.iptvRecordingSmbFolder,
             iptvRecordingLocalCapMb = this[Keys.IPTV_RECORDING_LOCAL_CAP_MB] ?: defaults.iptvRecordingLocalCapMb,
+            iptvDownloadFolderName = this[Keys.IPTV_DOWNLOAD_FOLDER_NAME] ?: defaults.iptvDownloadFolderName,
+            iptvMoviesViewMode = this[Keys.IPTV_MOVIES_VIEW_MODE] ?: defaults.iptvMoviesViewMode,
+            iptvSeriesViewMode = this[Keys.IPTV_SERIES_VIEW_MODE] ?: defaults.iptvSeriesViewMode,
             iptvScheduledRecordings = scheduledRecordings,
             iptvRecordingHistory = recordingHistory,
             launcherFavoriteApps = favorites,
@@ -465,6 +546,10 @@ class SettingsRepository(context: Context) {
         val WEATHER_ANCHOR_X = floatPreferencesKey("weather_anchor_x")
         val WEATHER_ANCHOR_Y = floatPreferencesKey("weather_anchor_y")
         val WEATHER_WIDGETS = stringPreferencesKey("weather_widgets_json")
+        val CALENDAR_WIDGETS = stringPreferencesKey("calendar_widgets_json")
+        val TASKS_WIDGETS = stringPreferencesKey("tasks_widgets_json")
+        val STOCKS_WIDGETS = stringPreferencesKey("stocks_widgets_json")
+        val NEWS_WIDGETS = stringPreferencesKey("news_widgets_json")
 
         val WEATHER_ENABLED = booleanPreferencesKey("weather_enabled")
         val WEATHER_LOCATION_QUERY = stringPreferencesKey("weather_location_query")
@@ -480,11 +565,19 @@ class SettingsRepository(context: Context) {
         val SMB_REMEMBER = booleanPreferencesKey("smb_remember_connection")
 
         val PHOTORAMA_ENABLED = booleanPreferencesKey("photorama_enabled")
+        val PHOTORAMA_SOURCE = stringPreferencesKey("photorama_source")
         val PHOTORAMA_FOLDER_PATH = stringPreferencesKey("photorama_folder_path")
+        val PHOTORAMA_LOCAL_FOLDER_URI = stringPreferencesKey("photorama_local_folder_uri")
         val PHOTORAMA_INCLUDE_SUBFOLDERS = booleanPreferencesKey("photorama_include_subfolders")
         val PHOTORAMA_INTERVAL_SECONDS = intPreferencesKey("photorama_interval_seconds")
         val PHOTORAMA_SHUFFLE = booleanPreferencesKey("photorama_shuffle")
         val PHOTORAMA_CACHE_SIZE_MB = intPreferencesKey("photorama_cache_size_mb")
+        val PHOTORAMA_SCHEDULE_ENABLED = booleanPreferencesKey("photorama_schedule_enabled")
+        val PHOTORAMA_SCHEDULE_START_MINUTES = intPreferencesKey("photorama_schedule_start_minutes")
+        val PHOTORAMA_SCHEDULE_END_MINUTES = intPreferencesKey("photorama_schedule_end_minutes")
+
+        val CLOCK_SHOW_TIME = booleanPreferencesKey("clock_show_time")
+        val CLOCK_SHOW_WIDGETS = booleanPreferencesKey("clock_show_widgets")
 
         val WALKIE_TALKIE_ENABLED = booleanPreferencesKey("walkie_talkie_enabled")
         val WALKIE_TALKIE_PEERS = stringPreferencesKey("walkie_talkie_peers_json")
@@ -524,12 +617,17 @@ class SettingsRepository(context: Context) {
         val HOME_ASSISTANT_USERNAME = stringPreferencesKey("home_assistant_username")
         val HOME_ASSISTANT_AUTO_AUTH = booleanPreferencesKey("home_assistant_auto_auth")
 
+        val KODI_ENABLED = booleanPreferencesKey("kodi_enabled")
+        val KODI_PACKAGE_NAME = stringPreferencesKey("kodi_package_name")
+        val KODI_AUTO_LAUNCH_ON_OPEN = booleanPreferencesKey("kodi_auto_launch_on_open")
+
         val IPTV_ENABLED = booleanPreferencesKey("iptv_enabled")
         val IPTV_PORTAL_URL = stringPreferencesKey("iptv_portal_url")
         val IPTV_MAC_ADDRESS = stringPreferencesKey("iptv_mac_address")
         val IPTV_SLEEP_TIMEOUT_SECONDS = intPreferencesKey("iptv_sleep_timeout_seconds")
         val IPTV_VOLUME = floatPreferencesKey("iptv_volume")
         val IPTV_LAST_CHANNEL_ID = stringPreferencesKey("iptv_last_channel_id")
+        val IPTV_PLAYER_BACKEND = stringPreferencesKey("iptv_player_backend")
         val IPTV_RECORDING_PORTAL_URL = stringPreferencesKey("iptv_recording_portal_url")
         val IPTV_RECORDING_MAC_ADDRESS = stringPreferencesKey("iptv_recording_mac_address")
         val PARENTAL_CONTROL_PIN = stringPreferencesKey("parental_control_pin")
@@ -537,6 +635,9 @@ class SettingsRepository(context: Context) {
         val IPTV_RECORDING_DESTINATION = stringPreferencesKey("iptv_recording_destination")
         val IPTV_RECORDING_SMB_FOLDER = stringPreferencesKey("iptv_recording_smb_folder")
         val IPTV_RECORDING_LOCAL_CAP_MB = intPreferencesKey("iptv_recording_local_cap_mb")
+        val IPTV_DOWNLOAD_FOLDER_NAME = stringPreferencesKey("iptv_download_folder_name")
+        val IPTV_MOVIES_VIEW_MODE = stringPreferencesKey("iptv_movies_view_mode")
+        val IPTV_SERIES_VIEW_MODE = stringPreferencesKey("iptv_series_view_mode")
         val IPTV_SCHEDULED_RECORDINGS = stringPreferencesKey("iptv_scheduled_recordings_json")
         val IPTV_RECORDING_HISTORY = stringPreferencesKey("iptv_recording_history_json")
 
@@ -587,11 +688,19 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var weatherUseFahrenheit: Boolean by PrefDelegate(SettingsRepository.Keys.WEATHER_USE_FAHRENHEIT, prefs, defaults.weatherUseFahrenheit)
 
     var photoramaEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_ENABLED, prefs, defaults.photoramaEnabled)
+    var photoramaSource: String by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SOURCE, prefs, defaults.photoramaSource)
     var photoramaFolderPath: String by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_FOLDER_PATH, prefs, defaults.photoramaFolderPath)
+    var photoramaLocalFolderUri: String by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_LOCAL_FOLDER_URI, prefs, defaults.photoramaLocalFolderUri)
     var photoramaIncludeSubfolders: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_INCLUDE_SUBFOLDERS, prefs, defaults.photoramaIncludeSubfolders)
     var photoramaIntervalSeconds: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_INTERVAL_SECONDS, prefs, defaults.photoramaIntervalSeconds)
     var photoramaShuffle: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SHUFFLE, prefs, defaults.photoramaShuffle)
     var photoramaCacheSizeMb: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_CACHE_SIZE_MB, prefs, defaults.photoramaCacheSizeMb)
+    var photoramaScheduleEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SCHEDULE_ENABLED, prefs, defaults.photoramaScheduleEnabled)
+    var photoramaScheduleStartMinutes: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SCHEDULE_START_MINUTES, prefs, defaults.photoramaScheduleStartMinutes)
+    var photoramaScheduleEndMinutes: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SCHEDULE_END_MINUTES, prefs, defaults.photoramaScheduleEndMinutes)
+
+    var clockShowTime: Boolean by PrefDelegate(SettingsRepository.Keys.CLOCK_SHOW_TIME, prefs, defaults.clockShowTime)
+    var clockShowWidgets: Boolean by PrefDelegate(SettingsRepository.Keys.CLOCK_SHOW_WIDGETS, prefs, defaults.clockShowWidgets)
 
     var walkieTalkieEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_ENABLED, prefs, defaults.walkieTalkieEnabled)
     var walkieTalkieTarget: String by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_TARGET, prefs, defaults.walkieTalkieTarget)
@@ -630,12 +739,17 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var homeAssistantUsername: String by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_USERNAME, prefs, defaults.homeAssistantUsername)
     var homeAssistantAutoAuth: Boolean by PrefDelegate(SettingsRepository.Keys.HOME_ASSISTANT_AUTO_AUTH, prefs, defaults.homeAssistantAutoAuth)
 
+    var kodiEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.KODI_ENABLED, prefs, defaults.kodiEnabled)
+    var kodiPackageName: String by PrefDelegate(SettingsRepository.Keys.KODI_PACKAGE_NAME, prefs, defaults.kodiPackageName)
+    var kodiAutoLaunchOnOpen: Boolean by PrefDelegate(SettingsRepository.Keys.KODI_AUTO_LAUNCH_ON_OPEN, prefs, defaults.kodiAutoLaunchOnOpen)
+
     var iptvEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_ENABLED, prefs, defaults.iptvEnabled)
     var iptvPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_PORTAL_URL, prefs, defaults.iptvPortalUrl)
     var iptvMacAddress: String by PrefDelegate(SettingsRepository.Keys.IPTV_MAC_ADDRESS, prefs, defaults.iptvMacAddress)
     var iptvSleepTimeoutSeconds: Int by PrefDelegate(SettingsRepository.Keys.IPTV_SLEEP_TIMEOUT_SECONDS, prefs, defaults.iptvSleepTimeoutSeconds)
     var iptvVolume: Float by PrefDelegate(SettingsRepository.Keys.IPTV_VOLUME, prefs, defaults.iptvVolume)
     var iptvLastChannelId: String by PrefDelegate(SettingsRepository.Keys.IPTV_LAST_CHANNEL_ID, prefs, defaults.iptvLastChannelId)
+    var iptvPlayerBackend: String by PrefDelegate(SettingsRepository.Keys.IPTV_PLAYER_BACKEND, prefs, defaults.iptvPlayerBackend)
     var iptvRecordingPortalUrl: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_PORTAL_URL, prefs, defaults.iptvRecordingPortalUrl)
     var iptvRecordingMacAddress: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_MAC_ADDRESS, prefs, defaults.iptvRecordingMacAddress)
     var parentalControlPin: String by PrefDelegate(SettingsRepository.Keys.PARENTAL_CONTROL_PIN, prefs, defaults.parentalControlPin)
@@ -643,6 +757,9 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var iptvRecordingDestination: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_DESTINATION, prefs, defaults.iptvRecordingDestination)
     var iptvRecordingSmbFolder: String by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_SMB_FOLDER, prefs, defaults.iptvRecordingSmbFolder)
     var iptvRecordingLocalCapMb: Int by PrefDelegate(SettingsRepository.Keys.IPTV_RECORDING_LOCAL_CAP_MB, prefs, defaults.iptvRecordingLocalCapMb)
+    var iptvDownloadFolderName: String by PrefDelegate(SettingsRepository.Keys.IPTV_DOWNLOAD_FOLDER_NAME, prefs, defaults.iptvDownloadFolderName)
+    var iptvMoviesViewMode: String by PrefDelegate(SettingsRepository.Keys.IPTV_MOVIES_VIEW_MODE, prefs, defaults.iptvMoviesViewMode)
+    var iptvSeriesViewMode: String by PrefDelegate(SettingsRepository.Keys.IPTV_SERIES_VIEW_MODE, prefs, defaults.iptvSeriesViewMode)
 
     var launcherHiddenApps: Set<String> by PrefDelegate(SettingsRepository.Keys.LAUNCHER_HIDDEN_APPS, prefs, defaults.launcherHiddenApps)
     var lastVisitedPageIndex: Int by PrefDelegate(SettingsRepository.Keys.LAST_VISITED_PAGE_INDEX, prefs, defaults.lastVisitedPageIndex)
@@ -690,6 +807,38 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
             .orEmpty()
         set(value) {
             prefs[SettingsRepository.Keys.CUSTOM_TEXT_WIDGETS] = json.encodeToString(value)
+        }
+
+    var calendarWidgets: List<CalendarWidget>
+        get() = prefs[SettingsRepository.Keys.CALENDAR_WIDGETS]
+            ?.let { runCatching { json.decodeFromString<List<CalendarWidget>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.CALENDAR_WIDGETS] = json.encodeToString(value)
+        }
+
+    var tasksWidgets: List<TasksWidget>
+        get() = prefs[SettingsRepository.Keys.TASKS_WIDGETS]
+            ?.let { runCatching { json.decodeFromString<List<TasksWidget>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.TASKS_WIDGETS] = json.encodeToString(value)
+        }
+
+    var stocksWidgets: List<StocksWidget>
+        get() = prefs[SettingsRepository.Keys.STOCKS_WIDGETS]
+            ?.let { runCatching { json.decodeFromString<List<StocksWidget>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.STOCKS_WIDGETS] = json.encodeToString(value)
+        }
+
+    var newsWidgets: List<NewsWidget>
+        get() = prefs[SettingsRepository.Keys.NEWS_WIDGETS]
+            ?.let { runCatching { json.decodeFromString<List<NewsWidget>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.NEWS_WIDGETS] = json.encodeToString(value)
         }
 
     var iptvScheduledRecordings: List<com.sconcept.mirrordash.iptv.ScheduledRecording>

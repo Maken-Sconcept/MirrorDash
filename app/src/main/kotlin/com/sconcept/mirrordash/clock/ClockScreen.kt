@@ -50,6 +50,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -57,12 +58,16 @@ import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.sconcept.mirrordash.airplay.AirPlayUiState
 import com.sconcept.mirrordash.airplay.AirPlayMirrorSurface
+import com.sconcept.mirrordash.calendar.CalendarAgendaUiState
+import com.sconcept.mirrordash.nas.model.SmbConnectionState
+import com.sconcept.mirrordash.news.NewsUiState
+import com.sconcept.mirrordash.photorama.PhotoramaUiState
+import com.sconcept.mirrordash.stocks.StocksUiState
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import com.sconcept.mirrordash.ui.theme.MirrorDashTypography
 import com.sconcept.mirrordash.ui.theme.mirrorDashTypography
 import com.sconcept.mirrordash.weather.WeatherCondition
 import com.sconcept.mirrordash.weather.WeatherUiState
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -86,9 +91,17 @@ fun ClockScreen(
     onClockAnchorChange: (OverlayAnchor) -> Unit,
     onWeatherWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     modifier: Modifier = Modifier,
-    photoramaBackground: File? = null,
+    photoramaState: PhotoramaUiState = PhotoramaUiState(),
     airPlayStatus: AirPlayUiState? = null,
     onTextWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
+    calendar: CalendarAgendaUiState = CalendarAgendaUiState(),
+    onCalendarWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
+    onTasksWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
+    onTaskItemToggle: (widgetId: String, itemId: String, completed: Boolean) -> Unit = { _, _, _ -> },
+    stocks: StocksUiState = StocksUiState(),
+    onStocksWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
+    news: NewsUiState = NewsUiState(),
+    onNewsWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
     contentDimAlpha: Float = 0f,
 ) {
     val typography = remember(appearance.fontSizeSp) { mirrorDashTypography(appearance.fontSizeSp) }
@@ -113,9 +126,17 @@ fun ClockScreen(
                 showEdgeAffordance = showEdgeAffordance,
                 onClockAnchorChange = onClockAnchorChange,
                 onWeatherWidgetAnchorChange = onWeatherWidgetAnchorChange,
-                photoramaBackground = photoramaBackground,
+                photoramaState = photoramaState,
                 airPlayStatus = airPlayStatus,
                 onTextWidgetAnchorChange = onTextWidgetAnchorChange,
+                calendar = calendar,
+                onCalendarWidgetAnchorChange = onCalendarWidgetAnchorChange,
+                onTasksWidgetAnchorChange = onTasksWidgetAnchorChange,
+                onTaskItemToggle = onTaskItemToggle,
+                stocks = stocks,
+                onStocksWidgetAnchorChange = onStocksWidgetAnchorChange,
+                news = news,
+                onNewsWidgetAnchorChange = onNewsWidgetAnchorChange,
                 contentDimAlpha = contentDimAlpha,
                 typography = typography,
                 timeText = timeText,
@@ -132,9 +153,17 @@ private fun ClockContent(
     showEdgeAffordance: Boolean,
     onClockAnchorChange: (OverlayAnchor) -> Unit,
     onWeatherWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
-    photoramaBackground: File?,
+    photoramaState: PhotoramaUiState,
     airPlayStatus: AirPlayUiState?,
     onTextWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
+    calendar: CalendarAgendaUiState,
+    onCalendarWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
+    onTasksWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
+    onTaskItemToggle: (widgetId: String, itemId: String, completed: Boolean) -> Unit,
+    stocks: StocksUiState,
+    onStocksWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
+    news: NewsUiState,
+    onNewsWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     contentDimAlpha: Float,
     typography: MirrorDashTypography,
     timeText: String,
@@ -142,7 +171,7 @@ private fun ClockContent(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         when (appearance.background) {
-            is ClockBackground.Photorama -> PhotoramaBackdrop(photoramaBackground)
+            is ClockBackground.Photorama -> PhotoramaBackdrop(photoramaState)
             is ClockBackground.SolidColor -> Box(
                 Modifier.fillMaxSize().background(appearance.background.color),
             )
@@ -152,55 +181,90 @@ private fun ClockContent(
         val parentWidthPx = constraints.maxWidth
         val parentHeightPx = constraints.maxHeight
 
-        DraggableAnchor(
-            anchor = appearance.clockAnchor,
-            parentWidthPx = parentWidthPx,
-            parentHeightPx = parentHeightPx,
-            insetPx = insetPx,
-            onAnchorChange = onClockAnchorChange,
-        ) {
-            Column(Modifier.alpha(1f - contentDimAlpha)) {
-                Text(
-                    text = timeText,
-                    style = typography.clock,
-                    color = appearance.textColor,
-                    fontWeight = FontWeight.Light,
-                )
-                Spacer(Modifier.padding(top = 4.dp))
-                Text(
-                    text = todayLabel(),
-                    style = typography.date,
-                    color = appearance.textColor.copy(alpha = 0.72f),
-                )
-            }
-        }
-
-        appearance.weatherWidgets.forEach { widget ->
+        if (appearance.showTime) {
             DraggableAnchor(
-                anchor = OverlayAnchor(widget.anchorX, widget.anchorY),
+                anchor = appearance.clockAnchor,
                 parentWidthPx = parentWidthPx,
                 parentHeightPx = parentHeightPx,
                 insetPx = insetPx,
-                onAnchorChange = { onWeatherWidgetAnchorChange(widget.id, it) },
+                onAnchorChange = onClockAnchorChange,
             ) {
-                Box(Modifier.alpha(1f - contentDimAlpha)) {
-                    WeatherWidgetSurface(widget = widget, weather = weather, textColor = appearance.textColor)
+                Column(Modifier.alpha(1f - contentDimAlpha)) {
+                    Text(
+                        text = timeText,
+                        style = typography.clock,
+                        color = appearance.textColor,
+                        fontWeight = FontWeight.Light,
+                    )
+                    Spacer(Modifier.padding(top = 4.dp))
+                    Text(
+                        text = todayLabel(),
+                        style = typography.date,
+                        color = appearance.textColor.copy(alpha = 0.72f),
+                    )
                 }
             }
         }
 
-        appearance.textWidgets.forEach { widget ->
-            DraggableAnchor(
-                anchor = OverlayAnchor(widget.anchorX, widget.anchorY),
+        if (appearance.showWidgets) {
+            WidgetOverlayLayer(
+                widgets = appearance.weatherWidgets,
                 parentWidthPx = parentWidthPx,
                 parentHeightPx = parentHeightPx,
                 insetPx = insetPx,
-                onAnchorChange = { onTextWidgetAnchorChange(widget.id, it) },
-            ) {
-                Box(Modifier.alpha(1f - contentDimAlpha)) {
-                    AnimatedWidgetText(widget)
-                }
+                contentDimAlpha = contentDimAlpha,
+                onAnchorChange = onWeatherWidgetAnchorChange,
+            ) { widget -> WeatherWidgetSurface(widget = widget, weather = weather, textColor = appearance.textColor) }
+
+            WidgetOverlayLayer(
+                widgets = appearance.textWidgets,
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                contentDimAlpha = contentDimAlpha,
+                onAnchorChange = onTextWidgetAnchorChange,
+            ) { widget -> AnimatedWidgetText(widget) }
+
+            WidgetOverlayLayer(
+                widgets = appearance.calendarWidgets,
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                contentDimAlpha = contentDimAlpha,
+                onAnchorChange = onCalendarWidgetAnchorChange,
+            ) { widget -> CalendarAgendaWidgetSurface(widget = widget, calendar = calendar) }
+
+            WidgetOverlayLayer(
+                widgets = appearance.tasksWidgets,
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                contentDimAlpha = contentDimAlpha,
+                onAnchorChange = onTasksWidgetAnchorChange,
+            ) { widget ->
+                TasksWidgetSurface(
+                    widget = widget,
+                    onToggleItem = { itemId, completed -> onTaskItemToggle(widget.id, itemId, completed) },
+                )
             }
+
+            WidgetOverlayLayer(
+                widgets = appearance.stocksWidgets,
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                contentDimAlpha = contentDimAlpha,
+                onAnchorChange = onStocksWidgetAnchorChange,
+            ) { widget -> StocksTickerWidgetSurface(widget = widget, stocks = stocks) }
+
+            WidgetOverlayLayer(
+                widgets = appearance.newsWidgets,
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                contentDimAlpha = contentDimAlpha,
+                onAnchorChange = onNewsWidgetAnchorChange,
+            ) { widget -> NewsTickerWidgetSurface(widget = widget, news = news) }
         }
 
         if (showEdgeAffordance) {
@@ -242,12 +306,16 @@ private fun AirPlayStatusWidget(state: AirPlayUiState, modifier: Modifier = Modi
 /** Live Photorama photos as the Clock backdrop instead of a flat color. A fixed dim scrim sits
  * over the photo regardless of which corner the clock/weather end up dragged to, since a photo's
  * own contrast can't be predicted the way a flat color's can - readability shouldn't depend on
- * where the anchor happens to be or what the current photo looks like. */
+ * where the anchor happens to be or what the current photo looks like. Folds in the state
+ * messaging the old standalone Photorama tab used to show (not configured / empty folder /
+ * connecting-with-reason) - now that Photorama only ever exists as this backdrop, a broken or
+ * still-connecting source needs to say so here rather than just sitting on plain black. */
 @Composable
-private fun PhotoramaBackdrop(file: File?) {
+private fun PhotoramaBackdrop(state: PhotoramaUiState) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (file != null) {
-            Crossfade(targetState = file, animationSpec = tween(900), label = "clockPhotoramaBackground") { current ->
+        val photo = state.currentPhoto
+        if (photo != null) {
+            Crossfade(targetState = photo, animationSpec = tween(900), label = "clockPhotoramaBackground") { current ->
                 Image(
                     painter = rememberAsyncImagePainter(model = current),
                     contentDescription = null,
@@ -257,6 +325,40 @@ private fun PhotoramaBackdrop(file: File?) {
             }
         }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+
+        if (photo == null) {
+            val (title, subtitle) = photoramaStatusMessage(state)
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(title, style = MDTheme.type.settingTitle, color = Color.White)
+                    if (subtitle != null) {
+                        Spacer(Modifier.padding(top = 6.dp))
+                        Text(
+                            subtitle,
+                            style = MDTheme.type.settingSubtitle,
+                            color = Color.White.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 64.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun photoramaStatusMessage(state: PhotoramaUiState): Pair<String, String?> = when {
+    !state.isConfigured -> "Photorama isn't set up yet" to "Turn it on in Clock settings and pick where your photos live."
+    state.hasNoPhotos -> "No photos found" to "The selected folder doesn't contain any supported images yet."
+    else -> when (state.connectionState) {
+        SmbConnectionState.CONNECTING -> "Connecting…" to null
+        SmbConnectionState.RECONNECTING -> "Reconnecting…" to null
+        SmbConnectionState.AUTHENTICATION_FAILED -> "Incorrect username or password" to "Check the NAS connection in Clock settings."
+        SmbConnectionState.SERVER_UNREACHABLE -> "Can't reach the NAS right now" to null
+        SmbConnectionState.SHARE_UNAVAILABLE -> "Couldn't access the selected folder" to "Check the source in Clock settings."
+        SmbConnectionState.OFFLINE -> "The device is offline" to null
+        SmbConnectionState.DISCONNECTED -> "Waiting to connect…" to null
+        SmbConnectionState.CONNECTED -> "Loading photos…" to null
     }
 }
 
@@ -324,6 +426,34 @@ internal fun DraggableAnchor(
             },
     ) {
         content()
+    }
+}
+
+/** One [DraggableAnchor] per widget in [widgets], sharing the same dim-on-content-scrim and
+ * anchor-change plumbing - the generic form of what used to be a hand-written `forEach` block per
+ * widget type (weather, text, and now calendar/tasks/stocks/news all go through this). */
+@Composable
+internal fun <T : AnchoredWidget> WidgetOverlayLayer(
+    widgets: List<T>,
+    parentWidthPx: Int,
+    parentHeightPx: Int,
+    insetPx: Float,
+    contentDimAlpha: Float,
+    onAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
+    content: @Composable (T) -> Unit,
+) {
+    widgets.forEach { widget ->
+        DraggableAnchor(
+            anchor = OverlayAnchor(widget.anchorX, widget.anchorY),
+            parentWidthPx = parentWidthPx,
+            parentHeightPx = parentHeightPx,
+            insetPx = insetPx,
+            onAnchorChange = { onAnchorChange(widget.id, it) },
+        ) {
+            Box(Modifier.alpha(1f - contentDimAlpha)) {
+                content(widget)
+            }
+        }
     }
 }
 

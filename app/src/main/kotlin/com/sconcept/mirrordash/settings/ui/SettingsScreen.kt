@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.NightlightRound
-import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,12 +55,12 @@ private enum class SettingsSection(val title: String, val subtitle: String) {
     CLOCK("Clock", "Time, background, and draggable widgets"),
     BRIGHTNESS("Brightness", "Backlight level, extra dim layer, and failsafes"),
     NIGHT_CLOCK("Night Clock", "The hidden dark clock tab's own dimmer brightness"),
-    PHOTORAMA("Photorama", "NAS connection and slideshow folder"),
     WALKIE_TALKIE("Walkie-Talkie", "Peers, target, and floating button"),
     AIRPLAY("AirPlay", "Receiver name, pairing, and mirror quality"),
     BROWSER("Browser", "Optional quick web tab inside MirrorDash"),
     JELLYFIN("Jellyfin", "Media server address and playback-focused web tab"),
     HOME_ASSISTANT("Home Assistant", "Dashboard address and the tab it lives on"),
+    KODI("Kodi", "Launch the installed Kodi app from its own tab"),
     IPTV("IPTV", "Portal address, MAC address, and the tab it lives on"),
     LAUNCHER("Launcher", "Default Home app and notification access"),
 }
@@ -76,6 +75,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
+    onRequestCalendarAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
     onRequestOverlayAccess: () -> Unit,
     modifier: Modifier = Modifier,
@@ -103,15 +103,15 @@ fun SettingsScreen(
         ) { section ->
             when (section) {
                 null -> SettingsList(onSelect = { selectedSection = it })
-                SettingsSection.CLOCK -> SectionScaffold(section.title) { ClockSettingsContent(uiState, viewModel) }
+                SettingsSection.CLOCK -> SectionScaffold(section.title) { ClockSettingsContent(uiState, viewModel, onRequestCalendarAccess) }
                 SettingsSection.BRIGHTNESS -> SectionScaffold(section.title) { BrightnessSettingsContent(uiState, viewModel, onRequestWriteSettingsAccess) }
                 SettingsSection.NIGHT_CLOCK -> SectionScaffold(section.title) { NightClockSettingsContent(uiState, viewModel) }
-                SettingsSection.PHOTORAMA -> SectionScaffold(section.title) { PhotoramaSettingsContent(uiState, viewModel) }
                 SettingsSection.WALKIE_TALKIE -> SectionScaffold(section.title) { WalkieTalkieSettingsContent(uiState, viewModel) }
                 SettingsSection.AIRPLAY -> SectionScaffold(section.title) { AirPlaySettingsContent(uiState, viewModel) }
                 SettingsSection.BROWSER -> SectionScaffold(section.title) { BrowserSettingsContent(uiState, viewModel) }
                 SettingsSection.JELLYFIN -> SectionScaffold(section.title) { JellyfinSettingsContent(uiState, viewModel) }
                 SettingsSection.HOME_ASSISTANT -> SectionScaffold(section.title) { HomeAssistantSettingsContent(uiState, viewModel) }
+                SettingsSection.KODI -> SectionScaffold(section.title) { KodiSettingsContent(uiState, viewModel) }
                 SettingsSection.IPTV -> SectionScaffold(section.title) { IptvSettingsContent(uiState, viewModel) }
                 SettingsSection.LAUNCHER -> SectionScaffold(section.title) {
                     LauncherSettingsContent(
@@ -182,12 +182,12 @@ private fun sectionIcon(section: SettingsSection) = when (section) {
     SettingsSection.CLOCK -> Icons.Filled.AccessTime
     SettingsSection.BRIGHTNESS -> Icons.Filled.Brightness6
     SettingsSection.NIGHT_CLOCK -> Icons.Filled.NightlightRound
-    SettingsSection.PHOTORAMA -> Icons.Filled.Photo
     SettingsSection.WALKIE_TALKIE -> Icons.Filled.Podcasts
     SettingsSection.AIRPLAY -> Icons.Filled.Cast
     SettingsSection.BROWSER -> Icons.Filled.Language
     SettingsSection.JELLYFIN -> Icons.Filled.Movie
     SettingsSection.HOME_ASSISTANT -> Icons.Filled.Home
+    SettingsSection.KODI -> Icons.Filled.Movie
     SettingsSection.IPTV -> Icons.Filled.LiveTv
     SettingsSection.LAUNCHER -> Icons.Filled.Info
 }
