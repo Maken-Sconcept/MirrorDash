@@ -9,7 +9,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sconcept.mirrordash.airplay.AirPlayUiState
 import com.sconcept.mirrordash.clock.CalendarWidget
+import com.sconcept.mirrordash.clock.CLOCK_FONT_GOOGLE_PREFIX
+import com.sconcept.mirrordash.clock.CLOCK_FONT_SYSTEM_DEFAULT
+import com.sconcept.mirrordash.clock.ClockFontLibrary
+import com.sconcept.mirrordash.clock.ClockFontRepository
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.GoogleFontCatalogEntry
 import com.sconcept.mirrordash.clock.NewsWidget
 import com.sconcept.mirrordash.clock.StocksWidget
 import com.sconcept.mirrordash.clock.TasksWidget
@@ -40,6 +45,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -64,6 +70,11 @@ data class NasBrowserState(
 data class SettingsUiState(
     val settings: MirrorDashSettings = MirrorDashSettings(),
     val settingsLoaded: Boolean = false,
+    val googleFontCatalog: List<GoogleFontCatalogEntry> = emptyList(),
+    val googleFontCatalogLoading: Boolean = false,
+    val googleFontCatalogError: String? = null,
+    val downloadingClockFontId: String? = null,
+    val clockFontStatusMessage: String? = null,
     val nasTestResult: NasTestResult = NasTestResult.IDLE,
     val nasTestMessage: String? = null,
     val nasPasswordDraft: String = "",
@@ -88,6 +99,7 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     private val smbRepository = SmbRepository(application)
     private val weatherRepository = WeatherRepository()
+    private val clockFontRepository = ClockFontRepository(application)
     private val walkieTalkieEngine = AppContainer.get(application).walkieTalkieEngine
     private val airPlayEngine = AppContainer.get(application).airPlayEngine
 
@@ -108,6 +120,11 @@ class SettingsViewModel(application: Application, private val settingsRepository
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
+    init {
+        installStarterPack()
+        loadGoogleFontCatalog()
+    }
+
     // --- Device --------------------------------------------------------------------------------
 
     fun setDeviceName(name: String) = viewModelScope.launch {
@@ -120,12 +137,61 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { clockFontSizeSp = sp }
     }
 
+    fun setClockFont(id: String) = viewModelScope.launch {
+        settingsRepository.update { clockFontId = id }
+        _extra.update { it.copy(clockFontStatusMessage = "Clock font updated to ${ClockFontLibrary.label(id, uiState.value.settings.downloadedClockFonts)}.") }
+    }
+
     fun setClockTextColor(color: Color) = viewModelScope.launch {
         settingsRepository.update { clockTextColorArgb = color.toArgb() }
     }
 
     fun setClockBackgroundColor(color: Color) = viewModelScope.launch {
         settingsRepository.update { clockBackgroundColorArgb = color.toArgb() }
+    }
+
+    fun clearClockFontStatus() {
+        _extra.update { it.copy(clockFontStatusMessage = null) }
+    }
+
+    fun downloadClockFont(entry: GoogleFontCatalogEntry) {
+        _extra.update { it.copy(downloadingClockFontId = entry.id, clockFontStatusMessage = null) }
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { clockFontRepository.download(entry) }
+            }.onSuccess { downloaded ->
+                settingsRepository.update {
+                    downloadedClockFonts = downloadedClockFonts.filterNot { it.id == downloaded.id } + downloaded
+                    clockFontId = downloaded.id
+                }
+                _extra.update {
+                    it.copy(
+                        downloadingClockFontId = null,
+                        clockFontStatusMessage = "${downloaded.family} downloaded and selected.",
+                    )
+                }
+            }.onFailure { error ->
+                _extra.update {
+                    it.copy(
+                        downloadingClockFontId = null,
+                        clockFontStatusMessage = error.message ?: "Font download failed.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun removeDownloadedClockFont(id: String) = viewModelScope.launch {
+        if (ClockFontLibrary.starterPack.any { it.id == id }) return@launch
+        val existing = uiState.value.settings.downloadedClockFonts.firstOrNull { it.id == id } ?: return@launch
+        clockFontRepository.delete(existing)
+        settingsRepository.update {
+            downloadedClockFonts = downloadedClockFonts.filterNot { it.id == id }
+            if (clockFontId == id) {
+                clockFontId = "${CLOCK_FONT_GOOGLE_PREFIX}worksans"
+            }
+        }
+        _extra.update { it.copy(clockFontStatusMessage = "${existing.family} removed from device.") }
     }
 
 
@@ -855,6 +921,49 @@ class SettingsViewModel(application: Application, private val settingsRepository
                     summary = if (applied.isEmpty()) "Config file had nothing to apply" else "Applied: ${applied.joinToString(", ")}",
                 ),
             )
+        }
+    }
+
+    private fun loadGoogleFontCatalog() {
+        _extra.update { it.copy(googleFontCatalogLoading = true, googleFontCatalogError = null) }
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { clockFontRepository.loadCatalog() }
+            }.onSuccess { catalog ->
+                _extra.update {
+                    it.copy(
+                        googleFontCatalog = catalog.sortedBy { entry -> entry.family.lowercase() },
+                        googleFontCatalogLoading = false,
+                        googleFontCatalogError = null,
+                    )
+                }
+            }.onFailure { error ->
+                _extra.update {
+                    it.copy(
+                        googleFontCatalogLoading = false,
+                        googleFontCatalogError = error.message ?: "Couldn't load the Google Fonts catalog.",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun installStarterPack() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { clockFontRepository.seedStarterPack() }
+            }.onSuccess { seeded ->
+                val current = settingsRepository.settings.first()
+                val merged = (current.downloadedClockFonts.filterNot { existing ->
+                    seeded.any { it.id == existing.id }
+                } + seeded).sortedBy { it.family.lowercase() }
+                settingsRepository.update {
+                    downloadedClockFonts = merged
+                    if (clockFontId.isBlank() || clockFontId == CLOCK_FONT_SYSTEM_DEFAULT) {
+                        clockFontId = "${CLOCK_FONT_GOOGLE_PREFIX}worksans"
+                    }
+                }
+            }
         }
     }
 

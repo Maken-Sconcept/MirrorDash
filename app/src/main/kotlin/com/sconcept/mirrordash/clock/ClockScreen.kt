@@ -1,5 +1,9 @@
 package com.sconcept.mirrordash.clock
 
+import android.graphics.Typeface
+import android.os.Build
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -48,8 +52,10 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -190,17 +196,10 @@ private fun ClockContent(
                 onAnchorChange = onClockAnchorChange,
             ) {
                 Column(Modifier.alpha(1f - contentDimAlpha)) {
-                    Text(
-                        text = timeText,
-                        style = typography.clock,
-                        color = appearance.textColor,
-                        fontWeight = FontWeight.Light,
-                    )
-                    Spacer(Modifier.padding(top = 4.dp))
-                    Text(
-                        text = todayLabel(),
-                        style = typography.date,
-                        color = appearance.textColor.copy(alpha = 0.72f),
+                    ClockTextBlock(
+                        appearance = appearance,
+                        typography = typography,
+                        timeText = timeText,
                     )
                 }
             }
@@ -278,6 +277,50 @@ private fun ClockContent(
             )
         }
     }
+}
+
+@Composable
+private fun ClockTextBlock(
+    appearance: ClockAppearance,
+    typography: MirrorDashTypography,
+    timeText: String,
+) {
+    val dateText = todayLabel()
+    AndroidView(
+        factory = { context ->
+            LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(
+                    TextView(context).apply {
+                        includeFontPadding = false
+                    },
+                )
+                addView(
+                    TextView(context).apply {
+                        includeFontPadding = false
+                    },
+                )
+            }
+        },
+        update = { container ->
+            val typeface = ClockFontLibrary.typeface(container.context, appearance.fontId, appearance.downloadedClockFonts)
+            val timeView = container.getChildAt(0) as TextView
+            val dateView = container.getChildAt(1) as TextView
+            timeView.text = timeText
+            timeView.textSize = appearance.fontSizeSp.toFloat()
+            timeView.setTextColor(appearance.textColor.toArgb())
+            timeView.typeface = if (Build.VERSION.SDK_INT >= 28) Typeface.create(typeface, 300, false) else typeface
+            timeView.letterSpacing = -0.04f
+
+            dateView.text = dateText
+            dateView.textSize = typography.date.fontSize.value
+            dateView.setTextColor(appearance.textColor.copy(alpha = 0.72f).toArgb())
+            dateView.typeface = typeface
+
+            val spacingPx = container.resources.displayMetrics.density * 4f
+            dateView.setPadding(0, spacingPx.toInt(), 0, 0)
+        },
+    )
 }
 
 /** Small, fixed, non-draggable info chip (top-left - the one corner the clock/weather defaults

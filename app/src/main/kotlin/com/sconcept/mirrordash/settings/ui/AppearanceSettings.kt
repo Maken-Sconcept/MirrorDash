@@ -50,14 +50,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.sconcept.mirrordash.clock.ClockFontLibrary
+import com.sconcept.mirrordash.clock.DownloadedClockFont
+import com.sconcept.mirrordash.clock.GoogleFontCatalogEntry
 import com.sconcept.mirrordash.nas.model.SmbFileItem
 import com.sconcept.mirrordash.settings.CLOCK_BACKGROUND_MODE_PHOTORAMA
 import com.sconcept.mirrordash.settings.NasTestResult
+import com.sconcept.mirrordash.settings.MirrorDashSettings
 import com.sconcept.mirrordash.settings.PHOTORAMA_SOURCE_LOCAL
 import com.sconcept.mirrordash.settings.PHOTORAMA_SOURCE_NAS
 import com.sconcept.mirrordash.settings.SettingsUiState
 import com.sconcept.mirrordash.settings.SettingsViewModel
-import com.sconcept.mirrordash.settings.MirrorDashSettings
 import com.sconcept.mirrordash.settings.formatMinutesOfDay
 import com.sconcept.mirrordash.ui.theme.ClockBackgroundPresets
 import com.sconcept.mirrordash.ui.theme.ClockColorPresets
@@ -66,6 +69,7 @@ import com.sconcept.mirrordash.ui.theme.MDTheme
 @Composable
 fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     val settings = uiState.settings
+    var showClockFontBrowser by remember { mutableStateOf(false) }
 
     SettingGroup(title = "Clock size") {
         Text(
@@ -84,6 +88,65 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
                 inactiveTrackColor = MDTheme.colors.divider,
             ),
         )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Clock font") {
+        Text(
+            ClockFontLibrary.label(settings.clockFontId, settings.downloadedClockFonts),
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            "Base pack: 15 fonts bundled with the app and copied into the app's private clock-fonts folder.",
+            style = MDTheme.type.caption,
+            color = MDTheme.colors.textTertiary,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        val baseFonts = ClockFontLibrary.starterPack.mapNotNull { bundled ->
+            settings.downloadedClockFonts.firstOrNull { it.id == bundled.id }
+                ?: DownloadedClockFont(
+                    id = bundled.id,
+                    family = bundled.family,
+                    category = bundled.category,
+                    license = bundled.license,
+                    localPath = bundled.assetPath,
+                    sourcePath = bundled.assetPath,
+                    downloadedAtEpochMs = 0L,
+                )
+        }
+        baseFonts.forEach { bundled ->
+            DownloadedClockFontRow(
+                font = bundled,
+                selected = settings.clockFontId == bundled.id,
+                onUse = { viewModel.setClockFont(bundled.id) },
+                onDelete = null,
+            )
+        }
+
+        Button(
+            onClick = { showClockFontBrowser = true },
+            colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
+        ) {
+            Text("Browse more Google Fonts")
+        }
+
+        if (uiState.clockFontStatusMessage != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                uiState.clockFontStatusMessage,
+                style = MDTheme.type.caption,
+                color = if (uiState.downloadingClockFontId == null && uiState.clockFontStatusMessage.contains("failed", ignoreCase = true)) {
+                    MDTheme.colors.danger
+                } else {
+                    MDTheme.colors.textSecondary
+                },
+            )
+        }
     }
 
     Spacer(Modifier.height(28.dp))
@@ -200,6 +263,26 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
                 onUp = viewModel::browseUp,
                 onSelect = viewModel::selectCurrentBrowserFolder,
                 onDismiss = viewModel::closeFolderBrowser,
+            )
+        }
+    }
+
+    if (showClockFontBrowser) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showClockFontBrowser = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnClickOutside = false,
+            ),
+        ) {
+            ClockFontBrowserSheet(
+                uiState = uiState,
+                selectedFontId = settings.clockFontId,
+                downloadedFonts = settings.downloadedClockFonts,
+                onUseDownloaded = viewModel::setClockFont,
+                onDownload = viewModel::downloadClockFont,
+                onDeleteDownloaded = viewModel::removeDownloadedClockFont,
+                onDismiss = { showClockFontBrowser = false },
             )
         }
     }
@@ -462,6 +545,197 @@ private fun PhotoramaScheduleSettings(settings: MirrorDashSettings, viewModel: S
                 steps = 95,
                 colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
             )
+        }
+    }
+}
+
+@Composable
+private fun DownloadedClockFontRow(
+    font: DownloadedClockFont,
+    selected: Boolean,
+    onUse: () -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) MDTheme.colors.surface.copy(alpha = 0.9f) else Color.Transparent)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(font.family, style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary)
+            Text(
+                "${font.category.replace('_', ' ').lowercase()} · stored on this device",
+                style = MDTheme.type.caption,
+                color = MDTheme.colors.textSecondary,
+            )
+        }
+        TextButton(onClick = onUse) {
+            Text(if (selected) "Selected" else "Use", color = MDTheme.colors.accent)
+        }
+        if (onDelete != null) {
+            TextButton(onClick = onDelete) {
+                Text("Delete", color = MDTheme.colors.danger)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClockFontBrowserSheet(
+    uiState: SettingsUiState,
+    selectedFontId: String,
+    downloadedFonts: List<DownloadedClockFont>,
+    onUseDownloaded: (String) -> Unit,
+    onDownload: (GoogleFontCatalogEntry) -> Unit,
+    onDeleteDownloaded: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val downloadedIds = remember(downloadedFonts) { downloadedFonts.map { it.id }.toSet() }
+    val starterPackIds = remember { ClockFontLibrary.starterPack.map { it.id }.toSet() }
+    val filteredCatalog = remember(uiState.googleFontCatalog, query) {
+        val needle = query.trim().lowercase()
+        if (needle.isBlank()) {
+            ClockFontLibrary.starterPack.mapNotNull { bundled ->
+                uiState.googleFontCatalog.firstOrNull { it.id == bundled.id }
+            }
+        } else {
+            uiState.googleFontCatalog.filter { entry ->
+                entry.family.lowercase().contains(needle) ||
+                    entry.category.lowercase().contains(needle) ||
+                    entry.subsets.any { it.lowercase().contains(needle) }
+            }.take(15)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MDTheme.colors.scrim)
+            .clickable(onClick = onDismiss),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth(0.9f)
+                .fillMaxSize()
+                .padding(vertical = 24.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(MDTheme.colors.surface)
+                .clickable(enabled = false) {}
+                .padding(24.dp),
+        ) {
+            Text("Google Fonts", style = MDTheme.type.sectionTitle, color = MDTheme.colors.textPrimary)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Download any family once and MirrorDash keeps it in its private clock-font folder on this device.",
+                style = MDTheme.type.settingSubtitle,
+                color = MDTheme.colors.textSecondary,
+            )
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search fonts, categories, or subsets") },
+                singleLine = true,
+                colors = fieldColors(),
+                modifier = Modifier.fillMaxWidth().trackFieldFocusForIdleTimer(),
+            )
+            Spacer(Modifier.height(16.dp))
+
+            when {
+                uiState.googleFontCatalogLoading -> {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = MDTheme.colors.accent)
+                            Spacer(Modifier.height(12.dp))
+                            Text("Loading Google Fonts…", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+                        }
+                    }
+                }
+
+                uiState.googleFontCatalogError != null -> {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(uiState.googleFontCatalogError, style = MDTheme.type.settingSubtitle, color = MDTheme.colors.danger)
+                    }
+                }
+
+                else -> {
+                    LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(filteredCatalog, key = { it.id }) { entry ->
+                            val isDownloaded = entry.id in downloadedIds
+                            val isBundled = entry.id in starterPackIds
+                            val isSelected = selectedFontId == entry.id
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (isSelected) MDTheme.colors.background else Color.Transparent)
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(entry.family, style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary)
+                                    Text(
+                                        "${entry.category.replace('_', ' ').lowercase()} · ${entry.styleCount} style${if (entry.styleCount == 1) "" else "s"} · ${entry.subsets.take(3).joinToString(", ")}",
+                                        style = MDTheme.type.caption,
+                                        color = MDTheme.colors.textSecondary,
+                                    )
+                                }
+
+                                when {
+                                    uiState.downloadingClockFontId == entry.id -> {
+                                        CircularProgressIndicator(
+                                            color = MDTheme.colors.accent,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                    }
+
+                                    isBundled -> {
+                                        TextButton(onClick = { onUseDownloaded(entry.id) }) {
+                                            Text(if (isSelected) "Selected" else "Use", color = MDTheme.colors.accent)
+                                        }
+                                    }
+
+                                    isDownloaded -> {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            TextButton(onClick = { onUseDownloaded(entry.id) }) {
+                                                Text(if (isSelected) "Selected" else "Use", color = MDTheme.colors.accent)
+                                            }
+                                            TextButton(onClick = { onDeleteDownloaded(entry.id) }) {
+                                                Text("Delete", color = MDTheme.colors.danger)
+                                            }
+                                        }
+                                    }
+
+                                    else -> {
+                                        Button(
+                                            onClick = { onDownload(entry) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MDTheme.colors.accent,
+                                                contentColor = MDTheme.colors.onAccent,
+                                            ),
+                                        ) {
+                                            Text("Download")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = onDismiss) {
+                    Text("Close", color = MDTheme.colors.textSecondary)
+                }
+            }
         }
     }
 }

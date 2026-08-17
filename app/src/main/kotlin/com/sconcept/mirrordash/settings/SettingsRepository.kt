@@ -10,7 +10,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.sconcept.mirrordash.clock.CalendarWidget
+import com.sconcept.mirrordash.clock.CLOCK_FONT_GOOGLE_PREFIX
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.DownloadedClockFont
 import com.sconcept.mirrordash.clock.NewsWidget
 import com.sconcept.mirrordash.clock.StocksWidget
 import com.sconcept.mirrordash.clock.TasksWidget
@@ -111,6 +113,7 @@ data class MirrorDashSettings(
 
     // Appearance / Clock
     val clockFontSizeSp: Int = DEFAULT_CLOCK_FONT_SIZE_SP,
+    val clockFontId: String = "${CLOCK_FONT_GOOGLE_PREFIX}worksans",
     val clockTextColorArgb: Int = 0xFFF5F3EF.toInt(),
     val clockBackgroundColorArgb: Int = 0xFF0B0C0E.toInt(),
     val clockBackgroundMode: String = CLOCK_BACKGROUND_MODE_SOLID,
@@ -119,6 +122,7 @@ data class MirrorDashSettings(
     val weatherAnchorX: Float = DEFAULT_WEATHER_ANCHOR_X,
     val weatherAnchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
     val weatherWidgets: List<WeatherWidget> = emptyList(),
+    val downloadedClockFonts: List<DownloadedClockFont> = emptyList(),
     val customTextWidgets: List<CustomTextWidget> = emptyList(),
     val calendarWidgets: List<CalendarWidget> = emptyList(),
     val tasksWidgets: List<TasksWidget> = emptyList(),
@@ -397,6 +401,10 @@ class SettingsRepository(context: Context) {
         val textWidgets = textWidgetsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<CustomTextWidget>>(raw) }.getOrDefault(emptyList())
         } ?: emptyList()
+        val downloadedClockFontsRaw = this[Keys.DOWNLOADED_CLOCK_FONTS]
+        val downloadedClockFonts = downloadedClockFontsRaw?.let { raw ->
+            runCatching { json.decodeFromString<List<DownloadedClockFont>>(raw) }.getOrDefault(emptyList())
+        } ?: emptyList()
         val calendarWidgetsRaw = this[Keys.CALENDAR_WIDGETS]
         val calendarWidgets = calendarWidgetsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<CalendarWidget>>(raw) }.getOrDefault(emptyList())
@@ -425,6 +433,7 @@ class SettingsRepository(context: Context) {
         return MirrorDashSettings(
             deviceName = this[Keys.DEVICE_NAME] ?: defaults.deviceName,
             clockFontSizeSp = this[Keys.CLOCK_FONT_SIZE_SP] ?: defaults.clockFontSizeSp,
+            clockFontId = this[Keys.CLOCK_FONT_ID] ?: defaults.clockFontId,
             clockTextColorArgb = this[Keys.CLOCK_TEXT_COLOR] ?: defaults.clockTextColorArgb,
             clockBackgroundColorArgb = this[Keys.CLOCK_BACKGROUND_COLOR] ?: defaults.clockBackgroundColorArgb,
             clockBackgroundMode = this[Keys.CLOCK_BACKGROUND_MODE] ?: defaults.clockBackgroundMode,
@@ -433,6 +442,7 @@ class SettingsRepository(context: Context) {
             weatherAnchorX = this[Keys.WEATHER_ANCHOR_X] ?: defaults.weatherAnchorX,
             weatherAnchorY = this[Keys.WEATHER_ANCHOR_Y] ?: defaults.weatherAnchorY,
             weatherWidgets = normalizeWeatherWidgets(weatherWidgets),
+            downloadedClockFonts = downloadedClockFonts,
             customTextWidgets = textWidgets,
             calendarWidgets = calendarWidgets,
             tasksWidgets = tasksWidgets,
@@ -538,6 +548,7 @@ class SettingsRepository(context: Context) {
         val DEVICE_NAME = stringPreferencesKey("device_name")
 
         val CLOCK_FONT_SIZE_SP = intPreferencesKey("clock_font_size_sp")
+        val CLOCK_FONT_ID = stringPreferencesKey("clock_font_id")
         val CLOCK_TEXT_COLOR = intPreferencesKey("clock_text_color")
         val CLOCK_BACKGROUND_COLOR = intPreferencesKey("clock_background_color")
         val CLOCK_BACKGROUND_MODE = stringPreferencesKey("clock_background_mode")
@@ -550,6 +561,7 @@ class SettingsRepository(context: Context) {
         val TASKS_WIDGETS = stringPreferencesKey("tasks_widgets_json")
         val STOCKS_WIDGETS = stringPreferencesKey("stocks_widgets_json")
         val NEWS_WIDGETS = stringPreferencesKey("news_widgets_json")
+        val DOWNLOADED_CLOCK_FONTS = stringPreferencesKey("downloaded_clock_fonts_json")
 
         val WEATHER_ENABLED = booleanPreferencesKey("weather_enabled")
         val WEATHER_LOCATION_QUERY = stringPreferencesKey("weather_location_query")
@@ -672,6 +684,7 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var deviceName: String by PrefDelegate(SettingsRepository.Keys.DEVICE_NAME, prefs, defaults.deviceName)
 
     var clockFontSizeSp: Int by PrefDelegate(SettingsRepository.Keys.CLOCK_FONT_SIZE_SP, prefs, defaults.clockFontSizeSp)
+    var clockFontId: String by PrefDelegate(SettingsRepository.Keys.CLOCK_FONT_ID, prefs, defaults.clockFontId)
     var clockTextColorArgb: Int by PrefDelegate(SettingsRepository.Keys.CLOCK_TEXT_COLOR, prefs, defaults.clockTextColorArgb)
     var clockBackgroundColorArgb: Int by PrefDelegate(SettingsRepository.Keys.CLOCK_BACKGROUND_COLOR, prefs, defaults.clockBackgroundColorArgb)
     var clockBackgroundMode: String by PrefDelegate(SettingsRepository.Keys.CLOCK_BACKGROUND_MODE, prefs, defaults.clockBackgroundMode)
@@ -807,6 +820,14 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
             .orEmpty()
         set(value) {
             prefs[SettingsRepository.Keys.CUSTOM_TEXT_WIDGETS] = json.encodeToString(value)
+        }
+
+    var downloadedClockFonts: List<DownloadedClockFont>
+        get() = prefs[SettingsRepository.Keys.DOWNLOADED_CLOCK_FONTS]
+            ?.let { runCatching { json.decodeFromString<List<DownloadedClockFont>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.DOWNLOADED_CLOCK_FONTS] = json.encodeToString(value)
         }
 
     var calendarWidgets: List<CalendarWidget>

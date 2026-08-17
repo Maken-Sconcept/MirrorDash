@@ -1,8 +1,9 @@
 package com.sconcept.mirrordash.clock
 
+import android.app.Application
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sconcept.mirrordash.settings.CLOCK_BACKGROUND_MODE_PHOTORAMA
@@ -15,17 +16,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
 data class ClockAppearance(
     val fontSizeSp: Int = DEFAULT_CLOCK_FONT_SIZE_SP,
+    val fontId: String = CLOCK_FONT_SYSTEM_DEFAULT,
     val textColor: Color = Color.White,
     val background: ClockBackground = ClockBackground.SolidColor(Color.Black),
     val clockAnchor: OverlayAnchor = OverlayAnchor(0.06f, 0.82f),
     val weatherWidgets: List<WeatherWidget> = emptyList(),
+    val downloadedClockFonts: List<DownloadedClockFont> = emptyList(),
     val textWidgets: List<CustomTextWidget> = emptyList(),
     val calendarWidgets: List<CalendarWidget> = emptyList(),
     val tasksWidgets: List<TasksWidget> = emptyList(),
@@ -41,7 +44,12 @@ data class ClockAppearance(
  * ClockLayoutHelper's doc comment for how this avoids BerthierOptions' original bug: exactly
  * one stored anchor per element, exactly one default, defined once in [MirrorDashSettings]).
  */
-class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewModel() {
+class ClockViewModel(
+    application: Application,
+    private val settingsRepository: SettingsRepository,
+) : AndroidViewModel(application) {
+    private val tasksFileRepository = TasksFileRepository(application)
+    private val taskFileCache = mutableMapOf<String, List<TaskItem>>()
 
     // Re-emits once a minute so a Photorama schedule's start/end boundary flips the background
     // live, without requiring any other state to change first - settings alone wouldn't fire
@@ -56,10 +64,12 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
     }
 
     val appearance: StateFlow<ClockAppearance> = combine(settingsRepository.settings, minuteTicker) { settings, _ -> settings }
-        .map {
+        .mapLatest {
             val photoramaActive = it.clockBackgroundMode == CLOCK_BACKGROUND_MODE_PHOTORAMA && isPhotoramaScheduleActive(it)
+            val taskWidgets = resolveTasksWidgets(it.tasksWidgets)
             ClockAppearance(
                 fontSizeSp = it.clockFontSizeSp,
+                fontId = it.clockFontId,
                 textColor = Color(it.clockTextColorArgb),
                 background = if (photoramaActive) {
                     ClockBackground.Photorama
@@ -68,9 +78,10 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
                 },
                 clockAnchor = OverlayAnchor(it.clockAnchorX, it.clockAnchorY),
                 weatherWidgets = it.weatherWidgets,
+                downloadedClockFonts = it.downloadedClockFonts,
                 textWidgets = it.customTextWidgets,
                 calendarWidgets = it.calendarWidgets,
-                tasksWidgets = it.tasksWidgets,
+                tasksWidgets = taskWidgets,
                 stocksWidgets = it.stocksWidgets,
                 newsWidgets = it.newsWidgets,
                 showTime = it.clockShowTime,
@@ -200,8 +211,54 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
             settingsRepository.update {
                 tasksWidgets = tasksWidgets.map { widget ->
                     if (widget.id != widgetId) return@map widget
-                    widget.copy(items = widget.items.map { if (it.id == itemId) it.copy(completed = completed) else it })
+                    if (!widget.isFileBacked) {
+                        widget.copy(
+                            items = widget.items.map {
+                                if (it.id == itemId) it.withCompleted(completed) else it.normalized()
+                            },
+                        )
+                    } else {
+                        val existing = widget.items.firstOrNull { it.id == itemId } ?: TaskItem(id = itemId)
+                        widget.copy(
+                            items = widget.items.filterNot { it.id == itemId } + existing.withCompleted(completed),
+                        )
+                    }
                 }
+            }
+        }
+    }
+
+    private suspend fun resolveTasksWidgets(widgets: List<TasksWidget>): List<TasksWidget> {
+        if (widgets.none { it.isFileBacked }) return widgets.map(::normalizeWidget)
+
+        val share = runCatching { settingsRepository.smbShareWithPassword() }.getOrNull()
+        return widgets.map { widget ->
+            if (!widget.isFileBacked) return@map normalizeWidget(widget)
+
+            val loaded = runCatching {
+                require(share?.isConfigured == true) { "No NAS connection configured for task CSV import." }
+                tasksFileRepository.loadCsv(share, widget.csvFilePath)
+            }.getOrElse {
+                taskFileCache[widget.id] ?: emptyList()
+            }
+
+            val merged = mergeImportedItems(loaded, widget.items)
+            if (merged.isNotEmpty()) taskFileCache[widget.id] = merged
+            widget.copy(items = merged)
+        }
+    }
+
+    private fun normalizeWidget(widget: TasksWidget): TasksWidget = widget.copy(items = widget.items.map(TaskItem::normalized))
+
+    private fun mergeImportedItems(imported: List<TaskItem>, storedItems: List<TaskItem>): List<TaskItem> {
+        if (imported.isEmpty()) return emptyList()
+        val overridesById = storedItems.associateBy { it.id }
+        return imported.map { importedItem ->
+            val override = overridesById[importedItem.id]
+            if (override == null) {
+                importedItem.normalized()
+            } else {
+                importedItem.withCompleted(override.isDone).normalized()
             }
         }
     }
@@ -218,10 +275,11 @@ class ClockViewModel(private val settingsRepository: SettingsRepository) : ViewM
     }
 
     companion object {
-        fun factory(settingsRepository: SettingsRepository): ViewModelProvider.Factory =
+        fun factory(application: Application, settingsRepository: SettingsRepository): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T = ClockViewModel(settingsRepository) as T
+                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+                    ClockViewModel(application, settingsRepository) as T
             }
     }
 }
