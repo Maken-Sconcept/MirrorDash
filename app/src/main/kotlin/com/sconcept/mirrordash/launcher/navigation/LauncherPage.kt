@@ -9,6 +9,7 @@ package com.sconcept.mirrordash.launcher.navigation
 sealed class LauncherPage(val id: String, val label: String) {
     data object Clock : LauncherPage("clock", "Clock")
     data object Browser : LauncherPage("browser", "Web")
+    data object Gym : LauncherPage("gym", "Gym")
     data object Jellyfin : LauncherPage("jellyfin", "Jellyfin")
     data object HomeAssistant : LauncherPage("home_assistant", "Home Assistant")
     data object Iptv : LauncherPage("iptv", "IPTV")
@@ -25,6 +26,7 @@ object LauncherPages {
      * background (see ClockViewModel/ClockScreen), configured from Clock settings directly. */
     fun ordered(
         includeBrowserPage: Boolean,
+        includeGymPage: Boolean,
         includeJellyfinPage: Boolean,
         includeHomeAssistantPage: Boolean,
         includeIptvPage: Boolean,
@@ -32,6 +34,7 @@ object LauncherPages {
     ): List<LauncherPage> = buildList {
         add(LauncherPage.Clock)
         if (includeBrowserPage) add(LauncherPage.Browser)
+        if (includeGymPage) add(LauncherPage.Gym)
         if (includeJellyfinPage) add(LauncherPage.Jellyfin)
         if (includeHomeAssistantPage) add(LauncherPage.HomeAssistant)
         if (includeIptvPage) add(LauncherPage.Iptv)

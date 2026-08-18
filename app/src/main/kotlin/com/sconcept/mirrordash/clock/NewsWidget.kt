@@ -10,9 +10,11 @@ data class NewsWidget(
     val feedUrl: String = "",
     val itemCount: Int = 5,
     val fontSizeSp: Int = 18,
+    val fontId: String = CLOCK_FONT_SYSTEM_DEFAULT,
     val colorArgb: Int = 0xFFF5F3EF.toInt(),
     override val anchorX: Float = 0.5f,
     override val anchorY: Float = 0.92f,
+    override val rotationDegrees: Float = 0f,
 ) : AnchoredWidget
 
 fun defaultNewsWidget(

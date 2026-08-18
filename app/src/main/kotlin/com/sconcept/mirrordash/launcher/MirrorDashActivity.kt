@@ -47,8 +47,11 @@ import com.sconcept.mirrordash.clock.ClockScreen
 import com.sconcept.mirrordash.clock.ClockViewModel
 import com.sconcept.mirrordash.clock.NightClockScreen
 import com.sconcept.mirrordash.clock.OverlayAnchor
+import com.sconcept.mirrordash.gym.GymScreen
+import com.sconcept.mirrordash.gym.GymViewModel
 import com.sconcept.mirrordash.homeassistant.HomeAssistantScreen
 import com.sconcept.mirrordash.iptv.EXTRA_OPEN_DOWNLOAD_MANAGER
+import com.sconcept.mirrordash.iptv.IptvPageState
 import com.sconcept.mirrordash.iptv.IptvScreen
 import com.sconcept.mirrordash.iptv.IptvViewModel
 import com.sconcept.mirrordash.jellyfin.JellyfinScreen
@@ -85,12 +88,16 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
+/** Step size for a single remote volume-key press against [IptvViewModel]'s 0f..1f player volume
+ * - 20 presses end to end, a comparable feel to the system stream volume's own step count. */
+private const val IPTV_REMOTE_VOLUME_STEP = 0.05f
+
 class MirrorDashActivity : ComponentActivity() {
 
     private val container by lazy { AppContainer.get(applicationContext) }
 
     private val launcherViewModel: LauncherViewModel by viewModels { LauncherViewModel.factory(container.settingsRepository) }
-    private val clockViewModel: ClockViewModel by viewModels { ClockViewModel.factory(container.settingsRepository) }
+    private val clockViewModel: ClockViewModel by viewModels { ClockViewModel.factory(application, container.settingsRepository) }
     private val weatherViewModel: WeatherViewModel by viewModels { WeatherViewModel.factory(container.settingsRepository) }
     private val calendarAgendaViewModel: CalendarAgendaViewModel by viewModels { CalendarAgendaViewModel.factory(application) }
     private val stocksViewModel: StocksViewModel by viewModels { StocksViewModel.factory(container.settingsRepository) }
@@ -102,6 +109,9 @@ class MirrorDashActivity : ComponentActivity() {
     private val settingsViewModel: SettingsViewModel by viewModels {
         SettingsViewModel.factory(application, container.settingsRepository)
     }
+    private val gymViewModel: GymViewModel by viewModels {
+        GymViewModel.factory(application, container.gymRepository, container.gymContentRepository, container.gymSessionEngine)
+    }
     private val iptvViewModel: IptvViewModel by viewModels {
         IptvViewModel.factory(application, container.settingsRepository, container.iptvSessionCoordinator)
     }
@@ -109,6 +119,12 @@ class MirrorDashActivity : ComponentActivity() {
     // LauncherGestureHost's onNightClockActiveChanged) into the plain lifecycleScope brightness
     // collectors below, which run outside Compose and read settingsRepository.settings directly.
     private val isNightClockActive = MutableStateFlow(false)
+
+    // Same bridge shape as isNightClockActive above, but for "is the IPTV tab the one currently
+    // visible" - dispatchKeyEvent (below) isn't composable, so it can't just read the pager's own
+    // currentPageIndex directly, and TV-remote keys (volume/channel/number-pad) should only ever
+    // be claimed by IPTV while its tab is actually on screen.
+    private val isIptvPageActive = MutableStateFlow(false)
 
     private val requestMicPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val requestNotificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -206,6 +222,7 @@ class MirrorDashActivity : ComponentActivity() {
                     photoramaViewModel = photoramaViewModel,
                     appDrawerViewModel = appDrawerViewModel,
                     settingsViewModel = settingsViewModel,
+                    gymViewModel = gymViewModel,
                     iptvViewModel = iptvViewModel,
                     onRequestHomeRole = { requestHomeRole.launch(HomeRoleHelper.requestHomeRoleIntent(this)) },
                     onRequestNotificationAccess = {
@@ -226,6 +243,7 @@ class MirrorDashActivity : ComponentActivity() {
                         BrightnessFailsafe.trigger(this@MirrorDashActivity, lifecycleScope, container.settingsRepository)
                     },
                     onNightClockActiveChanged = { active -> isNightClockActive.value = active },
+                    onIptvPageActiveChanged = { active -> isIptvPageActive.value = active },
                 )
             }
         }
@@ -254,10 +272,14 @@ class MirrorDashActivity : ComponentActivity() {
 
     private var volumeFailsafeJob: Job? = null
 
-    // Never consumes the event (falls through to super regardless) so volume still ramps
-    // normally as a side effect of holding it - the failsafe is a bonus, not a hijack. Unlike
-    // BerthierOptions, no AccessibilityService/root `getevent` watcher is needed for this: as the
-    // Home app, MirrorDashActivity reliably sees every volume key press on its own already.
+    // This failsafe-timer block itself never consumes the event (falls through regardless) so
+    // system volume still ramps normally as a side effect of holding it on every other page - the
+    // failsafe is a bonus, not a hijack. No AccessibilityService/root `getevent` watcher is needed
+    // for this: as the Home app, MirrorDashActivity reliably sees every volume key press on its
+    // own already. handleIptvRemoteKey below *does* consume volume keys, but only while the IPTV
+    // tab is visible, redirecting them to the tab's own player volume instead of the system
+    // stream - the timer above still starts/stops off the raw key regardless of who ends up
+    // consuming it.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
             when (event.action) {
@@ -277,7 +299,43 @@ class MirrorDashActivity : ComponentActivity() {
                 }
             }
         }
+        if (handleIptvRemoteKey(event)) return true
         return super.dispatchKeyEvent(event)
+    }
+
+    /** TV-remote support for the IPTV tab (brief: "volume up down, change channel etc" - "this
+     * clock app might be installed on tv therefore make it work with the tv remote"). Only claims
+     * a key while IPTV is the visible page ([isIptvPageActive]) and only for keys IPTV actually
+     * has a use for - every other page's own input (including the volume failsafe above, which
+     * runs unconditionally regardless of this method's return value) is unaffected. Reads
+     * [iptvViewModel]'s state directly rather than threading it through Compose: it's a plain
+     * field on this Activity already, and dispatchKeyEvent isn't composable.
+     *
+     * Deliberately doesn't intercept D-pad up/down for channel-stepping the way an old cable box
+     * remote would - the Guide/channel list/VOD grids rely on D-pad for their own on-screen focus
+     * navigation, and stealing it here would break moving around inside them. [KeyEvent
+     * .KEYCODE_CHANNEL_UP]/[KeyEvent.KEYCODE_CHANNEL_DOWN] (a real key on most TV/IR remotes,
+     * distinct from D-pad) and the number pad remain unambiguous either way. */
+    private fun handleIptvRemoteKey(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN || !isIptvPageActive.value) return false
+        val state = iptvViewModel.uiState.value
+        if (state.pageState != IptvPageState.READY) return false
+
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> iptvViewModel.setVolume(state.volume + IPTV_REMOTE_VOLUME_STEP)
+            KeyEvent.KEYCODE_VOLUME_DOWN -> iptvViewModel.setVolume(state.volume - IPTV_REMOTE_VOLUME_STEP)
+            KeyEvent.KEYCODE_VOLUME_MUTE, KeyEvent.KEYCODE_MUTE -> iptvViewModel.toggleMute()
+            KeyEvent.KEYCODE_CHANNEL_UP -> iptvViewModel.nextChannel()
+            KeyEvent.KEYCODE_CHANNEL_DOWN -> iptvViewModel.previousChannel()
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE ->
+                iptvViewModel.togglePlayPause()
+            in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 ->
+                iptvViewModel.enterChannelDigit('0' + (event.keyCode - KeyEvent.KEYCODE_0))
+            in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 ->
+                iptvViewModel.enterChannelDigit('0' + (event.keyCode - KeyEvent.KEYCODE_NUMPAD_0))
+            else -> return false
+        }
+        return true
     }
 
     private fun hideSystemBars() {
@@ -299,6 +357,7 @@ private fun MirrorDashRoot(
     photoramaViewModel: PhotoramaViewModel,
     appDrawerViewModel: AppDrawerViewModel,
     settingsViewModel: SettingsViewModel,
+    gymViewModel: GymViewModel,
     iptvViewModel: IptvViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
@@ -307,6 +366,7 @@ private fun MirrorDashRoot(
     onRequestOverlayAccess: () -> Unit,
     onRequestBrightnessFailsafe: () -> Unit,
     onNightClockActiveChanged: (Boolean) -> Unit,
+    onIptvPageActiveChanged: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val initialPageIndex by launcherViewModel.initialPageIndex.collectAsStateWithLifecycle()
@@ -329,6 +389,7 @@ private fun MirrorDashRoot(
     // the clock and settings must always remain" (see LauncherPages' doc comment).
     val orderedPages = remember(
         settingsUiState.settings.browserEnabled,
+        settingsUiState.settings.gymEnabled,
         settingsUiState.settings.jellyfinEnabled,
         settingsUiState.settings.homeAssistantEnabled,
         settingsUiState.settings.iptvEnabled,
@@ -336,6 +397,7 @@ private fun MirrorDashRoot(
     ) {
         LauncherPages.ordered(
             includeBrowserPage = settingsUiState.settings.browserEnabled,
+            includeGymPage = settingsUiState.settings.gymEnabled,
             includeJellyfinPage = settingsUiState.settings.jellyfinEnabled,
             includeHomeAssistantPage = settingsUiState.settings.homeAssistantEnabled,
             includeIptvPage = settingsUiState.settings.iptvEnabled,
@@ -387,6 +449,7 @@ private fun MirrorDashRoot(
     val isIptvPageActive = orderedPages.getOrNull(currentPageIndex) == LauncherPage.Iptv
     LaunchedEffect(isIptvPageActive) {
         iptvViewModel.setActive(isIptvPageActive)
+        onIptvPageActiveChanged(isIptvPageActive)
     }
 
     val isClockPageActive = orderedPages.getOrNull(currentPageIndex) == LauncherPage.Clock
@@ -436,6 +499,7 @@ private fun MirrorDashRoot(
                     newsFeedViewModel = newsFeedViewModel,
                     photoramaViewModel = photoramaViewModel,
                     settingsViewModel = settingsViewModel,
+                    gymViewModel = gymViewModel,
                     iptvViewModel = iptvViewModel,
                     onRequestHomeRole = onRequestHomeRole,
                     onRequestNotificationAccess = onRequestNotificationAccess,
@@ -547,6 +611,7 @@ private fun LauncherPageContent(
     newsFeedViewModel: NewsFeedViewModel,
     photoramaViewModel: PhotoramaViewModel,
     settingsViewModel: SettingsViewModel,
+    gymViewModel: GymViewModel,
     iptvViewModel: IptvViewModel,
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
@@ -587,6 +652,20 @@ private fun LauncherPageContent(
                 news = news,
                 onNewsWidgetAnchorChange = clockViewModel::setNewsWidgetAnchor,
                 contentDimAlpha = clockContentDimAlpha,
+                onClockRemove = clockViewModel::hideClockTime,
+                onWeatherWidgetRemove = clockViewModel::removeWeatherWidget,
+                onTextWidgetRemove = clockViewModel::removeTextWidget,
+                onCalendarWidgetRemove = clockViewModel::removeCalendarWidget,
+                onTasksWidgetRemove = clockViewModel::removeTasksWidget,
+                onStocksWidgetRemove = clockViewModel::removeStocksWidget,
+                onNewsWidgetRemove = clockViewModel::removeNewsWidget,
+                onClockRotationChange = clockViewModel::setClockRotation,
+                onWeatherWidgetRotationChange = clockViewModel::setWeatherWidgetRotation,
+                onTextWidgetRotationChange = clockViewModel::setTextWidgetRotation,
+                onCalendarWidgetRotationChange = clockViewModel::setCalendarWidgetRotation,
+                onTasksWidgetRotationChange = clockViewModel::setTasksWidgetRotation,
+                onStocksWidgetRotationChange = clockViewModel::setStocksWidgetRotation,
+                onNewsWidgetRotationChange = clockViewModel::setNewsWidgetRotation,
             )
         }
         LauncherPage.Browser -> {
@@ -604,6 +683,9 @@ private fun LauncherPageContent(
                     onPersistCurrentUrl = settingsViewModel::setBrowserLastVisitedUrl,
                 )
             }
+        }
+        LauncherPage.Gym -> {
+            GymScreen(viewModel = gymViewModel)
         }
         LauncherPage.Jellyfin -> {
             val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()

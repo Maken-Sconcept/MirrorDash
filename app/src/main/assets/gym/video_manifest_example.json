@@ -1,0 +1,20 @@
+[
+  {
+    "exerciseId": "example_jump_squat",
+    "exerciseName": "Jump Squat",
+    "title": "Jump Squat Demo",
+    "subtitle": "Mirror reference clip",
+    "videoPath": "\\\\SCONCEPT\\Berthier\\MirrorDash Recordings\\CASA FR_2026-08-15_00-24-06.ts",
+    "thumbnailPath": null,
+    "durationSeconds": 44,
+    "tags": [
+      "lower_body",
+      "plyometric",
+      "mirror_demo"
+    ],
+    "equipment": [
+      "bodyweight"
+    ],
+    "coachCue": "Use this as the placeholder example format for your own mapped workout videos."
+  }
+]

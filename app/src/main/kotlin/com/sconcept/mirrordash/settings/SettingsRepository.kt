@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.sconcept.mirrordash.clock.CalendarWidget
 import com.sconcept.mirrordash.clock.CLOCK_FONT_GOOGLE_PREFIX
+import com.sconcept.mirrordash.clock.CLOCK_STYLE_BIG_SMALL
 import com.sconcept.mirrordash.clock.CustomTextWidget
 import com.sconcept.mirrordash.clock.DownloadedClockFont
 import com.sconcept.mirrordash.clock.NewsWidget
@@ -18,6 +19,12 @@ import com.sconcept.mirrordash.clock.StocksWidget
 import com.sconcept.mirrordash.clock.TasksWidget
 import com.sconcept.mirrordash.clock.WeatherWidget
 import com.sconcept.mirrordash.clock.defaultWeatherWidget
+import com.sconcept.mirrordash.gym.FitnessDevicePreference
+import com.sconcept.mirrordash.gym.GymFeatureSettings
+import com.sconcept.mirrordash.gym.GymProfile
+import com.sconcept.mirrordash.gym.GymSessionRecord
+import com.sconcept.mirrordash.gym.defaultGymDevicePreferences
+import com.sconcept.mirrordash.gym.defaultGymProfiles
 import com.sconcept.mirrordash.iptv.CompletedRecording
 import com.sconcept.mirrordash.iptv.DEFAULT_PARENTAL_CONTROL_PIN
 import com.sconcept.mirrordash.iptv.ParentalControlMode
@@ -114,11 +121,14 @@ data class MirrorDashSettings(
     // Appearance / Clock
     val clockFontSizeSp: Int = DEFAULT_CLOCK_FONT_SIZE_SP,
     val clockFontId: String = "${CLOCK_FONT_GOOGLE_PREFIX}worksans",
+    val clockStyleId: String = CLOCK_STYLE_BIG_SMALL,
     val clockTextColorArgb: Int = 0xFFF5F3EF.toInt(),
+    val clockAccentColorArgb: Int = 0xFFE8A659.toInt(),
     val clockBackgroundColorArgb: Int = 0xFF0B0C0E.toInt(),
     val clockBackgroundMode: String = CLOCK_BACKGROUND_MODE_SOLID,
     val clockAnchorX: Float = DEFAULT_CLOCK_ANCHOR_X,
     val clockAnchorY: Float = DEFAULT_CLOCK_ANCHOR_Y,
+    val clockRotationDegrees: Float = 0f,
     val weatherAnchorX: Float = DEFAULT_WEATHER_ANCHOR_X,
     val weatherAnchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
     val weatherWidgets: List<WeatherWidget> = emptyList(),
@@ -198,6 +208,13 @@ data class MirrorDashSettings(
     val browserEnabled: Boolean = false,
     val browserHomeUrl: String = "",
     val browserLastVisitedUrl: String = "",
+
+    // Gym & Workouts
+    val gymEnabled: Boolean = false,
+    val gymFeatureSettings: GymFeatureSettings = GymFeatureSettings(),
+    val gymProfiles: List<GymProfile> = defaultGymProfiles(),
+    val gymDevicePreferences: List<FitnessDevicePreference> = defaultGymDevicePreferences(),
+    val gymSessionHistory: List<GymSessionRecord> = emptyList(),
 
     // Jellyfin - the password never lives here, it goes through SecureCredentialStore
     // (CredentialId.JELLYFIN), same as the SMB password.
@@ -434,11 +451,14 @@ class SettingsRepository(context: Context) {
             deviceName = this[Keys.DEVICE_NAME] ?: defaults.deviceName,
             clockFontSizeSp = this[Keys.CLOCK_FONT_SIZE_SP] ?: defaults.clockFontSizeSp,
             clockFontId = this[Keys.CLOCK_FONT_ID] ?: defaults.clockFontId,
+            clockStyleId = this[Keys.CLOCK_STYLE_ID] ?: defaults.clockStyleId,
             clockTextColorArgb = this[Keys.CLOCK_TEXT_COLOR] ?: defaults.clockTextColorArgb,
+            clockAccentColorArgb = this[Keys.CLOCK_ACCENT_COLOR] ?: defaults.clockAccentColorArgb,
             clockBackgroundColorArgb = this[Keys.CLOCK_BACKGROUND_COLOR] ?: defaults.clockBackgroundColorArgb,
             clockBackgroundMode = this[Keys.CLOCK_BACKGROUND_MODE] ?: defaults.clockBackgroundMode,
             clockAnchorX = this[Keys.CLOCK_ANCHOR_X] ?: defaults.clockAnchorX,
             clockAnchorY = this[Keys.CLOCK_ANCHOR_Y] ?: defaults.clockAnchorY,
+            clockRotationDegrees = this[Keys.CLOCK_ROTATION_DEGREES] ?: defaults.clockRotationDegrees,
             weatherAnchorX = this[Keys.WEATHER_ANCHOR_X] ?: defaults.weatherAnchorX,
             weatherAnchorY = this[Keys.WEATHER_ANCHOR_Y] ?: defaults.weatherAnchorY,
             weatherWidgets = normalizeWeatherWidgets(weatherWidgets),
@@ -493,6 +513,19 @@ class SettingsRepository(context: Context) {
             browserEnabled = this[Keys.BROWSER_ENABLED] ?: defaults.browserEnabled,
             browserHomeUrl = this[Keys.BROWSER_HOME_URL] ?: defaults.browserHomeUrl,
             browserLastVisitedUrl = this[Keys.BROWSER_LAST_VISITED_URL] ?: defaults.browserLastVisitedUrl,
+            gymEnabled = this[Keys.GYM_ENABLED] ?: defaults.gymEnabled,
+            gymFeatureSettings = this[Keys.GYM_FEATURE_SETTINGS]?.let { raw ->
+                runCatching { json.decodeFromString<GymFeatureSettings>(raw) }.getOrDefault(defaults.gymFeatureSettings)
+            } ?: defaults.gymFeatureSettings,
+            gymProfiles = this[Keys.GYM_PROFILES]?.let { raw ->
+                runCatching { json.decodeFromString<List<GymProfile>>(raw) }.getOrDefault(defaults.gymProfiles)
+            } ?: defaults.gymProfiles,
+            gymDevicePreferences = this[Keys.GYM_DEVICE_PREFERENCES]?.let { raw ->
+                runCatching { json.decodeFromString<List<FitnessDevicePreference>>(raw) }.getOrDefault(defaults.gymDevicePreferences)
+            } ?: defaults.gymDevicePreferences,
+            gymSessionHistory = this[Keys.GYM_SESSION_HISTORY]?.let { raw ->
+                runCatching { json.decodeFromString<List<GymSessionRecord>>(raw) }.getOrDefault(defaults.gymSessionHistory)
+            } ?: defaults.gymSessionHistory,
             jellyfinEnabled = this[Keys.JELLYFIN_ENABLED] ?: defaults.jellyfinEnabled,
             jellyfinServerUrl = this[Keys.JELLYFIN_SERVER_URL] ?: defaults.jellyfinServerUrl,
             jellyfinStartPath = this[Keys.JELLYFIN_START_PATH] ?: defaults.jellyfinStartPath,
@@ -549,11 +582,14 @@ class SettingsRepository(context: Context) {
 
         val CLOCK_FONT_SIZE_SP = intPreferencesKey("clock_font_size_sp")
         val CLOCK_FONT_ID = stringPreferencesKey("clock_font_id")
+        val CLOCK_STYLE_ID = stringPreferencesKey("clock_style_id")
         val CLOCK_TEXT_COLOR = intPreferencesKey("clock_text_color")
+        val CLOCK_ACCENT_COLOR = intPreferencesKey("clock_accent_color")
         val CLOCK_BACKGROUND_COLOR = intPreferencesKey("clock_background_color")
         val CLOCK_BACKGROUND_MODE = stringPreferencesKey("clock_background_mode")
         val CLOCK_ANCHOR_X = floatPreferencesKey("clock_anchor_x")
         val CLOCK_ANCHOR_Y = floatPreferencesKey("clock_anchor_y")
+        val CLOCK_ROTATION_DEGREES = floatPreferencesKey("clock_rotation_degrees")
         val WEATHER_ANCHOR_X = floatPreferencesKey("weather_anchor_x")
         val WEATHER_ANCHOR_Y = floatPreferencesKey("weather_anchor_y")
         val WEATHER_WIDGETS = stringPreferencesKey("weather_widgets_json")
@@ -614,6 +650,12 @@ class SettingsRepository(context: Context) {
         val BROWSER_ENABLED = booleanPreferencesKey("browser_enabled")
         val BROWSER_HOME_URL = stringPreferencesKey("browser_home_url")
         val BROWSER_LAST_VISITED_URL = stringPreferencesKey("browser_last_visited_url")
+
+        val GYM_ENABLED = booleanPreferencesKey("gym_enabled")
+        val GYM_FEATURE_SETTINGS = stringPreferencesKey("gym_feature_settings_json")
+        val GYM_PROFILES = stringPreferencesKey("gym_profiles_json")
+        val GYM_DEVICE_PREFERENCES = stringPreferencesKey("gym_device_preferences_json")
+        val GYM_SESSION_HISTORY = stringPreferencesKey("gym_session_history_json")
 
         val JELLYFIN_ENABLED = booleanPreferencesKey("jellyfin_enabled")
         val JELLYFIN_SERVER_URL = stringPreferencesKey("jellyfin_server_url")
@@ -685,11 +727,14 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
 
     var clockFontSizeSp: Int by PrefDelegate(SettingsRepository.Keys.CLOCK_FONT_SIZE_SP, prefs, defaults.clockFontSizeSp)
     var clockFontId: String by PrefDelegate(SettingsRepository.Keys.CLOCK_FONT_ID, prefs, defaults.clockFontId)
+    var clockStyleId: String by PrefDelegate(SettingsRepository.Keys.CLOCK_STYLE_ID, prefs, defaults.clockStyleId)
     var clockTextColorArgb: Int by PrefDelegate(SettingsRepository.Keys.CLOCK_TEXT_COLOR, prefs, defaults.clockTextColorArgb)
+    var clockAccentColorArgb: Int by PrefDelegate(SettingsRepository.Keys.CLOCK_ACCENT_COLOR, prefs, defaults.clockAccentColorArgb)
     var clockBackgroundColorArgb: Int by PrefDelegate(SettingsRepository.Keys.CLOCK_BACKGROUND_COLOR, prefs, defaults.clockBackgroundColorArgb)
     var clockBackgroundMode: String by PrefDelegate(SettingsRepository.Keys.CLOCK_BACKGROUND_MODE, prefs, defaults.clockBackgroundMode)
     var clockAnchorX: Float by PrefDelegate(SettingsRepository.Keys.CLOCK_ANCHOR_X, prefs, defaults.clockAnchorX)
     var clockAnchorY: Float by PrefDelegate(SettingsRepository.Keys.CLOCK_ANCHOR_Y, prefs, defaults.clockAnchorY)
+    var clockRotationDegrees: Float by PrefDelegate(SettingsRepository.Keys.CLOCK_ROTATION_DEGREES, prefs, defaults.clockRotationDegrees)
     var weatherAnchorX: Float by PrefDelegate(SettingsRepository.Keys.WEATHER_ANCHOR_X, prefs, defaults.weatherAnchorX)
     var weatherAnchorY: Float by PrefDelegate(SettingsRepository.Keys.WEATHER_ANCHOR_Y, prefs, defaults.weatherAnchorY)
 
@@ -737,6 +782,7 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var browserEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.BROWSER_ENABLED, prefs, defaults.browserEnabled)
     var browserHomeUrl: String by PrefDelegate(SettingsRepository.Keys.BROWSER_HOME_URL, prefs, defaults.browserHomeUrl)
     var browserLastVisitedUrl: String by PrefDelegate(SettingsRepository.Keys.BROWSER_LAST_VISITED_URL, prefs, defaults.browserLastVisitedUrl)
+    var gymEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.GYM_ENABLED, prefs, defaults.gymEnabled)
 
     var jellyfinEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.JELLYFIN_ENABLED, prefs, defaults.jellyfinEnabled)
     var jellyfinServerUrl: String by PrefDelegate(SettingsRepository.Keys.JELLYFIN_SERVER_URL, prefs, defaults.jellyfinServerUrl)
@@ -828,6 +874,38 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
             .orEmpty()
         set(value) {
             prefs[SettingsRepository.Keys.DOWNLOADED_CLOCK_FONTS] = json.encodeToString(value)
+        }
+
+    var gymFeatureSettings: GymFeatureSettings
+        get() = prefs[SettingsRepository.Keys.GYM_FEATURE_SETTINGS]
+            ?.let { runCatching { json.decodeFromString<GymFeatureSettings>(it) }.getOrNull() }
+            ?: defaults.gymFeatureSettings
+        set(value) {
+            prefs[SettingsRepository.Keys.GYM_FEATURE_SETTINGS] = json.encodeToString(value)
+        }
+
+    var gymProfiles: List<GymProfile>
+        get() = prefs[SettingsRepository.Keys.GYM_PROFILES]
+            ?.let { runCatching { json.decodeFromString<List<GymProfile>>(it) }.getOrNull() }
+            ?: defaults.gymProfiles
+        set(value) {
+            prefs[SettingsRepository.Keys.GYM_PROFILES] = json.encodeToString(value)
+        }
+
+    var gymDevicePreferences: List<FitnessDevicePreference>
+        get() = prefs[SettingsRepository.Keys.GYM_DEVICE_PREFERENCES]
+            ?.let { runCatching { json.decodeFromString<List<FitnessDevicePreference>>(it) }.getOrNull() }
+            ?: defaults.gymDevicePreferences
+        set(value) {
+            prefs[SettingsRepository.Keys.GYM_DEVICE_PREFERENCES] = json.encodeToString(value)
+        }
+
+    var gymSessionHistory: List<GymSessionRecord>
+        get() = prefs[SettingsRepository.Keys.GYM_SESSION_HISTORY]
+            ?.let { runCatching { json.decodeFromString<List<GymSessionRecord>>(it) }.getOrNull() }
+            ?: defaults.gymSessionHistory
+        set(value) {
+            prefs[SettingsRepository.Keys.GYM_SESSION_HISTORY] = json.encodeToString(value)
         }
 
     var calendarWidgets: List<CalendarWidget>

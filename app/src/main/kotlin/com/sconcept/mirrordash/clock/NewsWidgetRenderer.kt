@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -38,7 +39,11 @@ import com.sconcept.mirrordash.ui.theme.MDTheme
 import kotlin.math.roundToInt
 
 @Composable
-internal fun NewsTickerWidgetSurface(widget: NewsWidget, news: NewsUiState) {
+internal fun NewsTickerWidgetSurface(
+    widget: NewsWidget,
+    news: NewsUiState,
+    fontFamily: FontFamily = FontFamily.Default,
+) {
     val textColor = Color(widget.colorArgb)
     val headlines = news.headlinesByFeedUrl[widget.feedUrl.trim()].orEmpty().take(widget.itemCount.coerceAtLeast(1))
     val shape = RoundedCornerShape(20.dp)
@@ -58,7 +63,7 @@ internal fun NewsTickerWidgetSurface(widget: NewsWidget, news: NewsUiState) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     "News",
-                    style = MDTheme.type.settingSubtitle.copy(fontSize = 14.sp, letterSpacing = 0.2.sp),
+                    style = MDTheme.type.settingSubtitle.copy(fontSize = 14.sp, letterSpacing = 0.2.sp, fontFamily = fontFamily),
                     color = textColor.copy(alpha = 0.7f),
                 )
                 if (headlines.isNotEmpty()) {
@@ -71,15 +76,20 @@ internal fun NewsTickerWidgetSurface(widget: NewsWidget, news: NewsUiState) {
             when {
                 widget.feedUrl.isBlank() -> Text(
                     "No feed configured",
-                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f),
+                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f, fontFamily = fontFamily),
                     color = textColor.copy(alpha = 0.55f),
                 )
                 headlines.isEmpty() -> Text(
                     "No headlines yet",
-                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f),
+                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f, fontFamily = fontFamily),
                     color = textColor.copy(alpha = 0.55f),
                 )
-                else -> MarqueeHeadlines(headlines = headlines, fontSizeSp = widget.fontSizeSp, textColor = textColor)
+                else -> MarqueeHeadlines(
+                    headlines = headlines,
+                    fontSizeSp = widget.fontSizeSp,
+                    textColor = textColor,
+                    fontFamily = fontFamily,
+                )
             }
         }
     }
@@ -90,13 +100,18 @@ internal fun NewsTickerWidgetSurface(widget: NewsWidget, news: NewsUiState) {
  * time. Two back-to-back copies of the joined string are laid side by side and translated by
  * exactly one copy's width per loop, so the wrap is invisible. */
 @Composable
-private fun MarqueeHeadlines(headlines: List<com.sconcept.mirrordash.news.NewsHeadline>, fontSizeSp: Int, textColor: Color) {
-    val style = MDTheme.type.settingSubtitle.copy(fontSize = fontSizeSp.sp)
+private fun MarqueeHeadlines(
+    headlines: List<com.sconcept.mirrordash.news.NewsHeadline>,
+    fontSizeSp: Int,
+    textColor: Color,
+    fontFamily: FontFamily,
+) {
+    val style = MDTheme.type.settingSubtitle.copy(fontSize = fontSizeSp.sp, fontFamily = fontFamily)
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val content = headlines.joinToString("        •        ") { it.title } + "        •        "
 
-    val measured = remember(content, fontSizeSp) { textMeasurer.measure(content, style) }
+    val measured = remember(content, fontSizeSp, fontFamily) { textMeasurer.measure(content, style) }
     val contentWidthPx = measured.size.width.toFloat().coerceAtLeast(1f)
     val pixelsPerSecond = 46f
     val durationMillis = ((contentWidthPx / pixelsPerSecond) * 1000).roundToInt().coerceIn(4000, 40000)

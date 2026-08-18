@@ -9,9 +9,11 @@ data class StocksWidget(
     override val id: String,
     val symbols: List<String> = emptyList(),
     val fontSizeSp: Int = 18,
+    val fontId: String = CLOCK_FONT_SYSTEM_DEFAULT,
     val colorArgb: Int = 0xFFF5F3EF.toInt(),
     override val anchorX: Float = 0.94f,
     override val anchorY: Float = 0.6f,
+    override val rotationDegrees: Float = 0f,
 ) : AnchoredWidget
 
 fun defaultStocksWidget(

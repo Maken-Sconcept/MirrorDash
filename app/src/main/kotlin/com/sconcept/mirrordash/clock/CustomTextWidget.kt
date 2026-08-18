@@ -31,6 +31,7 @@ data class CustomTextWidget(
     val animation: String = TEXT_WIDGET_ANIMATION_NONE,
     override val anchorX: Float = 0.5f,
     override val anchorY: Float = 0.5f,
+    override val rotationDegrees: Float = 0f,
 ) : AnchoredWidget
 
 object TextWidgetFonts {

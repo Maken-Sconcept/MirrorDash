@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
@@ -58,6 +59,7 @@ private enum class SettingsSection(val title: String, val subtitle: String) {
     WALKIE_TALKIE("Walkie-Talkie", "Peers, target, and floating button"),
     AIRPLAY("AirPlay", "Receiver name, pairing, and mirror quality"),
     BROWSER("Browser", "Optional quick web tab inside MirrorDash"),
+    GYM("Gym & Workouts", "Profiles, HUD, mock equipment, and developer tools"),
     JELLYFIN("Jellyfin", "Media server address and playback-focused web tab"),
     HOME_ASSISTANT("Home Assistant", "Dashboard address and the tab it lives on"),
     KODI("Kodi", "Launch the installed Kodi app from its own tab"),
@@ -109,6 +111,7 @@ fun SettingsScreen(
                 SettingsSection.WALKIE_TALKIE -> SectionScaffold(section.title) { WalkieTalkieSettingsContent(uiState, viewModel) }
                 SettingsSection.AIRPLAY -> SectionScaffold(section.title) { AirPlaySettingsContent(uiState, viewModel) }
                 SettingsSection.BROWSER -> SectionScaffold(section.title) { BrowserSettingsContent(uiState, viewModel) }
+                SettingsSection.GYM -> SectionScaffold(section.title) { GymSettingsContent(uiState, viewModel) }
                 SettingsSection.JELLYFIN -> SectionScaffold(section.title) { JellyfinSettingsContent(uiState, viewModel) }
                 SettingsSection.HOME_ASSISTANT -> SectionScaffold(section.title) { HomeAssistantSettingsContent(uiState, viewModel) }
                 SettingsSection.KODI -> SectionScaffold(section.title) { KodiSettingsContent(uiState, viewModel) }
@@ -185,6 +188,7 @@ private fun sectionIcon(section: SettingsSection) = when (section) {
     SettingsSection.WALKIE_TALKIE -> Icons.Filled.Podcasts
     SettingsSection.AIRPLAY -> Icons.Filled.Cast
     SettingsSection.BROWSER -> Icons.Filled.Language
+    SettingsSection.GYM -> Icons.Filled.FitnessCenter
     SettingsSection.JELLYFIN -> Icons.Filled.Movie
     SettingsSection.HOME_ASSISTANT -> Icons.Filled.Home
     SettingsSection.KODI -> Icons.Filled.Movie

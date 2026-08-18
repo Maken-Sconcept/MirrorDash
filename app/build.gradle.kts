@@ -125,9 +125,14 @@ dependencies {
     // bilibili/ijkplayer is archived/unmaintained and its old jcenter artifacts no longer resolve
     // at all, so this is the only buildable source for it left, not a preference over the
     // original.
+    // All three must stay on the same version - the native .so and the Java IjkMediaPlayer
+    // wrapper call back into each other by method name (JNI FindClass/GetMethodID), and a
+    // mismatched pair (previously java 2.0.19 against armv7a 2.0.7 / arm64 2.0.10) aborts the
+    // whole process with a CheckJNI "pending exception" crash the instant an IjkMediaPlayer is
+    // constructed, e.g. NoSuchMethodError on IjkMediaPlayer._setApmStatus.
     implementation("com.tencent.iot.thirdparty.android:ijkplayer-java:2.0.19")
-    implementation("com.tencent.iot.thirdparty.android:ijkplayer-armv7a:2.0.7")
-    implementation("com.tencent.iot.thirdparty.android:ijkplayer-arm64:2.0.10")
+    implementation("com.tencent.iot.thirdparty.android:ijkplayer-armv7a:2.0.19")
+    implementation("com.tencent.iot.thirdparty.android:ijkplayer-arm64:2.0.19")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

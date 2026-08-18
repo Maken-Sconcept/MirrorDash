@@ -24,9 +24,12 @@ import java.util.Calendar
 data class ClockAppearance(
     val fontSizeSp: Int = DEFAULT_CLOCK_FONT_SIZE_SP,
     val fontId: String = CLOCK_FONT_SYSTEM_DEFAULT,
+    val styleId: String = CLOCK_STYLE_BIG_SMALL,
     val textColor: Color = Color.White,
+    val accentColor: Color = Color(0xFFE8A659),
     val background: ClockBackground = ClockBackground.SolidColor(Color.Black),
     val clockAnchor: OverlayAnchor = OverlayAnchor(0.06f, 0.82f),
+    val clockRotationDegrees: Float = 0f,
     val weatherWidgets: List<WeatherWidget> = emptyList(),
     val downloadedClockFonts: List<DownloadedClockFont> = emptyList(),
     val textWidgets: List<CustomTextWidget> = emptyList(),
@@ -70,13 +73,16 @@ class ClockViewModel(
             ClockAppearance(
                 fontSizeSp = it.clockFontSizeSp,
                 fontId = it.clockFontId,
+                styleId = it.clockStyleId,
                 textColor = Color(it.clockTextColorArgb),
+                accentColor = Color(it.clockAccentColorArgb),
                 background = if (photoramaActive) {
                     ClockBackground.Photorama
                 } else {
                     ClockBackground.SolidColor(Color(it.clockBackgroundColorArgb))
                 },
                 clockAnchor = OverlayAnchor(it.clockAnchorX, it.clockAnchorY),
+                clockRotationDegrees = it.clockRotationDegrees,
                 weatherWidgets = it.weatherWidgets,
                 downloadedClockFonts = it.downloadedClockFonts,
                 textWidgets = it.customTextWidgets,
@@ -110,6 +116,11 @@ class ClockViewModel(
                 clockAnchorY = clamped.y
             }
         }
+    }
+
+    fun setClockRotation(degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch { settingsRepository.update { clockRotationDegrees = normalized } }
     }
 
     /** Kept entirely separate from [setClockAnchor] - dragging the clock on the hidden Night
@@ -146,6 +157,61 @@ class ClockViewModel(
         }
     }
 
+    fun setWeatherWidgetRotation(id: String, degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        val current = appearance.value.weatherWidgets
+        viewModelScope.launch {
+            settingsRepository.update {
+                weatherWidgets = current.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
+            }
+        }
+    }
+
+    /** Mirrors SettingsViewModel's own removeXxxWidget functions (the ones its widget-list
+     * editors use) - duplicated here rather than reused directly so the trash icon that appears
+     * mid-drag on the Clock page (see [DraggableAnchor]'s `onRemove`) can call straight through
+     * `clockViewModel::xxx`, the same wiring convention every other ClockScreen callback already
+     * uses, instead of threading SettingsViewModel into ClockScreen just for this. */
+    fun removeWeatherWidget(id: String) {
+        val current = appearance.value.weatherWidgets
+        viewModelScope.launch { settingsRepository.update { weatherWidgets = current.filterNot { it.id == id } } }
+    }
+
+    fun removeTextWidget(id: String) {
+        val current = appearance.value.textWidgets
+        viewModelScope.launch { settingsRepository.update { customTextWidgets = current.filterNot { it.id == id } } }
+    }
+
+    fun removeCalendarWidget(id: String) {
+        val current = appearance.value.calendarWidgets
+        viewModelScope.launch { settingsRepository.update { calendarWidgets = current.filterNot { it.id == id } } }
+    }
+
+    fun removeTasksWidget(id: String) {
+        val current = appearance.value.tasksWidgets
+        viewModelScope.launch { settingsRepository.update { tasksWidgets = current.filterNot { it.id == id } } }
+    }
+
+    fun removeStocksWidget(id: String) {
+        val current = appearance.value.stocksWidgets
+        viewModelScope.launch { settingsRepository.update { stocksWidgets = current.filterNot { it.id == id } } }
+    }
+
+    fun removeNewsWidget(id: String) {
+        val current = appearance.value.newsWidgets
+        viewModelScope.launch { settingsRepository.update { newsWidgets = current.filterNot { it.id == id } } }
+    }
+
+    /** The main clock digits aren't list-backed like the widgets above - there's only ever one,
+     * so "remove" here means the same thing the existing Settings > Clock > "Show clock" switch
+     * already does ([com.sconcept.mirrordash.settings.SettingsViewModel.setClockShowTime]) -
+     * this just gives the Clock page's own trash icon a `clockViewModel::xxx` call to reach it
+     * without threading SettingsViewModel in. Re-enabling it is still only reachable from that
+     * Settings switch - there's no on-canvas affordance for an element that isn't there anymore. */
+    fun hideClockTime() {
+        viewModelScope.launch { settingsRepository.update { clockShowTime = false } }
+    }
+
     /** Called while dragging a text widget on the Clock page itself - Settings owns everything
      * else about a widget (text/size/color/font/animation/add/remove), but position is set by
      * dragging in place, same as the clock/weather clusters. */
@@ -156,6 +222,15 @@ class ClockViewModel(
                 customTextWidgets = customTextWidgets.map {
                     if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
                 }
+            }
+        }
+    }
+
+    fun setTextWidgetRotation(id: String, degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch {
+            settingsRepository.update {
+                customTextWidgets = customTextWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
             }
         }
     }
@@ -171,6 +246,15 @@ class ClockViewModel(
         }
     }
 
+    fun setCalendarWidgetRotation(id: String, degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch {
+            settingsRepository.update {
+                calendarWidgets = calendarWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
+            }
+        }
+    }
+
     fun setTasksWidgetAnchor(id: String, anchor: OverlayAnchor) {
         val clamped = ClockLayoutHelper.clamp(anchor)
         viewModelScope.launch {
@@ -178,6 +262,15 @@ class ClockViewModel(
                 tasksWidgets = tasksWidgets.map {
                     if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
                 }
+            }
+        }
+    }
+
+    fun setTasksWidgetRotation(id: String, degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch {
+            settingsRepository.update {
+                tasksWidgets = tasksWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
             }
         }
     }
@@ -193,6 +286,15 @@ class ClockViewModel(
         }
     }
 
+    fun setStocksWidgetRotation(id: String, degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch {
+            settingsRepository.update {
+                stocksWidgets = stocksWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
+            }
+        }
+    }
+
     fun setNewsWidgetAnchor(id: String, anchor: OverlayAnchor) {
         val clamped = ClockLayoutHelper.clamp(anchor)
         viewModelScope.launch {
@@ -200,6 +302,15 @@ class ClockViewModel(
                 newsWidgets = newsWidgets.map {
                     if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it
                 }
+            }
+        }
+    }
+
+    fun setNewsWidgetRotation(id: String, degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch {
+            settingsRepository.update {
+                newsWidgets = newsWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
             }
         }
     }

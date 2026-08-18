@@ -10,13 +10,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -48,11 +48,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.sconcept.mirrordash.clock.ClockFontLibrary
+import com.sconcept.mirrordash.clock.ClockRenderData
+import com.sconcept.mirrordash.clock.ClockStyleCatalog
+import com.sconcept.mirrordash.clock.ClockStyleDefinition
+import com.sconcept.mirrordash.clock.ClockStyleScene
 import com.sconcept.mirrordash.clock.DownloadedClockFont
 import com.sconcept.mirrordash.clock.GoogleFontCatalogEntry
+import com.sconcept.mirrordash.clock.rememberClockFontFamily
 import com.sconcept.mirrordash.nas.model.SmbFileItem
 import com.sconcept.mirrordash.settings.CLOCK_BACKGROUND_MODE_PHOTORAMA
 import com.sconcept.mirrordash.settings.NasTestResult
@@ -92,6 +98,38 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
 
     Spacer(Modifier.height(28.dp))
 
+    SettingGroup(title = "Clock style") {
+        Text(
+            "Choose the layout language first, then tune the colors and base font.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        ClockStyleCatalog.presets.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                row.forEach { style ->
+                    ClockStyleCard(
+                        style = style,
+                        selected = settings.clockStyleId == style.id,
+                        fontId = settings.clockFontId,
+                        downloadedFonts = settings.downloadedClockFonts,
+                        primaryColor = Color(settings.clockTextColorArgb),
+                        accentColor = Color(settings.clockAccentColorArgb),
+                        onClick = { viewModel.setClockStyle(style.id) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (row.size == 1) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+
+    Spacer(Modifier.height(28.dp))
+
     SettingGroup(title = "Clock font") {
         Text(
             ClockFontLibrary.label(settings.clockFontId, settings.downloadedClockFonts),
@@ -106,27 +144,6 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
             color = MDTheme.colors.textTertiary,
         )
         Spacer(Modifier.height(12.dp))
-
-        val baseFonts = ClockFontLibrary.starterPack.mapNotNull { bundled ->
-            settings.downloadedClockFonts.firstOrNull { it.id == bundled.id }
-                ?: DownloadedClockFont(
-                    id = bundled.id,
-                    family = bundled.family,
-                    category = bundled.category,
-                    license = bundled.license,
-                    localPath = bundled.assetPath,
-                    sourcePath = bundled.assetPath,
-                    downloadedAtEpochMs = 0L,
-                )
-        }
-        baseFonts.forEach { bundled ->
-            DownloadedClockFontRow(
-                font = bundled,
-                selected = settings.clockFontId == bundled.id,
-                onUse = { viewModel.setClockFont(bundled.id) },
-                onDelete = null,
-            )
-        }
 
         Button(
             onClick = { showClockFontBrowser = true },
@@ -151,11 +168,21 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
 
     Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "Clock color") {
+    SettingGroup(title = "Primary color") {
         ColorSwatchRow(
             colors = ClockColorPresets,
             selected = Color(settings.clockTextColorArgb),
             onSelect = { viewModel.setClockTextColor(it) },
+        )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Accent color") {
+        ColorSwatchRow(
+            colors = ClockColorPresets,
+            selected = Color(settings.clockAccentColorArgb),
+            onSelect = { viewModel.setClockAccentColor(it) },
         )
     }
 
@@ -544,6 +571,68 @@ private fun PhotoramaScheduleSettings(settings: MirrorDashSettings, viewModel: S
                 valueRange = 0f..1439f,
                 steps = 95,
                 colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+            )
+        }
+    }
+}
+
+private val PreviewClockData = ClockRenderData(
+    hour = "9",
+    minute = "41",
+    hourPadded = "09",
+    minutePadded = "41",
+    timeText = "9:41",
+    infoLine = "MON  ·  AUG 17  ·  72°",
+    weatherGlyph = "☀",
+)
+
+@Composable
+private fun ClockStyleCard(
+    style: ClockStyleDefinition,
+    selected: Boolean,
+    fontId: String,
+    downloadedFonts: List<DownloadedClockFont>,
+    primaryColor: Color,
+    accentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val fontFamily = rememberClockFontFamily(fontId, downloadedFonts)
+    val borderColor = if (selected) MDTheme.colors.accent else MDTheme.colors.divider
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(MDTheme.colors.surface)
+            .border(width = if (selected) 2.dp else 1.dp, color = borderColor, shape = RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+    ) {
+        Text(style.title, style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary)
+        Text(
+            style.subtitle,
+            style = MDTheme.type.caption,
+            color = MDTheme.colors.textSecondary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(12.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(124.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MDTheme.colors.backgroundElevated)
+                .padding(12.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            ClockStyleScene(
+                style = style,
+                data = PreviewClockData,
+                baseSizeSp = 28f,
+                fontFamily = fontFamily,
+                primaryColor = primaryColor,
+                accentColor = accentColor,
+                lineSizeSp = 8f,
             )
         }
     }

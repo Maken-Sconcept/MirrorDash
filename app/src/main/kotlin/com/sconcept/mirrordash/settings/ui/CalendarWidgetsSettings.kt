@@ -52,6 +52,7 @@ fun CalendarWidgetsSettingsContent(
                 onChange = { transform -> viewModel.updateCalendarWidget(widget.id, transform) },
                 onDelete = onDelete,
                 onRequestCalendarAccess = onRequestCalendarAccess,
+                downloadedFonts = uiState.settings.downloadedClockFonts,
             )
         },
     )
@@ -92,6 +93,7 @@ private fun CalendarWidgetEditor(
     onChange: ((CalendarWidget) -> CalendarWidget) -> Unit,
     onDelete: () -> Unit,
     onRequestCalendarAccess: () -> Unit,
+    downloadedFonts: List<com.sconcept.mirrordash.clock.DownloadedClockFont>,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) {
@@ -149,6 +151,16 @@ private fun CalendarWidgetEditor(
             onValueChange = { value -> onChange { it.copy(fontSizeSp = value.toInt().coerceIn(12, 40)) } },
             valueRange = 12f..40f,
             colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+        )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Font") {
+        WidgetFontPicker(
+            selectedFontId = widget.fontId,
+            downloadedFonts = downloadedFonts,
+            onSelect = { fontId -> onChange { it.copy(fontId = fontId) } },
         )
     }
 

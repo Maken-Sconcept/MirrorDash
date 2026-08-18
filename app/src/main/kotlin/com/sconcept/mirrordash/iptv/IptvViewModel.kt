@@ -22,6 +22,16 @@ import kotlinx.coroutines.launch
 
 private const val TAG = "IptvViewModel"
 
+/** How long a typed channel-number digit sits on screen before it's treated as "finished" and
+ * looked up - see [IptvViewModel.enterChannelDigit]. A remote has no dedicated "confirm channel"
+ * key most apps can rely on, so inactivity is the confirm signal instead, the same way a classic
+ * TV's own channel-number OSD works. */
+private const val CHANNEL_NUMBER_COMMIT_DEBOUNCE_MS = 1_500L
+
+/** Channel numbers in practice are 1-4 digits; a 5th digit almost certainly means a fat-fingered
+ * remote press, not a real channel, so it's dropped rather than extending the draft forever. */
+private const val MAX_CHANNEL_NUMBER_DRAFT_LENGTH = 4
+
 /** [BLOCKED] is its own state, not folded into [ERROR] - a blocked/expired account is a portal
  * response, not a failure to connect (handshake and token both succeeded, see
  * [StalkerPortalClient.blockMessage]'s doc comment), and the tab has something concrete to show
@@ -124,6 +134,11 @@ data class IptvUiState(
      * [IptvViewModel.setViewMode]'s doc comment), not reset by switching tabs or by [tearDown]. */
     val moviesViewMode: VodViewMode = VodViewMode.GRID,
     val seriesViewMode: VodViewMode = VodViewMode.GRID,
+
+    /** Non-null shows the on-screen "typing a channel number" OSD - see
+     * [IptvViewModel.enterChannelDigit]. A TV-remote-only concept: there's no touch entry point
+     * that ever sets this. */
+    val channelNumberDraft: String? = null,
 ) {
     val currentChannel: StalkerChannel? get() = channels.getOrNull(currentChannelIndex)
 
@@ -182,6 +197,7 @@ class IptvViewModel(
     private var connectJob: Job? = null
     private var sleepTimeoutJob: Job? = null
     private var volumePersistJob: Job? = null
+    private var channelNumberJob: Job? = null
 
     // Parental control - kept fresh from Settings without distinctUntilChanged (cheap field
     // assignment, not a WalkieTalkieEngine-style expensive side effect, so no debounce needed).
@@ -453,6 +469,48 @@ class IptvViewModel(
 
     fun nextChannel() = stepChannel(1)
     fun previousChannel() = stepChannel(-1)
+
+    /** TV-remote number-pad entry (brief: "typing numbers ... should attempt to change the
+     * channel to the selected number"). Each digit extends [IptvUiState.channelNumberDraft] and
+     * restarts a short inactivity timer (the cancel-and-relaunch idiom [setVolume] also uses to
+     * debounce); the timer firing - not a dedicated confirm key - is what actually commits the
+     * lookup, since number-pad remotes rarely expose one MirrorDash can rely on. Only meaningful
+     * for live TV: Movies/Series have no channel numbers to jump to. */
+    fun enterChannelDigit(digit: Char) {
+        val current = _uiState.value
+        if (current.contentTab != IptvContentTab.LIVE || current.pendingPinChallenge != null) return
+        val next = ((_uiState.value.channelNumberDraft ?: "") + digit).take(MAX_CHANNEL_NUMBER_DRAFT_LENGTH)
+        _uiState.update { it.copy(channelNumberDraft = next) }
+        channelNumberJob?.cancel()
+        channelNumberJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(CHANNEL_NUMBER_COMMIT_DEBOUNCE_MS)
+            commitChannelNumberDraft()
+        }
+    }
+
+    /** Lets the draft OSD be dismissed early (e.g. Back) without waiting out the debounce. */
+    fun cancelChannelNumberEntry() {
+        channelNumberJob?.cancel()
+        channelNumberJob = null
+        _uiState.update { it.copy(channelNumberDraft = null) }
+    }
+
+    private fun commitChannelNumberDraft() {
+        channelNumberJob = null
+        val draft = _uiState.value.channelNumberDraft
+        _uiState.update { it.copy(channelNumberDraft = null) }
+        if (!draft.isNullOrEmpty()) selectChannelByNumber(draft)
+    }
+
+    /** Matches [StalkerChannel.number] with leading zeros ignored on both sides, so a portal
+     * that numbers a channel "007" still responds to a remote typing plain "7". Goes through
+     * [selectChannel] rather than [applyChannelSelection] directly so a censored match still
+     * raises the parental PIN challenge instead of silently tuning to it. */
+    fun selectChannelByNumber(number: String) {
+        val target = number.trimStart('0').ifEmpty { "0" }
+        val index = _uiState.value.channels.indexOfFirst { it.number.trimStart('0').ifEmpty { "0" } == target }
+        if (index >= 0) selectChannel(index)
+    }
 
     /** Deliberately doesn't route through [applyChannelSelection] on the unlocked path - channel
      * up/down from a remote shouldn't close an open channel list/Guide the way explicitly picking
@@ -860,6 +918,8 @@ class IptvViewModel(
         connectJob = null
         sleepTimeoutJob?.cancel()
         sleepTimeoutJob = null
+        channelNumberJob?.cancel()
+        channelNumberJob = null
         releasePlayer()
         if (client != null) sessionCoordinator.release()
         client = null

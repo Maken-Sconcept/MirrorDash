@@ -26,6 +26,7 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
 
     private data class PageAvailability(
         val includeBrowser: Boolean,
+        val includeGym: Boolean,
         val includeJellyfin: Boolean,
         val includeHomeAssistant: Boolean,
         val includeIptv: Boolean,
@@ -38,6 +39,7 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
     // because returning Home from the external Kodi app should not immediately launch it again.
     private var currentOrderedPages = LauncherPages.ordered(
         includeBrowserPage = true,
+        includeGymPage = true,
         includeJellyfinPage = true,
         includeHomeAssistantPage = true,
         includeIptvPage = true,
@@ -50,6 +52,7 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
                 .map {
                     PageAvailability(
                         includeBrowser = it.browserEnabled,
+                        includeGym = it.gymEnabled,
                         includeJellyfin = it.jellyfinEnabled,
                         includeHomeAssistant = it.homeAssistantEnabled,
                         includeIptv = it.iptvEnabled,
@@ -60,6 +63,7 @@ class LauncherViewModel(private val settingsRepository: SettingsRepository) : Vi
                 .collect { availability ->
                     currentOrderedPages = LauncherPages.ordered(
                         includeBrowserPage = availability.includeBrowser,
+                        includeGymPage = availability.includeGym,
                         includeJellyfinPage = availability.includeJellyfin,
                         includeHomeAssistantPage = availability.includeHomeAssistant,
                         includeIptvPage = availability.includeIptv,

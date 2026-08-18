@@ -27,6 +27,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
@@ -52,10 +54,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import kotlinx.coroutines.delay
@@ -106,6 +113,9 @@ fun IptvVodBrowser(
     onCheckHealth: (StalkerVodItem) -> Unit,
     onPlay: (StalkerVodItem) -> Unit,
     onDownload: (StalkerVodItem) -> Unit,
+    /** Non-null (and always [RecordingTrigger.DOWNLOAD]) while a Movies/Series download is in
+     * flight - see [VodItemCard]/[VodItemRow]'s doc comment for how each card uses it. */
+    activeDownload: ActiveRecording?,
     modifier: Modifier = Modifier,
 ) {
     val categories = if (contentType == VodContentType.MOVIES) uiState.vodCategories else uiState.seriesCategories
@@ -119,6 +129,20 @@ fun IptvVodBrowser(
     val viewMode = if (contentType == VodContentType.MOVIES) uiState.moviesViewMode else uiState.seriesViewMode
     val activeDeepQuery = if (contentType == VodContentType.MOVIES) uiState.vodActiveSearchQuery else uiState.seriesActiveSearchQuery
     val label = if (contentType == VodContentType.MOVIES) "movies" else "series"
+
+    // Picking a result is the far more common way out of a search than pressing the IME's own
+    // search/enter key (SearchBox handles that path) - tapping a grid/list item while the
+    // keyboard is still up otherwise leaves it lingering over the newly-opened player, since a
+    // composable disposing (the search row scrolls out of view under nothing, in FILTER mode; the
+    // whole browser gets covered by VodPlayerScreen either way) doesn't itself tell Android to
+    // hide the IME.
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val handlePlay: (StalkerVodItem) -> Unit = { item ->
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+        onPlay(item)
+    }
 
     // Keyed on contentType, not remembered anywhere in IptvUiState - unlike the view mode toggle
     // below, a search query is scoped to "whatever I'm looking at right now", so switching tabs
@@ -212,16 +236,18 @@ fun IptvVodBrowser(
                 items = filteredItems,
                 health = uiState.streamHealth,
                 onCheckHealth = onCheckHealth,
-                onPlay = onPlay,
+                onPlay = handlePlay,
                 onDownload = onDownload,
+                activeDownload = activeDownload,
                 footer = { LoadMoreFooter(hasMore = hasMore, loading = loadingMore, onLoadMore = onLoadMore) },
             )
             else -> VodItemGrid(
                 items = filteredItems,
                 health = uiState.streamHealth,
                 onCheckHealth = onCheckHealth,
-                onPlay = onPlay,
+                onPlay = handlePlay,
                 onDownload = onDownload,
+                activeDownload = activeDownload,
                 footer = { LoadMoreFooter(hasMore = hasMore, loading = loadingMore, onLoadMore = onLoadMore) },
             )
         }
@@ -292,6 +318,8 @@ private fun SearchAndViewModeRow(
  * copy, since it has no view-mode toggle to pair it with. */
 @Composable
 fun SearchBox(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
@@ -312,6 +340,15 @@ fun SearchBox(query: String, onQueryChange: (String) -> Unit, modifier: Modifier
                 singleLine = true,
                 textStyle = MDTheme.type.body.copy(color = Color.White),
                 cursorBrush = SolidColor(MDTheme.colors.accent),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                // The IME's own search/enter key is the one path selecting a result never covers -
+                // tapping a result closes the keyboard from the *caller* side (see IptvVodBrowser's
+                // and ChannelListPanel's onSelect/onPlay wrappers), but someone who just wants to
+                // dismiss the keyboard without picking anything needs this too.
+                keyboardActions = KeyboardActions(onSearch = {
+                    keyboardController?.hide()
+                    focusManager.clearFocus(force = true)
+                }),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -385,6 +422,7 @@ private fun VodItemGrid(
     onCheckHealth: (StalkerVodItem) -> Unit,
     onPlay: (StalkerVodItem) -> Unit,
     onDownload: (StalkerVodItem) -> Unit,
+    activeDownload: ActiveRecording?,
     footer: @Composable () -> Unit,
 ) {
     LazyVerticalGrid(
@@ -403,14 +441,26 @@ private fun VodItemGrid(
                 health = health[item.id] ?: StreamHealth.UNKNOWN,
                 onPlay = { onPlay(item) },
                 onDownload = { onDownload(item) },
+                activeDownload = activeDownload,
             )
         }
         item(span = { GridItemSpan(maxLineSpan) }) { footer() }
     }
 }
 
+/** [activeDownload] is whichever item is downloading right now, app-wide (only one runs at a
+ * time - see [IptvRecordingEngine]'s doc comment) - so this card only cares whether it's *this*
+ * item (shows progress instead of the download icon) or some *other* item (download icon stays
+ * but disabled, so tapping it during someone else's download doesn't just silently do nothing -
+ * see [IptvRecordingEngine.downloadVodItem]'s no-op guard). */
 @Composable
-private fun VodItemCard(item: StalkerVodItem, health: StreamHealth, onPlay: () -> Unit, onDownload: () -> Unit) {
+private fun VodItemCard(
+    item: StalkerVodItem,
+    health: StreamHealth,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    activeDownload: ActiveRecording?,
+) {
     Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onPlay)) {
         Box(
             modifier = Modifier
@@ -437,17 +487,20 @@ private fun VodItemCard(item: StalkerVodItem, health: StreamHealth, onPlay: () -
 
             HealthDot(health = health, modifier = Modifier.align(Alignment.TopStart).padding(8.dp))
 
-            IconButton(
+            VodDownloadButton(
+                isDownloading = activeDownload?.channelId == item.id,
+                progressFraction = downloadProgressFraction(activeDownload, item.id),
+                enabled = activeDownload == null,
                 onClick = onDownload,
+                contentDescription = "Download ${item.name}",
+                iconSize = 16.dp,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(4.dp)
                     .size(32.dp)
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.5f)),
-            ) {
-                Icon(Icons.Filled.Download, contentDescription = "Download ${item.name}", tint = Color.White, modifier = Modifier.size(16.dp))
-            }
+            )
 
             Icon(
                 Icons.Filled.PlayArrow,
@@ -476,19 +529,32 @@ private fun VodItemList(
     onCheckHealth: (StalkerVodItem) -> Unit,
     onPlay: (StalkerVodItem) -> Unit,
     onDownload: (StalkerVodItem) -> Unit,
+    activeDownload: ActiveRecording?,
     footer: @Composable () -> Unit,
 ) {
     LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
         items(items, key = { it.id }) { item ->
             LaunchedEffect(item.id) { onCheckHealth(item) }
-            VodItemRow(item = item, health = health[item.id] ?: StreamHealth.UNKNOWN, onPlay = { onPlay(item) }, onDownload = { onDownload(item) })
+            VodItemRow(
+                item = item,
+                health = health[item.id] ?: StreamHealth.UNKNOWN,
+                onPlay = { onPlay(item) },
+                onDownload = { onDownload(item) },
+                activeDownload = activeDownload,
+            )
         }
         item { footer() }
     }
 }
 
 @Composable
-private fun VodItemRow(item: StalkerVodItem, health: StreamHealth, onPlay: () -> Unit, onDownload: () -> Unit) {
+private fun VodItemRow(
+    item: StalkerVodItem,
+    health: StreamHealth,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    activeDownload: ActiveRecording?,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().clickable(onClick = onPlay).padding(vertical = 8.dp),
@@ -543,8 +609,73 @@ private fun VodItemRow(item: StalkerVodItem, health: StreamHealth, onPlay: () ->
                 )
             }
         }
-        IconButton(onClick = onDownload) {
-            Icon(Icons.Filled.Download, contentDescription = "Download ${item.name}", tint = Color.White)
+        VodDownloadButton(
+            isDownloading = activeDownload?.channelId == item.id,
+            progressFraction = downloadProgressFraction(activeDownload, item.id),
+            enabled = activeDownload == null,
+            onClick = onDownload,
+            contentDescription = "Download ${item.name}",
+            iconSize = 24.dp,
+            modifier = Modifier.size(40.dp),
+        )
+    }
+}
+
+/** `null` if [activeDownload] isn't [id] (irrelevant to this card) or hasn't reported a
+ * [ActiveRecording.totalBytes] yet (server sent no `Content-Length`, or the very first tick
+ * hasn't landed) - either way [VodDownloadButton] falls back to an indeterminate spinner. */
+private fun downloadProgressFraction(activeDownload: ActiveRecording?, id: String): Float? {
+    val recording = activeDownload?.takeIf { it.channelId == id } ?: return null
+    val total = recording.totalBytes?.takeIf { it > 0 } ?: return null
+    return (recording.bytesWritten.toFloat() / total).coerceIn(0f, 1f)
+}
+
+/** The download affordance for a single VOD card/row - a plain icon button normally, a
+ * determinate (or, briefly before the first byte-count tick, indeterminate) circular progress
+ * indicator while [isDownloading], and disabled rather than hidden when [enabled] is false (some
+ * *other* item is downloading right now - only one recording/download runs at a time, see
+ * [IptvRecordingEngine]) so tapping it still gives feedback instead of silently doing nothing. */
+@Composable
+private fun VodDownloadButton(
+    isDownloading: Boolean,
+    progressFraction: Float?,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    contentDescription: String,
+    iconSize: Dp,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        if (isDownloading) {
+            if (progressFraction != null) {
+                CircularProgressIndicator(
+                    progress = { progressFraction },
+                    color = MDTheme.colors.accent,
+                    trackColor = Color.White.copy(alpha = 0.25f),
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Text(
+                    "${(progressFraction * 100).toInt()}%",
+                    style = MDTheme.type.caption.copy(fontSize = 8.sp),
+                    color = Color.White,
+                )
+            } else {
+                CircularProgressIndicator(
+                    color = MDTheme.colors.accent,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        } else {
+            IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxSize()) {
+                Icon(
+                    Icons.Filled.Download,
+                    contentDescription = contentDescription,
+                    tint = if (enabled) Color.White else Color.White.copy(alpha = 0.35f),
+                    modifier = Modifier.size(iconSize),
+                )
+            }
         }
     }
 }

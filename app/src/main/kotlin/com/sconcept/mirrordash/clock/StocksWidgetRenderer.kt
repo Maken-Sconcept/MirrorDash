@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sconcept.mirrordash.stocks.StockQuote
@@ -29,11 +30,16 @@ private val PositiveColor = Color(0xFF6FCF97)
 private val NegativeColor = Color(0xFFEB5757)
 
 /** Tabular-figure OpenType feature so symbol/price columns actually line up - real numeric
- * alignment, not a monospace "technical" costume. */
+ * alignment, not a monospace "technical" costume. Silently ignored by fonts that don't implement
+ * it, so it's safe to request unconditionally regardless of which font is active. */
 private const val TabularNums = "tnum"
 
 @Composable
-internal fun StocksTickerWidgetSurface(widget: StocksWidget, stocks: StocksUiState) {
+internal fun StocksTickerWidgetSurface(
+    widget: StocksWidget,
+    stocks: StocksUiState,
+    fontFamily: FontFamily = FontFamily.Default,
+) {
     val textColor = Color(widget.colorArgb)
     val shape = RoundedCornerShape(20.dp)
     Box(
@@ -51,7 +57,7 @@ internal fun StocksTickerWidgetSurface(widget: StocksWidget, stocks: StocksUiSta
                 Spacer(Modifier.width(9.dp))
                 Text(
                     "Stocks",
-                    style = MDTheme.type.settingSubtitle.copy(fontSize = 14.sp, letterSpacing = 0.2.sp),
+                    style = MDTheme.type.settingSubtitle.copy(fontSize = 14.sp, letterSpacing = 0.2.sp, fontFamily = fontFamily),
                     color = textColor.copy(alpha = 0.7f),
                 )
             }
@@ -60,14 +66,20 @@ internal fun StocksTickerWidgetSurface(widget: StocksWidget, stocks: StocksUiSta
             if (widget.symbols.isEmpty()) {
                 Text(
                     "No symbols yet",
-                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f),
+                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f, fontFamily = fontFamily),
                     color = textColor.copy(alpha = 0.55f),
                 )
             } else {
                 Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
                     widget.symbols.forEach { symbol ->
                         val quote = stocks.quotesBySymbol[symbol.trim().uppercase()]
-                        StockRow(symbol = symbol.trim().uppercase(), quote = quote, fontSizeSp = widget.fontSizeSp, textColor = textColor)
+                        StockRow(
+                            symbol = symbol.trim().uppercase(),
+                            quote = quote,
+                            fontSizeSp = widget.fontSizeSp,
+                            textColor = textColor,
+                            fontFamily = fontFamily,
+                        )
                     }
                 }
             }
@@ -76,7 +88,7 @@ internal fun StocksTickerWidgetSurface(widget: StocksWidget, stocks: StocksUiSta
 }
 
 @Composable
-private fun StockRow(symbol: String, quote: StockQuote?, fontSizeSp: Int, textColor: Color) {
+private fun StockRow(symbol: String, quote: StockQuote?, fontSizeSp: Int, textColor: Color, fontFamily: FontFamily) {
     val change = quote?.changePercent
     val trendColor = when {
         change == null -> textColor.copy(alpha = 0.4f)
@@ -87,13 +99,13 @@ private fun StockRow(symbol: String, quote: StockQuote?, fontSizeSp: Int, textCo
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = symbol,
-            style = MDTheme.type.settingSubtitle.copy(fontSize = fontSizeSp.sp, fontFeatureSettings = TabularNums),
+            style = MDTheme.type.settingSubtitle.copy(fontSize = fontSizeSp.sp, fontFeatureSettings = TabularNums, fontFamily = fontFamily),
             color = textColor,
             modifier = Modifier.widthIn(min = 60.dp),
         )
         Text(
             text = quote?.price?.let { formatPrice(it) } ?: "--",
-            style = MDTheme.type.caption.copy(fontSize = fontSizeSp.sp, fontFeatureSettings = TabularNums),
+            style = MDTheme.type.caption.copy(fontSize = fontSizeSp.sp, fontFeatureSettings = TabularNums, fontFamily = fontFamily),
             color = textColor.copy(alpha = 0.88f),
             modifier = Modifier.widthIn(min = 64.dp),
         )
@@ -104,7 +116,7 @@ private fun StockRow(symbol: String, quote: StockQuote?, fontSizeSp: Int, textCo
         }
         Text(
             text = change?.let { "${if (it >= 0) "+" else ""}${(it * 100).roundToInt() / 100.0}%" } ?: "",
-            style = MDTheme.type.caption.copy(fontSize = (fontSizeSp * 0.88f).sp, fontFeatureSettings = TabularNums),
+            style = MDTheme.type.caption.copy(fontSize = (fontSizeSp * 0.88f).sp, fontFeatureSettings = TabularNums, fontFamily = fontFamily),
             color = trendColor,
         )
     }

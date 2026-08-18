@@ -25,6 +25,9 @@ import com.sconcept.mirrordash.clock.defaultNewsWidget
 import com.sconcept.mirrordash.clock.defaultStocksWidget
 import com.sconcept.mirrordash.clock.defaultTasksWidget
 import com.sconcept.mirrordash.clock.defaultWeatherWidget
+import com.sconcept.mirrordash.gym.FitnessDeviceSnapshot
+import com.sconcept.mirrordash.gym.GymActiveSessionState
+import com.sconcept.mirrordash.gym.GymHudMode
 import com.sconcept.mirrordash.nas.SmbRepository
 import com.sconcept.mirrordash.nas.SmbPaths
 import com.sconcept.mirrordash.nas.model.SmbConnectionState
@@ -86,6 +89,8 @@ data class SettingsUiState(
     val nearbyWalkieTalkiePeers: List<WalkieTalkieDiscoveredPeer> = emptyList(),
     val walkieTalkieState: WalkieTalkieUiState = WalkieTalkieUiState(),
     val airPlayState: AirPlayUiState = AirPlayUiState(),
+    val gymDebugDevices: List<FitnessDeviceSnapshot> = emptyList(),
+    val gymActiveSession: GymActiveSessionState? = null,
     val provisioningStatus: ProvisioningStatus? = null,
 )
 
@@ -102,6 +107,7 @@ class SettingsViewModel(application: Application, private val settingsRepository
     private val clockFontRepository = ClockFontRepository(application)
     private val walkieTalkieEngine = AppContainer.get(application).walkieTalkieEngine
     private val airPlayEngine = AppContainer.get(application).airPlayEngine
+    private val gymSessionEngine = AppContainer.get(application).gymSessionEngine
 
     private val _extra = MutableStateFlow(SettingsUiState())
 
@@ -110,13 +116,16 @@ class SettingsViewModel(application: Application, private val settingsRepository
         _extra,
         walkieTalkieEngine.uiState,
         airPlayEngine.uiState,
-    ) { settings, extra, walkieTalkie, airPlay ->
+        gymSessionEngine.runtimeState,
+    ) { settings, extra, walkieTalkie, airPlay, gymRuntime ->
         extra.copy(
             settings = settings,
             settingsLoaded = true,
             nearbyWalkieTalkiePeers = walkieTalkie.discoveredPeers,
             walkieTalkieState = walkieTalkie,
             airPlayState = airPlay,
+            gymDebugDevices = gymRuntime.devices,
+            gymActiveSession = gymRuntime.activeSession,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -142,8 +151,16 @@ class SettingsViewModel(application: Application, private val settingsRepository
         _extra.update { it.copy(clockFontStatusMessage = "Clock font updated to ${ClockFontLibrary.label(id, uiState.value.settings.downloadedClockFonts)}.") }
     }
 
+    fun setClockStyle(id: String) = viewModelScope.launch {
+        settingsRepository.update { clockStyleId = id }
+    }
+
     fun setClockTextColor(color: Color) = viewModelScope.launch {
         settingsRepository.update { clockTextColorArgb = color.toArgb() }
+    }
+
+    fun setClockAccentColor(color: Color) = viewModelScope.launch {
+        settingsRepository.update { clockAccentColorArgb = color.toArgb() }
     }
 
     fun setClockBackgroundColor(color: Color) = viewModelScope.launch {
@@ -642,6 +659,52 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun clearBrowserSession() = viewModelScope.launch {
         settingsRepository.update { browserLastVisitedUrl = "" }
+    }
+
+    // --- Gym & Workouts -----------------------------------------------------------------------
+
+    fun setGymEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { gymEnabled = enabled }
+    }
+
+    fun setGymSoundsEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { gymFeatureSettings = gymFeatureSettings.copy(soundsEnabled = enabled) }
+    }
+
+    fun setGymCountdownEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { gymFeatureSettings = gymFeatureSettings.copy(countdownEnabled = enabled) }
+    }
+
+    fun setGymShowHeartRate(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { gymFeatureSettings = gymFeatureSettings.copy(showHeartRate = enabled) }
+    }
+
+    fun setGymShowCalories(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { gymFeatureSettings = gymFeatureSettings.copy(showCalories = enabled) }
+    }
+
+    fun setGymShowScore(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { gymFeatureSettings = gymFeatureSettings.copy(showScore = enabled) }
+    }
+
+    fun setGymMockDevicesEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { gymFeatureSettings = gymFeatureSettings.copy(mockDevicesEnabled = enabled) }
+    }
+
+    fun setGymHudMode(mode: GymHudMode) = viewModelScope.launch {
+        settingsRepository.update { gymFeatureSettings = gymFeatureSettings.copy(hudMode = mode) }
+    }
+
+    fun connectGymDevice(deviceId: String) {
+        gymSessionEngine.scanAndConnect(deviceId)
+    }
+
+    fun reconnectGymDevice(deviceId: String) {
+        gymSessionEngine.disconnectDevice(deviceId)
+    }
+
+    fun disconnectGymDevice(deviceId: String) {
+        gymSessionEngine.disconnectDevice(deviceId)
     }
 
     // --- Jellyfin ------------------------------------------------------------------------------

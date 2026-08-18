@@ -1,6 +1,7 @@
 package com.sconcept.mirrordash.settings.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sconcept.mirrordash.clock.TaskItem
 import com.sconcept.mirrordash.clock.TasksWidget
+import com.sconcept.mirrordash.clock.isDone
+import com.sconcept.mirrordash.clock.isFileBacked
+import com.sconcept.mirrordash.clock.taskStatusLabel
+import com.sconcept.mirrordash.clock.withCompleted
+import com.sconcept.mirrordash.clock.withStatus
 import com.sconcept.mirrordash.settings.SettingsUiState
 import com.sconcept.mirrordash.settings.SettingsViewModel
 import com.sconcept.mirrordash.ui.theme.ClockColorPresets
@@ -51,6 +57,7 @@ fun TasksWidgetsSettingsContent(uiState: SettingsUiState, viewModel: SettingsVie
                 onBack = onBack,
                 onChange = { transform -> viewModel.updateTasksWidget(widget.id, transform) },
                 onDelete = onDelete,
+                downloadedFonts = uiState.settings.downloadedClockFonts,
             )
         },
     )
@@ -72,9 +79,9 @@ private fun TasksWidgetRow(widget: TasksWidget, onClick: () -> Unit, onDelete: (
             color = MDTheme.colors.accent,
         )
         Spacer(Modifier.width(14.dp))
-        val done = widget.items.count { it.completed }
+        val done = widget.items.count { it.isDone }
         Text(
-            "${widget.items.size} items, $done done",
+            if (widget.isFileBacked) "NAS CSV: ${widget.csvFilePath}" else "${widget.items.size} items, $done done",
             style = MDTheme.type.settingSubtitle,
             color = MDTheme.colors.textSecondary,
             modifier = Modifier.weight(1f),
@@ -91,6 +98,7 @@ private fun TasksWidgetEditor(
     onBack: () -> Unit,
     onChange: ((TasksWidget) -> TasksWidget) -> Unit,
     onDelete: () -> Unit,
+    downloadedFonts: List<com.sconcept.mirrordash.clock.DownloadedClockFont>,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) {
@@ -101,34 +109,61 @@ private fun TasksWidgetEditor(
     }
     Spacer(Modifier.height(16.dp))
 
-    SettingGroup(title = "Items") {
-        widget.items.forEachIndexed { index, item ->
-            TaskItemRow(
-                item = item,
-                onChange = { updated ->
-                    onChange { widget2 -> widget2.copy(items = widget2.items.map { if (it.id == item.id) updated else it }) }
-                },
-                onDelete = {
-                    onChange { widget2 -> widget2.copy(items = widget2.items.filterNot { it.id == item.id }) }
-                },
-            )
-            if (index != widget.items.lastIndex) Spacer(Modifier.height(6.dp))
-        }
-
-        Spacer(Modifier.height(if (widget.items.isEmpty()) 0.dp else 10.dp))
-
-        TextButton(
-            onClick = {
-                onChange { widget2 -> widget2.copy(items = widget2.items + TaskItem(id = java.util.UUID.randomUUID().toString())) }
-            },
-        ) {
-            Icon(Icons.Filled.Add, contentDescription = null, tint = MDTheme.colors.accent)
-            Spacer(Modifier.width(6.dp))
-            Text("Add item", color = MDTheme.colors.accent)
-        }
+    SettingGroup(title = "Source") {
+        BufferedTextField(
+            persistedValue = widget.csvFilePath,
+            onValueChange = { value -> onChange { it.copy(csvFilePath = value) } },
+            placeholder = { Text("Optional NAS CSV path, e.g. Shared/tasks.csv") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Uses the same NAS credentials as Photorama. Leave blank for manual tasks. CSV headers supported: task, start, due, assignees, status, reminder, completed.",
+            style = MDTheme.type.caption,
+            color = MDTheme.colors.textSecondary,
+        )
     }
 
     Spacer(Modifier.height(28.dp))
+
+    if (!widget.isFileBacked) {
+        SettingGroup(title = "Items") {
+            widget.items.forEachIndexed { index, item ->
+                TaskItemRow(
+                    item = item,
+                    onChange = { updated ->
+                        onChange { widget2 -> widget2.copy(items = widget2.items.map { if (it.id == item.id) updated else it }) }
+                    },
+                    onDelete = {
+                        onChange { widget2 -> widget2.copy(items = widget2.items.filterNot { it.id == item.id }) }
+                    },
+                )
+                if (index != widget.items.lastIndex) Spacer(Modifier.height(10.dp))
+            }
+
+            Spacer(Modifier.height(if (widget.items.isEmpty()) 0.dp else 10.dp))
+
+            TextButton(
+                onClick = {
+                    onChange { widget2 -> widget2.copy(items = widget2.items + TaskItem(id = java.util.UUID.randomUUID().toString())) }
+                },
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = MDTheme.colors.accent)
+                Spacer(Modifier.width(6.dp))
+                Text("Add item", color = MDTheme.colors.accent)
+            }
+        }
+        Spacer(Modifier.height(28.dp))
+    } else {
+        SettingGroup(title = "Imported tasks") {
+            Text(
+                "The Clock page will read live task details from that NAS CSV. Clear the path above if you want to hand-edit tasks here again.",
+                style = MDTheme.type.settingSubtitle,
+                color = MDTheme.colors.textSecondary,
+            )
+        }
+        Spacer(Modifier.height(28.dp))
+    }
 
     SettingGroup(title = "Size") {
         Text("${widget.fontSizeSp}sp", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
@@ -137,6 +172,16 @@ private fun TasksWidgetEditor(
             onValueChange = { value -> onChange { it.copy(fontSizeSp = value.toInt().coerceIn(12, 40)) } },
             valueRange = 12f..40f,
             colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+        )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Font") {
+        WidgetFontPicker(
+            selectedFontId = widget.fontId,
+            downloadedFonts = downloadedFonts,
+            onSelect = { fontId -> onChange { it.copy(fontId = fontId) } },
         )
     }
 
@@ -159,18 +204,55 @@ private fun TasksWidgetEditor(
 
 @Composable
 private fun TaskItemRow(item: TaskItem, onChange: (TaskItem) -> Unit, onDelete: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(verticalAlignment = Alignment.Top) {
         Checkbox(
-            checked = item.completed,
-            onCheckedChange = { checked -> onChange(item.copy(completed = checked)) },
+            checked = item.isDone,
+            onCheckedChange = { checked -> onChange(item.withCompleted(checked)) },
             colors = CheckboxDefaults.colors(checkedColor = MDTheme.colors.accent),
         )
-        BufferedTextField(
-            persistedValue = item.text,
-            onValueChange = { value -> onChange(item.copy(text = value)) },
-            placeholder = { Text("Task…") },
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            BufferedTextField(
+                persistedValue = item.text,
+                onValueChange = { value -> onChange(item.copy(text = value)) },
+                placeholder = { Text("Task title") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            BufferedTextField(
+                persistedValue = item.startsAt,
+                onValueChange = { value -> onChange(item.copy(startsAt = value)) },
+                placeholder = { Text("Start time") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            BufferedTextField(
+                persistedValue = item.dueBy,
+                onValueChange = { value -> onChange(item.copy(dueBy = value)) },
+                placeholder = { Text("To be completed by") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            BufferedTextField(
+                persistedValue = item.assignees,
+                onValueChange = { value -> onChange(item.copy(assignees = value)) },
+                placeholder = { Text("Person or people responsible") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            BufferedTextField(
+                persistedValue = taskStatusLabel(item.status),
+                onValueChange = { value -> onChange(item.withStatus(value)) },
+                placeholder = { Text("Status (todo, in progress, blocked, done)") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            BufferedTextField(
+                persistedValue = item.reminder,
+                onValueChange = { value -> onChange(item.copy(reminder = value)) },
+                placeholder = { Text("Reminder") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         IconButton(onClick = onDelete) {
             Icon(Icons.Filled.Close, contentDescription = "Delete item", tint = MDTheme.colors.textTertiary)
         }

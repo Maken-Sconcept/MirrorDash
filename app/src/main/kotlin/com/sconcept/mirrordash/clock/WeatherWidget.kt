@@ -20,6 +20,7 @@ data class WeatherWidget(
     val showLocation: Boolean = true,
     override val anchorX: Float = DEFAULT_WEATHER_ANCHOR_X,
     override val anchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
+    override val rotationDegrees: Float = 0f,
 ) : AnchoredWidget
 
 fun defaultWeatherWidget(

@@ -47,6 +47,7 @@ fun NewsWidgetsSettingsContent(uiState: SettingsUiState, viewModel: SettingsView
                 onBack = onBack,
                 onChange = { transform -> viewModel.updateNewsWidget(widget.id, transform) },
                 onDelete = onDelete,
+                downloadedFonts = uiState.settings.downloadedClockFonts,
             )
         },
     )
@@ -87,6 +88,7 @@ private fun NewsWidgetEditor(
     onBack: () -> Unit,
     onChange: ((NewsWidget) -> NewsWidget) -> Unit,
     onDelete: () -> Unit,
+    downloadedFonts: List<com.sconcept.mirrordash.clock.DownloadedClockFont>,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) {
@@ -128,6 +130,16 @@ private fun NewsWidgetEditor(
             onValueChange = { value -> onChange { it.copy(fontSizeSp = value.toInt().coerceIn(12, 40)) } },
             valueRange = 12f..40f,
             colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+        )
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Font") {
+        WidgetFontPicker(
+            selectedFontId = widget.fontId,
+            downloadedFonts = downloadedFonts,
+            onSelect = { fontId -> onChange { it.copy(fontId = fontId) } },
         )
     }
 

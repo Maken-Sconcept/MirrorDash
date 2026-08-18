@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,7 +33,11 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 @Composable
-internal fun CalendarAgendaWidgetSurface(widget: CalendarWidget, calendar: CalendarAgendaUiState) {
+internal fun CalendarAgendaWidgetSurface(
+    widget: CalendarWidget,
+    calendar: CalendarAgendaUiState,
+    fontFamily: FontFamily = FontFamily.Default,
+) {
     val textColor = Color(widget.colorArgb)
     val shape = RoundedCornerShape(20.dp)
     Box(
@@ -50,7 +55,7 @@ internal fun CalendarAgendaWidgetSurface(widget: CalendarWidget, calendar: Calen
                 Spacer(Modifier.width(8.dp))
                 Text(
                     "Agenda",
-                    style = MDTheme.type.settingSubtitle.copy(fontSize = 14.sp, letterSpacing = 0.2.sp),
+                    style = MDTheme.type.settingSubtitle.copy(fontSize = 14.sp, letterSpacing = 0.2.sp, fontFamily = fontFamily),
                     color = textColor.copy(alpha = 0.7f),
                 )
             }
@@ -59,7 +64,7 @@ internal fun CalendarAgendaWidgetSurface(widget: CalendarWidget, calendar: Calen
             when {
                 !calendar.permissionGranted -> Text(
                     "Grant calendar access in Clock settings to show upcoming events.",
-                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f),
+                    style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f, fontFamily = fontFamily),
                     color = textColor.copy(alpha = 0.62f),
                 )
 
@@ -73,12 +78,14 @@ internal fun CalendarAgendaWidgetSurface(widget: CalendarWidget, calendar: Calen
                     if (entries.isEmpty()) {
                         Text(
                             "No upcoming events",
-                            style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f),
+                            style = MDTheme.type.caption.copy(fontSize = widget.fontSizeSp.sp * 0.78f, fontFamily = fontFamily),
                             color = textColor.copy(alpha = 0.55f),
                         )
                     } else {
                         Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-                            entries.forEach { entry -> AgendaRow(entry = entry, fontSizeSp = widget.fontSizeSp, textColor = textColor) }
+                            entries.forEach { entry ->
+                                AgendaRow(entry = entry, fontSizeSp = widget.fontSizeSp, textColor = textColor, fontFamily = fontFamily)
+                            }
                         }
                     }
                 }
@@ -88,21 +95,21 @@ internal fun CalendarAgendaWidgetSurface(widget: CalendarWidget, calendar: Calen
 }
 
 @Composable
-private fun AgendaRow(entry: CalendarAgendaEntry, fontSizeSp: Int, textColor: Color) {
+private fun AgendaRow(entry: CalendarAgendaEntry, fontSizeSp: Int, textColor: Color, fontFamily: FontFamily) {
     val eventColor = Color(entry.calendarColorArgb)
     Row(verticalAlignment = Alignment.CenterVertically) {
-        DateTile(entry = entry, accent = eventColor)
+        DateTile(entry = entry, accent = eventColor, fontFamily = fontFamily)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = entry.title,
-                style = MDTheme.type.settingSubtitle.copy(fontSize = fontSizeSp.sp),
+                style = MDTheme.type.settingSubtitle.copy(fontSize = fontSizeSp.sp, fontFamily = fontFamily),
                 color = textColor,
                 maxLines = 1,
             )
             Text(
                 text = agendaTimeLabel(entry),
-                style = MDTheme.type.caption.copy(fontSize = (fontSizeSp * 0.68f).sp),
+                style = MDTheme.type.caption.copy(fontSize = (fontSizeSp * 0.68f).sp, fontFamily = fontFamily),
                 color = textColor.copy(alpha = 0.58f),
             )
         }
@@ -113,7 +120,7 @@ private fun AgendaRow(entry: CalendarAgendaEntry, fontSizeSp: Int, textColor: Co
  * the source calendar's own color, replacing a plain colored dot with something that actually
  * reads as "a calendar entry" on its own, without needing the text next to it. */
 @Composable
-private fun DateTile(entry: CalendarAgendaEntry, accent: Color) {
+private fun DateTile(entry: CalendarAgendaEntry, accent: Color, fontFamily: FontFamily) {
     val cal = remember(entry.startMillis) { Calendar.getInstance().apply { timeInMillis = entry.startMillis } }
     val day = cal.get(Calendar.DAY_OF_MONTH)
     val month = remember(entry.startMillis) { SimpleDateFormat("MMM", Locale.getDefault()).format(entry.startMillis).uppercase() }
@@ -129,13 +136,13 @@ private fun DateTile(entry: CalendarAgendaEntry, accent: Color) {
     ) {
         Text(
             text = month,
-            style = MDTheme.type.caption.copy(fontSize = 9.sp, letterSpacing = 0.5.sp),
+            style = MDTheme.type.caption.copy(fontSize = 9.sp, letterSpacing = 0.5.sp, fontFamily = fontFamily),
             color = accent,
             textAlign = TextAlign.Center,
         )
         Text(
             text = day.toString(),
-            style = MDTheme.type.settingTitle.copy(fontSize = 17.sp, lineHeight = 18.sp),
+            style = MDTheme.type.settingTitle.copy(fontSize = 17.sp, lineHeight = 18.sp, fontFamily = fontFamily),
             color = accent,
             textAlign = TextAlign.Center,
         )

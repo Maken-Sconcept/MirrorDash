@@ -67,6 +67,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -164,6 +166,11 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                                 onCheckHealth = viewModel::checkHealth,
                                 onPlay = viewModel::playVodItem,
                                 onDownload = { item -> recordingEngine.downloadVodItem(item) },
+                                // Gated on DOWNLOAD specifically (not just non-null) so a live-TV
+                                // recording running at the same time never gets misread as some
+                                // VOD item's progress by coincidentally sharing an id - the two
+                                // id namespaces (channel vs. VOD item) aren't guaranteed disjoint.
+                                activeDownload = recordingState.activeRecording?.takeIf { it.trigger == RecordingTrigger.DOWNLOAD },
                             )
                             uiState.playingVodItem?.let { item ->
                                 VodPlayerScreen(
@@ -199,6 +206,34 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
                 onDismiss = viewModel::dismissPinChallenge,
             )
         }
+
+        // TV-remote number-pad OSD - see IptvViewModel.enterChannelDigit. Sits above everything
+        // else (including the Guide/channel list) since a remote typing digits should always get
+        // this feedback, not just while looking at the plain fullscreen player.
+        uiState.channelNumberDraft?.let { draft ->
+            ChannelNumberOsd(draft = draft, modifier = Modifier.align(Alignment.TopCenter))
+        }
+    }
+}
+
+/** Classic-TV-style "you're typing a channel number" badge - see
+ * [IptvViewModel.enterChannelDigit]. Purely a remote-control affordance; nothing on screen writes
+ * to [IptvUiState.channelNumberDraft] via touch. */
+@Composable
+private fun ChannelNumberOsd(draft: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .padding(top = 24.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MDTheme.colors.surfaceElevated)
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+    ) {
+        Text(
+            draft,
+            style = MDTheme.type.settingTitle,
+            color = MDTheme.colors.textPrimary,
+            letterSpacing = 4.sp,
+        )
     }
 }
 
@@ -303,6 +338,21 @@ private fun LiveTvContent(
                         onStart = { uiState.currentChannel?.let { recordingEngine.startManual(it) } },
                         onStartTimed = { minutes -> uiState.currentChannel?.let { recordingEngine.startFixedDuration(it, minutes) } },
                         onOpenSchedule = viewModel::toggleGuide,
+                        loadCurrentProgram = {
+                            uiState.currentChannel?.let { channel ->
+                                val now = System.currentTimeMillis() / 1000L
+                                viewModel.epgFor(channel).firstOrNull { it.startEpochSeconds <= now && now < it.endEpochSeconds }
+                            }
+                        },
+                        // Exactly IptvRecordingEngine.startUntil, the same call the Guide's own
+                        // per-program record shortcut makes (see IptvGuideScreen's
+                        // ChannelProgramRow/onRecordLiveProgram) - runs on the recording engine's
+                        // own app-scoped coroutine + foreground service regardless of this Compose
+                        // screen, so it keeps recording (and still stops itself right at the
+                        // show's end) even if the user leaves the IPTV tab entirely.
+                        onRecordUntilEndOfShow = { program ->
+                            uiState.currentChannel?.let { channel -> recordingEngine.startUntil(channel, program.endEpochSeconds) }
+                        },
                         onStop = { recordingEngine.stop() },
                     )
                 },
@@ -661,7 +711,9 @@ private fun formatPlaybackTime(ms: Long): String {
  * a glance (the one place here that breaks from the neutral white icon language on purpose - red
  * already means "record" everywhere else, overriding that for visual consistency would cost more
  * than it gains). Expanded while idle: chips for whichever of [onStart] (always available, live's
- * "Now"/VOD's only option)/[onStartTimed] (live only)/[onOpenSchedule] (live only) are non-null.
+ * "Now"/VOD's only option)/[onStartTimed] (live only)/[onOpenSchedule] (live only)/
+ * [onRecordUntilEndOfShow] (live only, and only once [loadCurrentProgram] actually resolves a
+ * live program - see its doc comment) are non-null.
  * While actively recording/downloading: collapses that choice to the one that still applies,
  * Stop, with a live elapsed/size readout standing in for the percentage the volume control shows
  * in the same slot. Shared between live TV and VOD (see [PlaybackControls]'s doc comment) - which
@@ -676,12 +728,30 @@ private fun RecordButton(
     onStop: () -> Unit,
     onStartTimed: ((Int) -> Unit)? = null,
     onOpenSchedule: (() -> Unit)? = null,
+    /** Live only - looks up whatever's airing on the current channel *right now* (brief: "the
+     * system goes read the current show start time and end time"). Runs fresh every time the
+     * button is expanded (not cached across the whole time the channel's been on) so a long
+     * dwell on one channel through a schedule boundary still resolves the show that's actually
+     * airing at click time, not whatever was airing when the channel was first tuned to. Null on
+     * VOD, where "current show" has no meaning. */
+    loadCurrentProgram: (suspend () -> EpgProgram?)? = null,
+    onRecordUntilEndOfShow: ((EpgProgram) -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showDurationPicker by remember { mutableStateOf(false) }
+    var currentProgram by remember { mutableStateOf<EpgProgram?>(null) }
     val active = recordingState.activeRecording
 
     LaunchedEffect(active) { if (active == null) { expanded = false; showDurationPicker = false } }
+
+    // Cleared before the fetch, not just overwritten after it resolves - otherwise a re-expand
+    // while a slow lookup is still in flight would briefly show the *previous* expansion's
+    // (possibly now-stale) program rather than nothing.
+    LaunchedEffect(expanded) {
+        if (!expanded || loadCurrentProgram == null) return@LaunchedEffect
+        currentProgram = null
+        currentProgram = loadCurrentProgram()
+    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -725,6 +795,14 @@ private fun RecordButton(
                 RecordChip("Now") { onStart(); expanded = false }
                 if (onStartTimed != null) RecordChip("Timed") { showDurationPicker = true }
                 if (onOpenSchedule != null) RecordChip("Schedule") { expanded = false; onOpenSchedule() }
+                if (onRecordUntilEndOfShow != null) {
+                    currentProgram?.let { program ->
+                        RecordChip("Til ${formatShowEndTime(program.endEpochSeconds)}") {
+                            onRecordUntilEndOfShow(program)
+                            expanded = false
+                        }
+                    }
+                }
             }
             Spacer(Modifier.width(6.dp))
         }
@@ -748,6 +826,9 @@ private fun RecordChip(label: String, onClick: () -> Unit) {
 
 private fun formatMegabytes(bytes: Long): String =
     String.format(java.util.Locale.US, "%.1f MB", bytes / (1024f * 1024f))
+
+private fun formatShowEndTime(epochSeconds: Long): String =
+    java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date(epochSeconds * 1000))
 
 private val RecordRed = Color(0xFFE0433D)
 
@@ -929,6 +1010,17 @@ private fun ChannelListPanel(
     val baseList = if (searchMode == IptvSearchMode.DEEP) allChannels else displayedChannels
     val filtered = remember(baseList, query) { baseList.filter { matchesSearch(it.name, query) } }
 
+    // Same reasoning as IptvVodBrowser's handlePlay - picking a channel from the search results
+    // is the normal way out of this panel, and the keyboard doesn't hide itself just because the
+    // panel closes underneath it.
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val handleSelect: (StalkerChannel) -> Unit = { channel ->
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+        onSelect(channel)
+    }
+
     Box(
         modifier = modifier
             .fillMaxHeight()
@@ -969,7 +1061,7 @@ private fun ChannelListPanel(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(if (selected) MDTheme.colors.accent.copy(alpha = 0.22f) else Color.Transparent)
-                                .clickable { onSelect(channel) }
+                                .clickable { handleSelect(channel) }
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                         ) {
                             Text(

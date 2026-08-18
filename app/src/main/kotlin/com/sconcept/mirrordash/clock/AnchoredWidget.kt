@@ -8,4 +8,5 @@ interface AnchoredWidget {
     val id: String
     val anchorX: Float
     val anchorY: Float
+    val rotationDegrees: Float
 }
