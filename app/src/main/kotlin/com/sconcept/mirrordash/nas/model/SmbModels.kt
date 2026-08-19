@@ -28,11 +28,18 @@ data class SmbFileItem(
     val sizeBytes: Long,
 )
 
-/** A single supported image file discovered under the configured Photorama folder. */
+/** The kind of media a Photorama entry contains. */
+enum class PhotoramaMediaType {
+    IMAGE,
+    VIDEO,
+}
+
+/** A single supported media file discovered under the configured Photorama folder. */
 data class LanPhoto(
     val name: String,
     val url: String,
     val sizeBytes: Long,
+    val mediaType: PhotoramaMediaType = PhotoramaMediaType.IMAGE,
 )
 
 enum class SmbConnectionState {

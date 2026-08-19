@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.sconcept.mirrordash.nas.model.LanPhoto
+import com.sconcept.mirrordash.nas.model.PhotoramaMediaType
 import com.sconcept.mirrordash.nas.model.SmbConnectionState
 import com.sconcept.mirrordash.nas.model.SmbResult
 
@@ -19,12 +20,20 @@ import com.sconcept.mirrordash.nas.model.SmbResult
 class LocalPhotoRepository(private val context: Context) {
 
     companion object {
-        private val SUPPORTED_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "heic", "heif")
+        private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "hif")
+        private val VIDEO_EXTENSIONS = setOf("mp4", "mov")
         private const val MAX_RECURSION_DEPTH = 6
 
         fun isSupportedPhoto(name: String): Boolean {
-            val ext = name.substringAfterLast('.', "").lowercase()
-            return ext in SUPPORTED_EXTENSIONS
+            return mediaTypeFor(name) != null
+        }
+
+        fun mediaTypeFor(name: String): PhotoramaMediaType? = when (
+            name.substringAfterLast('.', "").lowercase()
+        ) {
+            in IMAGE_EXTENSIONS -> PhotoramaMediaType.IMAGE
+            in VIDEO_EXTENSIONS -> PhotoramaMediaType.VIDEO
+            else -> null
         }
     }
 
@@ -55,8 +64,8 @@ class LocalPhotoRepository(private val context: Context) {
                 if (includeSubfolders) scanRecursive(child, includeSubfolders, into, depth + 1)
             } else {
                 val name = child.name.orEmpty()
-                if (isSupportedPhoto(name)) {
-                    into.add(LanPhoto(name = name, url = child.uri.toString(), sizeBytes = child.length()))
+                mediaTypeFor(name)?.let { mediaType ->
+                    into.add(LanPhoto(name = name, url = child.uri.toString(), sizeBytes = child.length(), mediaType = mediaType))
                 }
             }
         }

@@ -18,6 +18,11 @@
     "url": "http://iptv.example.local:8080/c/",
     "mac": "00:1A:79:00:00:00"
   },
+  "rtsp": {
+    "enabled": false,
+    "allowedClientIps": ["172.17.0.6"],
+    "quality": "medium"
+  },
   "nas": {
     "server": "192.168.1.10",
     "shareName": "MyShare",

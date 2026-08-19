@@ -276,7 +276,7 @@ static void maybe_announce_video_format(void)
     if (g_receiver.format_announced) {
         return;
     }
-    if (g_receiver.current_codec != CODEC_H264) {
+    if (g_receiver.current_codec != CODEC_H264 && g_receiver.current_codec != CODEC_H265) {
         return;
     }
     if (g_receiver.video_width <= 0 || g_receiver.video_height <= 0) {

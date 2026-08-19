@@ -1,12 +1,14 @@
 package com.sconcept.mirrordash.settings
 
 import android.app.Application
+import android.content.Intent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.core.content.ContextCompat
 import com.sconcept.mirrordash.airplay.AirPlayUiState
 import com.sconcept.mirrordash.clock.CalendarWidget
 import com.sconcept.mirrordash.clock.CLOCK_FONT_GOOGLE_PREFIX
@@ -35,6 +37,7 @@ import com.sconcept.mirrordash.nas.model.SmbFileItem
 import com.sconcept.mirrordash.nas.model.SmbResult
 import com.sconcept.mirrordash.nas.model.SmbShare
 import com.sconcept.mirrordash.launcher.AppContainer
+import com.sconcept.mirrordash.rtsp.RtspCameraService
 import com.sconcept.mirrordash.launcher.display.DisplayOrientationMode
 import com.sconcept.mirrordash.launcher.display.storageKey
 import com.sconcept.mirrordash.provisioning.ProvisioningConfig
@@ -532,6 +535,10 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { photoramaIncludeSubfolders = value }
     }
 
+    fun setPhotoramaPlayLivePhotos(value: Boolean) = viewModelScope.launch {
+        settingsRepository.update { photoramaPlayLivePhotos = value }
+    }
+
     fun setPhotoramaIntervalSeconds(seconds: Int) = viewModelScope.launch {
         settingsRepository.update { photoramaIntervalSeconds = seconds }
     }
@@ -641,6 +648,38 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setAirPlayShowClockWidget(show: Boolean) = viewModelScope.launch {
         settingsRepository.update { airplayShowClockWidget = show }
+    }
+
+    // --- LAN camera RTSP ----------------------------------------------------------------------
+
+    fun setRtspCameraEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { rtspCameraEnabled = enabled }
+        val context = getApplication<Application>()
+        val intent = RtspCameraService.intent(
+            context,
+            uiState.value.settings.rtspAllowedClientIps,
+            uiState.value.settings.rtspQuality,
+        )
+        if (enabled) {
+            ContextCompat.startForegroundService(context, intent)
+        } else {
+            context.stopService(intent)
+        }
+    }
+
+    fun setRtspAllowedClientIps(value: String) = viewModelScope.launch {
+        settingsRepository.update { rtspAllowedClientIps = value }
+    }
+
+    fun setRtspQuality(quality: String) = viewModelScope.launch {
+        settingsRepository.update { rtspQuality = quality }
+        val settings = uiState.value.settings
+        if (settings.rtspCameraEnabled) {
+            ContextCompat.startForegroundService(
+                getApplication<Application>(),
+                RtspCameraService.intent(getApplication(), settings.rtspAllowedClientIps, quality),
+            )
+        }
     }
 
     // --- Browser -------------------------------------------------------------------------------
@@ -970,6 +1009,15 @@ class SettingsViewModel(application: Application, private val settingsRepository
             applied += "IPTV"
         }
 
+        config.rtsp?.let { cfg ->
+            settingsRepository.update {
+                rtspCameraEnabled = cfg.enabled
+                rtspAllowedClientIps = cfg.allowedClientIps.joinToString(", ")
+                rtspQuality = cfg.quality
+            }
+            applied += "RTSP"
+        }
+
         config.nas?.let { cfg ->
             setNasPasswordDraft(cfg.password)
             testNasConnection(cfg.server, cfg.shareName.trimStart('\\', '/'), cfg.username, "", true)
@@ -1009,6 +1057,7 @@ class SettingsViewModel(application: Application, private val settingsRepository
                 }
             }
         }
+
     }
 
     private fun installStarterPack() {

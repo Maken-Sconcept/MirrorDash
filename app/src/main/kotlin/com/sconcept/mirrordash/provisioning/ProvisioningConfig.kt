@@ -13,6 +13,7 @@ data class ProvisioningConfig(
     val homeAssistant: HomeAssistantConfig? = null,
     val walkieTalkie: WalkieTalkieConfig? = null,
     val iptv: IptvConfig? = null,
+    val rtsp: RtspConfig? = null,
     val nas: NasConfig? = null,
 )
 
@@ -41,6 +42,13 @@ data class WalkieTalkieConfig(
 data class IptvConfig(
     val url: String,
     val mac: String,
+)
+
+@Serializable
+data class RtspConfig(
+    val enabled: Boolean = false,
+    val allowedClientIps: List<String> = emptyList(),
+    val quality: String = com.sconcept.mirrordash.rtsp.RTSP_QUALITY_MEDIUM,
 )
 
 @Serializable

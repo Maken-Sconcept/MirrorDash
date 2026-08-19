@@ -1,5 +1,6 @@
 package com.sconcept.mirrordash.clock
 
+import android.net.Uri
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +61,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -68,12 +71,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
+import androidx.core.net.toUri
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import com.sconcept.mirrordash.airplay.AirPlayUiState
 import com.sconcept.mirrordash.airplay.AirPlayMirrorSurface
 import com.sconcept.mirrordash.calendar.CalendarAgendaUiState
 import com.sconcept.mirrordash.nas.model.SmbConnectionState
 import com.sconcept.mirrordash.news.NewsUiState
 import com.sconcept.mirrordash.photorama.PhotoramaUiState
+import com.sconcept.mirrordash.photorama.PhotoramaMedia
+import com.sconcept.mirrordash.nas.model.PhotoramaMediaType
+import java.io.File
 import com.sconcept.mirrordash.stocks.StocksUiState
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import com.sconcept.mirrordash.ui.theme.MirrorDashTypography
@@ -624,20 +636,13 @@ private fun AirPlayStatusWidget(state: AirPlayUiState, modifier: Modifier = Modi
 @Composable
 private fun PhotoramaBackdrop(state: PhotoramaUiState) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        val photo = state.currentPhoto
-        if (photo != null) {
-            Crossfade(targetState = photo, animationSpec = tween(900), label = "clockPhotoramaBackground") { current ->
-                Image(
-                    painter = rememberAsyncImagePainter(model = current),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+        val media = state.currentMedia
+        if (media != null) {
+            PhotoramaMediaBackdrop(media)
         }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
 
-        if (photo == null) {
+        if (media == null) {
             val (title, subtitle) = photoramaStatusMessage(state)
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -656,6 +661,45 @@ private fun PhotoramaBackdrop(state: PhotoramaUiState) {
             }
         }
     }
+}
+
+@Composable
+private fun PhotoramaMediaBackdrop(media: PhotoramaMedia) {
+    when (media.type) {
+        PhotoramaMediaType.IMAGE -> Crossfade(
+            targetState = media.source,
+            animationSpec = tween(900),
+            label = "clockPhotoramaImageBackground",
+        ) { source ->
+            Image(
+                painter = rememberAsyncImagePainter(model = source),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        PhotoramaMediaType.VIDEO -> PhotoramaVideoBackdrop(media.source)
+    }
+}
+
+@Composable
+private fun PhotoramaVideoBackdrop(source: Any) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val uri = remember(source) { if (source is File) source.toUri() else source as Uri }
+    val player = remember(uri) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(uri))
+            repeatMode = Player.REPEAT_MODE_ONE
+            playWhenReady = true
+            prepare()
+        }
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+    AndroidView(
+        factory = { PlayerView(it).apply { useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; this.player = player } },
+        update = { it.player = player },
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 private fun photoramaStatusMessage(state: PhotoramaUiState): Pair<String, String?> = when {

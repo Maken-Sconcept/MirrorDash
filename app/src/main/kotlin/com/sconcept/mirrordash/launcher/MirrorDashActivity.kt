@@ -127,6 +127,9 @@ class MirrorDashActivity : ComponentActivity() {
     private val isIptvPageActive = MutableStateFlow(false)
 
     private val requestMicPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private val requestCameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) settingsViewModel.setRtspCameraEnabled(true)
+    }
     private val requestNotificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val requestHomeRole = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {}
     private val requestCalendarPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -149,6 +152,26 @@ class MirrorDashActivity : ComponentActivity() {
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
             requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        // The service is intentionally driven by the persisted switch as well as the Settings
+        // action, so a power cycle or process restart restores an explicitly enabled LAN camera.
+        lifecycleScope.launch {
+            container.settingsRepository.settings
+                .map { Triple(it.rtspCameraEnabled, it.rtspAllowedClientIps, it.rtspQuality) }
+                .distinctUntilChanged()
+                .collect { (enabled, allowedClientIps, quality) ->
+                    val serviceIntent = com.sconcept.mirrordash.rtsp.RtspCameraService.intent(
+                        this@MirrorDashActivity,
+                        allowedClientIps,
+                        quality,
+                    )
+                    if (enabled && androidx.core.content.ContextCompat.checkSelfPermission(this@MirrorDashActivity, Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        androidx.core.content.ContextCompat.startForegroundService(this@MirrorDashActivity, serviceIntent)
+                    } else if (!enabled) {
+                        stopService(serviceIntent)
+                    }
+                }
         }
 
         handleOpenDownloadManagerIntent(intent)
@@ -229,6 +252,7 @@ class MirrorDashActivity : ComponentActivity() {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     },
                     onRequestCalendarAccess = { requestCalendarPermission.launch(Manifest.permission.READ_CALENDAR) },
+                    onRequestCameraAccess = { requestCameraPermission.launch(Manifest.permission.CAMERA) },
                     onRequestWriteSettingsAccess = {
                         startActivity(
                             Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName")),
@@ -362,6 +386,7 @@ private fun MirrorDashRoot(
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestCalendarAccess: () -> Unit,
+    onRequestCameraAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
     onRequestOverlayAccess: () -> Unit,
     onRequestBrightnessFailsafe: () -> Unit,
@@ -504,6 +529,7 @@ private fun MirrorDashRoot(
                     onRequestHomeRole = onRequestHomeRole,
                     onRequestNotificationAccess = onRequestNotificationAccess,
                     onRequestCalendarAccess = onRequestCalendarAccess,
+                    onRequestCameraAccess = onRequestCameraAccess,
                     onRequestWriteSettingsAccess = onRequestWriteSettingsAccess,
                     onRequestOverlayAccess = onRequestOverlayAccess,
                     clockContentDimAlpha = if (textOnlyDim) effectiveDimAlpha else 0f,
@@ -616,6 +642,7 @@ private fun LauncherPageContent(
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestCalendarAccess: () -> Unit,
+    onRequestCameraAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
     onRequestOverlayAccess: () -> Unit,
     clockContentDimAlpha: Float = 0f,
@@ -749,6 +776,7 @@ private fun LauncherPageContent(
                 onRequestHomeRole = onRequestHomeRole,
                 onRequestNotificationAccess = onRequestNotificationAccess,
                 onRequestCalendarAccess = onRequestCalendarAccess,
+                onRequestCameraAccess = onRequestCameraAccess,
                 onRequestWriteSettingsAccess = onRequestWriteSettingsAccess,
                 onRequestOverlayAccess = onRequestOverlayAccess,
             )

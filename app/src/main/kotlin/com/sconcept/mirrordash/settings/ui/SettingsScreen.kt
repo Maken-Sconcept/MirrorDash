@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
@@ -58,6 +59,7 @@ private enum class SettingsSection(val title: String, val subtitle: String) {
     NIGHT_CLOCK("Night Clock", "The hidden dark clock tab's own dimmer brightness"),
     WALKIE_TALKIE("Walkie-Talkie", "Peers, target, and floating button"),
     AIRPLAY("AirPlay", "Receiver name, pairing, and mirror quality"),
+    CAMERA("RTSP", "LAN camera stream and connection details"),
     BROWSER("Browser", "Optional quick web tab inside MirrorDash"),
     GYM("Gym & Workouts", "Profiles, HUD, mock equipment, and developer tools"),
     JELLYFIN("Jellyfin", "Media server address and playback-focused web tab"),
@@ -78,6 +80,7 @@ fun SettingsScreen(
     onRequestHomeRole: () -> Unit,
     onRequestNotificationAccess: () -> Unit,
     onRequestCalendarAccess: () -> Unit,
+    onRequestCameraAccess: () -> Unit,
     onRequestWriteSettingsAccess: () -> Unit,
     onRequestOverlayAccess: () -> Unit,
     modifier: Modifier = Modifier,
@@ -110,6 +113,7 @@ fun SettingsScreen(
                 SettingsSection.NIGHT_CLOCK -> SectionScaffold(section.title) { NightClockSettingsContent(uiState, viewModel) }
                 SettingsSection.WALKIE_TALKIE -> SectionScaffold(section.title) { WalkieTalkieSettingsContent(uiState, viewModel) }
                 SettingsSection.AIRPLAY -> SectionScaffold(section.title) { AirPlaySettingsContent(uiState, viewModel) }
+                SettingsSection.CAMERA -> SectionScaffold(section.title) { RtspCameraSettingsContent(uiState, viewModel, onRequestCameraAccess) }
                 SettingsSection.BROWSER -> SectionScaffold(section.title) { BrowserSettingsContent(uiState, viewModel) }
                 SettingsSection.GYM -> SectionScaffold(section.title) { GymSettingsContent(uiState, viewModel) }
                 SettingsSection.JELLYFIN -> SectionScaffold(section.title) { JellyfinSettingsContent(uiState, viewModel) }
@@ -187,6 +191,7 @@ private fun sectionIcon(section: SettingsSection) = when (section) {
     SettingsSection.NIGHT_CLOCK -> Icons.Filled.NightlightRound
     SettingsSection.WALKIE_TALKIE -> Icons.Filled.Podcasts
     SettingsSection.AIRPLAY -> Icons.Filled.Cast
+    SettingsSection.CAMERA -> Icons.Filled.Videocam
     SettingsSection.BROWSER -> Icons.Filled.Language
     SettingsSection.GYM -> Icons.Filled.FitnessCenter
     SettingsSection.JELLYFIN -> Icons.Filled.Movie

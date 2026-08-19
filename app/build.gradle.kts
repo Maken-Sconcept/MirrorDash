@@ -105,6 +105,7 @@ dependencies {
 
     implementation("eu.agno3.jcifs:jcifs-ng:2.1.10")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-gif:2.7.0")
 
     // Photorama's local-storage source - browsing a user-picked SAF folder tree (see
     // LocalPhotoRepository), the same abstraction the system folder picker itself returns.
@@ -133,6 +134,13 @@ dependencies {
     implementation("com.tencent.iot.thirdparty.android:ijkplayer-java:2.0.19")
     implementation("com.tencent.iot.thirdparty.android:ijkplayer-armv7a:2.0.19")
     implementation("com.tencent.iot.thirdparty.android:ijkplayer-arm64:2.0.19")
+
+    // Camera1-compatible H.264 encoder and embedded RTSP server. The mirror's Rockchip
+    // camera HAL is API 1, so this is deliberately not a CameraX-only implementation.
+    // 1.3.6/2.6.1 are the newest mutually compatible pair that still packages against this
+    // project's Android 36 toolchain (newer releases require Android 37).
+    implementation("com.github.pedroSG94.RootEncoder:library:2.6.1")
+    implementation("com.github.pedroSG94:RTSP-Server:1.3.6")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

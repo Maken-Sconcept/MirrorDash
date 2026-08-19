@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.sconcept.mirrordash.nas.LanPhotoRepository
 import com.sconcept.mirrordash.nas.PhotoCacheManager
 import com.sconcept.mirrordash.nas.model.LanPhoto
+import com.sconcept.mirrordash.nas.model.PhotoramaMediaType
 import com.sconcept.mirrordash.nas.model.SmbConnectionState
 import com.sconcept.mirrordash.nas.model.SmbResult
 import com.sconcept.mirrordash.nas.model.SmbShare
@@ -31,12 +32,12 @@ import kotlinx.coroutines.withContext
 data class PhotoramaUiState(
     val isConfigured: Boolean = false,
     val connectionState: SmbConnectionState = SmbConnectionState.DISCONNECTED,
-    // A Coil-compatible image model: a cached java.io.File for the NAS source, a content:// Uri
-    // directly for the local source (no NAS-style fetch-and-cache round trip needed - see
-    // showCurrent). Coil's rememberAsyncImagePainter accepts either as `model`.
-    val currentPhoto: Any? = null,
+    // A cached File for NAS or a directly readable content:// Uri for local storage.
+    val currentMedia: PhotoramaMedia? = null,
     val hasNoPhotos: Boolean = false,
 )
+
+data class PhotoramaMedia(val source: Any, val type: PhotoramaMediaType)
 
 /**
  * Coroutine/StateFlow rewrite of BerthierOptions' `SlideshowController` (a Handler + callback-
@@ -74,6 +75,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
         val folderPath: String,
         val localFolderUri: String,
         val includeSubfolders: Boolean,
+        val playLivePhotos: Boolean,
     ) {
         val isConfigured: Boolean
             get() = when (source) {
@@ -121,6 +123,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                         folderPath = s.photoramaFolderPath,
                         localFolderUri = s.photoramaLocalFolderUri,
                         includeSubfolders = s.photoramaIncludeSubfolders,
+                        playLivePhotos = s.photoramaPlayLivePhotos,
                     )
                 }
                 .distinctUntilChanged()
@@ -139,7 +142,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                     position = -1
                     currentPhotoUrl = null
                     reconnectAttempt = 0
-                    _uiState.value = _uiState.value.copy(isConfigured = true, currentPhoto = null, hasNoPhotos = false)
+                    _uiState.value = _uiState.value.copy(isConfigured = true, currentMedia = null, hasNoPhotos = false)
                     refreshIndex()
                 }
         }
@@ -163,7 +166,13 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             }
         }
         when (result) {
-            is SmbResult.Success -> onIndexed(result.value, settings.photoramaShuffle, settings.photoramaIntervalSeconds, share, settings.photoramaCacheSizeMb)
+            is SmbResult.Success -> onIndexed(
+                selectLivePhotoMedia(result.value, settings.photoramaPlayLivePhotos),
+                settings.photoramaShuffle,
+                settings.photoramaIntervalSeconds,
+                share,
+                settings.photoramaCacheSizeMb,
+            )
             is SmbResult.Failure -> onIndexFailed(result.state, settings.photoramaIntervalSeconds, share, settings.photoramaCacheSizeMb)
         }
     }
@@ -177,7 +186,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             photos = emptyList()
             order = emptyList()
             currentPhotoUrl = null
-            _uiState.value = _uiState.value.copy(hasNoPhotos = true, currentPhoto = null)
+            _uiState.value = _uiState.value.copy(hasNoPhotos = true, currentMedia = null)
             scheduleReconnect(intervalSeconds, share, cacheSizeMb)
             return
         }
@@ -244,7 +253,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             }
         }
         if (ready != null) {
-            _uiState.value = _uiState.value.copy(currentPhoto = ready, hasNoPhotos = false)
+            _uiState.value = _uiState.value.copy(currentMedia = PhotoramaMedia(ready, photo.mediaType), hasNoPhotos = false)
         }
         preloadNext(share, cacheSizeMb)
     }
@@ -262,6 +271,38 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
     }
 
     private fun isLocalPhotoUrl(url: String): Boolean = url.startsWith("content://")
+
+    /** Apple exports a Live Photo as an image and a same-named MOV. Keep one entry per capture:
+     * the motion clip when enabled, or the still image when disabled. Unpaired MOVs are kept as
+     * ordinary video items. */
+    private fun selectLivePhotoMedia(items: List<LanPhoto>, playLivePhotos: Boolean): List<LanPhoto> {
+        val imageBases = items.asSequence()
+            .filter { it.mediaType == PhotoramaMediaType.IMAGE }
+            .map { livePhotoBaseName(it.name) }
+            .toSet()
+        val pairedMovUrls = items.asSequence()
+            .filter { it.mediaType == PhotoramaMediaType.VIDEO && it.name.endsWith(".mov", ignoreCase = true) }
+            .filter { livePhotoBaseName(it.name) in imageBases }
+            .map { it.url }
+            .toSet()
+        if (pairedMovUrls.isEmpty()) return items
+
+        val pairedBases = items.asSequence()
+            .filter { it.url in pairedMovUrls }
+            .map { livePhotoBaseName(it.name) }
+            .toSet()
+        return items.filter { item ->
+            if (playLivePhotos) {
+                // Keep the MOV and other ordinary videos, but replace its paired still.
+                !(item.mediaType == PhotoramaMediaType.IMAGE && livePhotoBaseName(item.name) in pairedBases)
+            } else {
+                // Keep the still and hide only MOV files proven to be Live Photo companions.
+                item.url !in pairedMovUrls
+            }
+        }
+    }
+
+    private fun livePhotoBaseName(name: String): String = name.substringBeforeLast('.').lowercase()
 
     private suspend fun scheduleReconnect(intervalSeconds: Int, share: SmbShare, cacheSizeMb: Int) {
         reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(MAX_RECONNECT_ATTEMPT_SHIFT)

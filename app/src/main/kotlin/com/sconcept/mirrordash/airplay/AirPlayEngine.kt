@@ -1,6 +1,7 @@
 package com.sconcept.mirrordash.airplay
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.sconcept.mirrordash.settings.AIRPLAY_AUTH_MODE_OPEN
 import com.sconcept.mirrordash.settings.AIRPLAY_AUTH_MODE_PASSWORD
@@ -231,7 +232,14 @@ class AirPlayEngine private constructor(context: Context, private val settingsRe
         val metrics = appContext.resources.displayMetrics
         val (width, height) = AirPlayMirrorPreset.resolveSize(config.mirrorPreset, metrics.widthPixels, metrics.heightPixels)
 
-        val result = AirPlayNative.nativeStartReceiver(name, hwAddr, width, height, authMode, config.password, config.allowHevc)
+        // RK3288's advertised HEVC decoder configures successfully but never renders the HEVC
+        // bitstream produced by current Apple devices. Do not advertise multi-codec support on
+        // this board: the sender then selects the compatible H.264 mirror stream instead.
+        val allowHevc = config.allowHevc && !Build.HARDWARE.equals("rk30board", ignoreCase = true)
+        if (config.allowHevc && !allowHevc) {
+            Log.w(TAG, "Disabling HEVC AirPlay on ${Build.HARDWARE}; using H.264 compatibility mode")
+        }
+        val result = AirPlayNative.nativeStartReceiver(name, hwAddr, width, height, authMode, config.password, allowHevc)
         _lastError.value = if (result != 0) "AirPlay receiver failed to start (error $result)" else null
         if (result != 0) {
             Log.w(TAG, "nativeStartReceiver failed: $result")

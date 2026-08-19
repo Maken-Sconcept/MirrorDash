@@ -510,6 +510,19 @@ private fun PhotoramaSlideshowSettings(settings: MirrorDashSettings, viewModel: 
 
         Spacer(Modifier.height(12.dp))
 
+        SettingRow(
+            title = "Play Apple Live Photos",
+            subtitle = "Use the paired MOV clip instead of the matching still photo",
+        ) {
+            Switch(
+                checked = settings.photoramaPlayLivePhotos,
+                onCheckedChange = viewModel::setPhotoramaPlayLivePhotos,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
         SettingRow(title = "Shuffle", subtitle = "Show photos in random order") {
             Switch(
                 checked = settings.photoramaShuffle,

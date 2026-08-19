@@ -166,6 +166,7 @@ data class MirrorDashSettings(
     // reboots (see LocalPhotoRepository).
     val photoramaLocalFolderUri: String = "",
     val photoramaIncludeSubfolders: Boolean = false,
+    val photoramaPlayLivePhotos: Boolean = true,
     val photoramaIntervalSeconds: Int = 60,
     val photoramaShuffle: Boolean = true,
     val photoramaCacheSizeMb: Int = 250,
@@ -203,6 +204,14 @@ data class MirrorDashSettings(
     val airplayMirrorPreset: String = AIRPLAY_MIRROR_PRESET_DISPLAY,
     val airplayAllowHevc: Boolean = false,
     val airplayShowClockWidget: Boolean = false,
+
+    // Camera RTSP is intentionally opt-in and LAN-only; the service refuses to listen unless
+    // its kernel firewall rule is active.
+    val rtspCameraEnabled: Boolean = false,
+    /** Comma-separated IPv4 allowlist. Empty means the RTSP firewall accepts no clients. */
+    val rtspAllowedClientIps: String = "",
+    /** Low favors live responsiveness; medium is the default balance; high favors detail. */
+    val rtspQuality: String = com.sconcept.mirrordash.rtsp.RTSP_QUALITY_MEDIUM,
 
     // Browser
     val browserEnabled: Boolean = false,
@@ -484,6 +493,7 @@ class SettingsRepository(context: Context) {
             photoramaFolderPath = this[Keys.PHOTORAMA_FOLDER_PATH] ?: defaults.photoramaFolderPath,
             photoramaLocalFolderUri = this[Keys.PHOTORAMA_LOCAL_FOLDER_URI] ?: defaults.photoramaLocalFolderUri,
             photoramaIncludeSubfolders = this[Keys.PHOTORAMA_INCLUDE_SUBFOLDERS] ?: defaults.photoramaIncludeSubfolders,
+            photoramaPlayLivePhotos = this[Keys.PHOTORAMA_PLAY_LIVE_PHOTOS] ?: defaults.photoramaPlayLivePhotos,
             photoramaIntervalSeconds = this[Keys.PHOTORAMA_INTERVAL_SECONDS] ?: defaults.photoramaIntervalSeconds,
             photoramaShuffle = this[Keys.PHOTORAMA_SHUFFLE] ?: defaults.photoramaShuffle,
             photoramaCacheSizeMb = this[Keys.PHOTORAMA_CACHE_SIZE_MB] ?: defaults.photoramaCacheSizeMb,
@@ -510,6 +520,9 @@ class SettingsRepository(context: Context) {
             airplayMirrorPreset = this[Keys.AIRPLAY_MIRROR_PRESET] ?: defaults.airplayMirrorPreset,
             airplayAllowHevc = this[Keys.AIRPLAY_ALLOW_HEVC] ?: defaults.airplayAllowHevc,
             airplayShowClockWidget = this[Keys.AIRPLAY_SHOW_CLOCK_WIDGET] ?: defaults.airplayShowClockWidget,
+            rtspCameraEnabled = this[Keys.RTSP_CAMERA_ENABLED] ?: defaults.rtspCameraEnabled,
+            rtspAllowedClientIps = this[Keys.RTSP_ALLOWED_CLIENT_IPS] ?: defaults.rtspAllowedClientIps,
+            rtspQuality = this[Keys.RTSP_QUALITY] ?: defaults.rtspQuality,
             browserEnabled = this[Keys.BROWSER_ENABLED] ?: defaults.browserEnabled,
             browserHomeUrl = this[Keys.BROWSER_HOME_URL] ?: defaults.browserHomeUrl,
             browserLastVisitedUrl = this[Keys.BROWSER_LAST_VISITED_URL] ?: defaults.browserLastVisitedUrl,
@@ -617,6 +630,7 @@ class SettingsRepository(context: Context) {
         val PHOTORAMA_FOLDER_PATH = stringPreferencesKey("photorama_folder_path")
         val PHOTORAMA_LOCAL_FOLDER_URI = stringPreferencesKey("photorama_local_folder_uri")
         val PHOTORAMA_INCLUDE_SUBFOLDERS = booleanPreferencesKey("photorama_include_subfolders")
+        val PHOTORAMA_PLAY_LIVE_PHOTOS = booleanPreferencesKey("photorama_play_live_photos")
         val PHOTORAMA_INTERVAL_SECONDS = intPreferencesKey("photorama_interval_seconds")
         val PHOTORAMA_SHUFFLE = booleanPreferencesKey("photorama_shuffle")
         val PHOTORAMA_CACHE_SIZE_MB = intPreferencesKey("photorama_cache_size_mb")
@@ -646,6 +660,10 @@ class SettingsRepository(context: Context) {
         val AIRPLAY_MIRROR_PRESET = stringPreferencesKey("airplay_mirror_preset")
         val AIRPLAY_ALLOW_HEVC = booleanPreferencesKey("airplay_allow_hevc")
         val AIRPLAY_SHOW_CLOCK_WIDGET = booleanPreferencesKey("airplay_show_clock_widget")
+
+        val RTSP_CAMERA_ENABLED = booleanPreferencesKey("rtsp_camera_enabled")
+        val RTSP_ALLOWED_CLIENT_IPS = stringPreferencesKey("rtsp_allowed_client_ips")
+        val RTSP_QUALITY = stringPreferencesKey("rtsp_quality")
 
         val BROWSER_ENABLED = booleanPreferencesKey("browser_enabled")
         val BROWSER_HOME_URL = stringPreferencesKey("browser_home_url")
@@ -750,6 +768,7 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var photoramaFolderPath: String by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_FOLDER_PATH, prefs, defaults.photoramaFolderPath)
     var photoramaLocalFolderUri: String by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_LOCAL_FOLDER_URI, prefs, defaults.photoramaLocalFolderUri)
     var photoramaIncludeSubfolders: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_INCLUDE_SUBFOLDERS, prefs, defaults.photoramaIncludeSubfolders)
+    var photoramaPlayLivePhotos: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_PLAY_LIVE_PHOTOS, prefs, defaults.photoramaPlayLivePhotos)
     var photoramaIntervalSeconds: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_INTERVAL_SECONDS, prefs, defaults.photoramaIntervalSeconds)
     var photoramaShuffle: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SHUFFLE, prefs, defaults.photoramaShuffle)
     var photoramaCacheSizeMb: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_CACHE_SIZE_MB, prefs, defaults.photoramaCacheSizeMb)
@@ -778,6 +797,9 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var airplayMirrorPreset: String by PrefDelegate(SettingsRepository.Keys.AIRPLAY_MIRROR_PRESET, prefs, defaults.airplayMirrorPreset)
     var airplayAllowHevc: Boolean by PrefDelegate(SettingsRepository.Keys.AIRPLAY_ALLOW_HEVC, prefs, defaults.airplayAllowHevc)
     var airplayShowClockWidget: Boolean by PrefDelegate(SettingsRepository.Keys.AIRPLAY_SHOW_CLOCK_WIDGET, prefs, defaults.airplayShowClockWidget)
+    var rtspCameraEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.RTSP_CAMERA_ENABLED, prefs, defaults.rtspCameraEnabled)
+    var rtspAllowedClientIps: String by PrefDelegate(SettingsRepository.Keys.RTSP_ALLOWED_CLIENT_IPS, prefs, defaults.rtspAllowedClientIps)
+    var rtspQuality: String by PrefDelegate(SettingsRepository.Keys.RTSP_QUALITY, prefs, defaults.rtspQuality)
 
     var browserEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.BROWSER_ENABLED, prefs, defaults.browserEnabled)
     var browserHomeUrl: String by PrefDelegate(SettingsRepository.Keys.BROWSER_HOME_URL, prefs, defaults.browserHomeUrl)

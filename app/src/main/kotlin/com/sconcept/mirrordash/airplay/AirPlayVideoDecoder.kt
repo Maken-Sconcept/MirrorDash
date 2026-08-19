@@ -350,15 +350,24 @@ class AirPlayVideoDecoder(
         val codecInfos = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
             .filter { !it.isEncoder && it.supportedTypes.any { type -> type.equals(mime, ignoreCase = true) } }
 
-        // Prefer a real hardware decoder over OMX.google.*/c2.android.* software ones: decode-to-
-        // Surface for a software AVC decoder goes through the platform's generic SoftwareRenderer
-        // YUV->RGB blit rather than a vendor overlay path, and that blit has a long-documented
-        // solid-green-frame bug on some devices/driver combos for non-16-aligned dimensions -
-        // exactly what AirPlay mirroring produces (e.g. 1080 height, or a portrait-cropped 498
-        // width). A vendor hardware decoder writes directly to the Surface without that step.
-        val preferredHardware = codecInfos.firstOrNull { info -> !info.isSoftwareOnlyCompat() }
-        if (preferredHardware != null) {
-            return preferredHardware.name
+        // The Rockchip HEVC decoder supports this receiver's 4K AirPlay stream. The generic
+        // OMX.google HEVC decoder instead renders through SoftwareRenderer (as shown by its
+        // `using-sw-renderer=1` output format), which produces intermittent green frames on
+        // this Android build. Keep AVC's safer software preference below, but never use the
+        // software HEVC path while a hardware HEVC decoder is available.
+        if (mime == MIME_HEVC) {
+            codecInfos.firstOrNull { info -> !info.isSoftwareOnlyCompat() }?.let { return it.name }
+        }
+
+        // Some Rockchip AVC decoders accept the AirPlay stream but never release an output buffer
+        // for portrait/non-16-aligned frames (e.g. 888x1920). Prefer the platform decoder first:
+        // it renders through SoftwareRenderer, but reliably handles the full Annex-B stream.
+        // Hardware remains the fallback on devices without a software decoder.
+        val preferredSoftware = codecInfos.firstOrNull { info ->
+            info.isSoftwareOnlyCompat() || info.name.startsWith("OMX.google.", ignoreCase = true)
+        }
+        if (preferredSoftware != null) {
+            return preferredSoftware.name
         }
 
         return codecInfos.firstOrNull()?.name
