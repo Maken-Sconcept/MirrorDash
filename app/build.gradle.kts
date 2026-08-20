@@ -97,6 +97,8 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    // Lucide's consistent, lightweight outline icon set for the Gym experience.
+    implementation("com.composables:icons-lucide-android:2.2.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("androidx.datastore:datastore-preferences:1.1.1")

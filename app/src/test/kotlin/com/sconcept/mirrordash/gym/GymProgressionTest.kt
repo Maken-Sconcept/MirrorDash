@@ -20,6 +20,24 @@ class GymProgressionTest {
         assertTrue(GymProgression.workoutXp(record(activeSeconds = 600), true, true) >= 185)
     }
 
+    @Test fun `catalog evaluates co-op achievements from shared session history`() {
+        val me = GymProfile(id = "me", name = "Me", avatarLabel = "M", accentColorArgb = 0, totalWorkouts = 1)
+        val partner = GymProfile(id = "partner", name = "Partner", avatarLabel = "P", accentColorArgb = 0)
+        val shared = GymSessionRecord(
+            id = "shared", startedAtEpochMs = 0, endedAtEpochMs = 600_000, workoutType = GymWorkoutType.MULTIPLAYER,
+            durationSeconds = 600, activeSeconds = 600, pausedSeconds = 0,
+            players = listOf(
+                GymSessionPlayerRecord("me", "Me", 0, 0),
+                GymSessionPlayerRecord("partner", "Partner", 0, 0),
+            ),
+        )
+
+        val dynamicDuo = evaluateAchievements(me, listOf(shared), partner).first { it.definition.id == "dynamic_duo" }
+
+        assertEquals(1.0, dynamicDuo.current, 0.0)
+        assertEquals(1, dynamicDuo.currentTier)
+    }
+
     private fun record(activeSeconds: Int) = GymSessionRecord(
         id = "test", startedAtEpochMs = 0, endedAtEpochMs = 0, workoutType = GymWorkoutType.STRENGTH,
         durationSeconds = activeSeconds, activeSeconds = activeSeconds, pausedSeconds = 0,

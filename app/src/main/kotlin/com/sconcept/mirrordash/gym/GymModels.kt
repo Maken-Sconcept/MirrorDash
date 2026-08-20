@@ -547,7 +547,7 @@ val GymWorkoutType.displayLabel: String
     get() = when (this) {
         GymWorkoutType.FREE_WORKOUT -> "Quick Start"
         GymWorkoutType.STRENGTH -> "Generator"
-        GymWorkoutType.CYCLING -> "Cycling"
+        GymWorkoutType.CYCLING -> "Free Ride"
         GymWorkoutType.HYBRID -> "Program"
         GymWorkoutType.CHALLENGE -> "Challenge"
         GymWorkoutType.MULTIPLAYER -> "Multiplayer"

@@ -1,12 +1,18 @@
 package com.sconcept.mirrordash.gym
 
+import android.net.Uri
+import android.widget.VideoView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -29,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,6 +68,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,7 +88,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.composables.icons.lucide.R as LucideR
+import com.sconcept.mirrordash.R
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import java.text.DecimalFormat
 import java.text.SimpleDateFormat
@@ -96,6 +109,8 @@ fun GymScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var achievementsVisible by rememberSaveable { mutableStateOf(false) }
+    var freeRideVideoUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> freeRideVideoUri = uri?.toString() }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -108,6 +123,8 @@ fun GymScreen(
                 onPauseResume = viewModel::pauseOrResumeSession,
                 onEnd = viewModel::endAndSaveSession,
                 onDismissStatus = viewModel::clearStatusMessage,
+                freeRideVideoUri = freeRideVideoUri,
+                onSelectFreeRideVideo = { videoPicker.launch(arrayOf("video/*")) },
             )
         } else {
             GymDashboard(
@@ -168,6 +185,9 @@ fun GymScreen(
         AnimatedVisibility(visible = achievementsVisible && uiState.activeSession == null, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             AchievementCollectionSheet(
                 profile = uiState.selectedProfileDashboards.firstOrNull()?.profile ?: uiState.profiles.firstOrNull(),
+                profiles = uiState.profiles,
+                sessionHistory = uiState.sessionHistory,
+                weeklyProgress = uiState.weeklyProgress,
                 onDismiss = { achievementsVisible = false },
             )
         }
@@ -187,6 +207,13 @@ fun GymScreen(
 
 @Composable
 private fun GymBackdrop() {
+    val breathing = rememberInfiniteTransition(label = "gymAmbientBreath")
+    val breath by breathing.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = 6_800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "gymBackdropBreath",
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -206,7 +233,7 @@ private fun GymBackdrop() {
                 .height(420.dp)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(Color(0x4037D9FF), Color.Transparent),
+                        colors = listOf(Color(0x4037D9FF).copy(alpha = 0.12f + breath * 0.13f), Color.Transparent),
                         center = Offset(160f, 80f),
                         radius = 900f,
                     ),
@@ -218,7 +245,7 @@ private fun GymBackdrop() {
                 .height(520.dp)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(Color(0x26FF8B59), Color.Transparent),
+                        colors = listOf(Color(0x26FF8B59).copy(alpha = 0.07f + breath * 0.08f), Color.Transparent),
                         center = Offset(900f, 260f),
                         radius = 880f,
                     ),
@@ -384,11 +411,13 @@ private fun WorkoutsTabContent(
     val selectedNames = uiState.selectedProfileDashboards.map { it.profile.name }
     val filter = uiState.workoutLibraryFilter
     val filteredCatalog = uiState.exerciseCatalog.filter { it.matchesLibraryFilter(filter) }
+    var selectedExercise by remember { mutableStateOf<GymExerciseCatalogEntry?>(null) }
 
-    LazyColumn(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
+    Box(modifier.fillMaxWidth()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
         item {
             WorkoutLibraryHero(
                 activeProfileCount = uiState.activeProfileCount,
@@ -402,9 +431,11 @@ private fun WorkoutsTabContent(
         if (filteredCatalog.isEmpty()) {
             item { EmptyWorkoutLibraryCard("No exercises match this equipment", "Choose another equipment icon to broaden the library.") }
         } else {
-            items(filteredCatalog, key = { it.id }) { entry -> ExerciseCatalogRow(entry = entry) }
-            }
+            items(filteredCatalog, key = { it.id }) { entry -> ExerciseCatalogRow(entry = entry, onClick = { selectedExercise = entry }) }
+        }
         item { Spacer(Modifier.height(120.dp)) }
+        }
+        selectedExercise?.let { ExerciseCatalogDetailDialog(entry = it, onDismiss = { selectedExercise = null }) }
     }
 }
 
@@ -459,11 +490,6 @@ private fun WorkoutLibraryHero(
 
 @Composable
 private fun EquipmentFilterIcon(label: String, selected: Boolean, onClick: () -> Unit) {
-    val icon = when (label) {
-        "Bike" -> Icons.Filled.DirectionsBike
-        "Rower" -> Icons.Filled.Sensors
-        else -> Icons.Filled.FitnessCenter
-    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -475,9 +501,108 @@ private fun EquipmentFilterIcon(label: String, selected: Boolean, onClick: () ->
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(icon, contentDescription = label, tint = if (selected) Color(0xFF7DE6FF) else MDTheme.colors.textSecondary, modifier = Modifier.size(22.dp))
+        ExerciseLucideIcon(label, contentDescription = label, tint = if (selected) Color(0xFF7DE6FF) else MDTheme.colors.textSecondary, animate = selected, ambient = selected, modifier = Modifier.size(22.dp))
         Text(if (label == "All") "All" else label, color = Color.White, style = MDTheme.type.caption, textAlign = TextAlign.Center)
     }
+}
+
+/** Lucide artwork makes workout lanes and achievement families recognizable at a glance. */
+@Composable
+private fun ExerciseLucideIcon(
+    label: String,
+    contentDescription: String?,
+    tint: Color,
+    animate: Boolean = false,
+    ambient: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val icon = when {
+        label.contains("Bike", true) || label.contains("Cycl", true) -> LucideIconSpec(LucideR.drawable.lucide_ic_bike, setOf(LucideMotion.WHEEL, LucideMotion.PULSE))
+        label.contains("Row", true) || label.contains("Cable", true) || label.contains("Rope", true) -> LucideIconSpec(LucideR.drawable.lucide_ic_activity, setOf(LucideMotion.PULSE, LucideMotion.TURN))
+        label.contains("Mobility", true) || label.contains("Yoga", true) || label.contains("Pilates", true) || label.contains("Barre", true) -> LucideIconSpec(LucideR.drawable.lucide_ic_timer_reset, setOf(LucideMotion.TURN, LucideMotion.PULSE))
+        label.contains("Cardio", true) || label.contains("Run", true) || label.contains("Lunge", true) || label.contains("Squat", true) -> LucideIconSpec(LucideR.drawable.lucide_ic_circle_gauge, setOf(LucideMotion.PULSE, LucideMotion.TURN))
+        label.contains("Core", true) || label.contains("Plank", true) || label.contains("Crunch", true) -> LucideIconSpec(LucideR.drawable.lucide_ic_timer, setOf(LucideMotion.POP, LucideMotion.PULSE))
+        label.contains("Stretch", true) || label.contains("Recovery", true) -> LucideIconSpec(LucideR.drawable.lucide_ic_timer_reset, setOf(LucideMotion.TURN, LucideMotion.PULSE))
+        label.contains("Bench", true) || label.contains("Bar", true) || label.contains("Handle", true) || label.contains("Dumbbell", true) || label.contains("Kettle", true) -> LucideIconSpec(LucideR.drawable.lucide_ic_dumbbell, setOf(LucideMotion.LIFT, LucideMotion.PULSE))
+        else -> LucideIconSpec(LucideR.drawable.lucide_ic_activity, setOf(LucideMotion.PULSE, LucideMotion.POP))
+    }
+    AnimatedLucideIcon(icon.resource, icon.motions, contentDescription, tint, animate, ambient, modifier)
+}
+
+@Composable
+private fun AchievementLucideIcon(
+    category: String,
+    contentDescription: String?,
+    tint: Color,
+    animate: Boolean = false,
+    ambient: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val icon = when (category) {
+        "Consistency" -> LucideIconSpec(LucideR.drawable.lucide_ic_calendar_check, setOf(LucideMotion.POP, LucideMotion.PULSE))
+        "Endurance" -> LucideIconSpec(LucideR.drawable.lucide_ic_timer, setOf(LucideMotion.TURN, LucideMotion.PULSE))
+        "Cycling" -> LucideIconSpec(LucideR.drawable.lucide_ic_bike, setOf(LucideMotion.WHEEL, LucideMotion.PULSE))
+        "Strength" -> LucideIconSpec(LucideR.drawable.lucide_ic_dumbbell, setOf(LucideMotion.LIFT, LucideMotion.PULSE))
+        "Together" -> LucideIconSpec(LucideR.drawable.lucide_ic_heart_handshake, setOf(LucideMotion.PULSE, LucideMotion.POP))
+        "Story" -> LucideIconSpec(LucideR.drawable.lucide_ic_flame, setOf(LucideMotion.PULSE, LucideMotion.POP))
+        else -> LucideIconSpec(LucideR.drawable.lucide_ic_trophy, setOf(LucideMotion.POP, LucideMotion.TURN))
+    }
+    AnimatedLucideIcon(icon.resource, icon.motions, contentDescription, tint, animate, ambient, modifier)
+}
+
+private enum class LucideMotion { POP, PULSE, TURN, WHEEL, LIFT }
+/** Add an icon by registering its drawable and any number of independent motion layers. */
+private data class LucideIconSpec(val resource: Int, val motions: Set<LucideMotion>)
+
+@Composable
+private fun AnimatedLucideIcon(
+    resource: Int,
+    motions: Set<LucideMotion>,
+    contentDescription: String?,
+    tint: Color,
+    animate: Boolean,
+    ambient: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    var hasEntered by remember(resource, animate, ambient) { mutableStateOf(false) }
+    LaunchedEffect(resource, animate, ambient) {
+        hasEntered = false
+        if (animate) {
+            // Yield one frame so a newly opened modal visibly starts compact before arriving.
+            kotlinx.coroutines.delay(90)
+            hasEntered = true
+        }
+        if (ambient) {
+            while (true) {
+                kotlinx.coroutines.delay(kotlin.random.Random.nextLong(1_500, 4_000))
+                hasEntered = false
+                kotlinx.coroutines.delay(50)
+                hasEntered = true
+            }
+        }
+    }
+    val progress by animateFloatAsState(
+        targetValue = if (hasEntered) 1f else 0f,
+        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+        label = "lucideIconMotion",
+    )
+    val scale = when {
+        LucideMotion.LIFT in motions -> 0.82f + progress * 0.18f
+        LucideMotion.POP in motions -> 0.78f + progress * 0.22f
+        LucideMotion.PULSE in motions -> 0.84f + progress * 0.16f
+        else -> 1f
+    }
+    val rotation = when {
+        LucideMotion.WHEEL in motions -> progress * 28f
+        LucideMotion.TURN in motions -> progress * 18f
+        else -> 0f
+    }
+    Icon(
+        painter = painterResource(resource),
+        contentDescription = contentDescription,
+        tint = tint,
+        modifier = modifier.graphicsLayer(scaleX = scale, scaleY = scale, rotationZ = rotation),
+    )
 }
 
 @Composable
@@ -557,16 +682,7 @@ private fun WorkoutBrowserSection(
                                     .background(Color(0x1AFFFFFF)),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Icon(
-                                    imageVector = when (category.title) {
-                                        "Strength" -> Icons.Filled.FitnessCenter
-                                        "Cool Down", "Yoga", "Pilates", "Barre", "Mobility" -> Icons.Filled.Sensors
-                                        else -> Icons.Filled.Timer
-                                    },
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp),
-                                )
+                                ExerciseLucideIcon(category.title, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                             }
                             Text(
                                 category.title,
@@ -787,7 +903,15 @@ private fun GymExerciseCatalogEntry.matchesLibraryFilter(filter: String): Boolea
     }.lowercase(Locale.US)
     return when (filter) {
         "All" -> true
-        in GymEquipmentOption.entries.map { it.displayLabel } -> equipment.any { it.equals(filter, ignoreCase = true) || it.replace('_', ' ').equals(filter, ignoreCase = true) }
+        "Bodyweight" -> equipment.isEmpty() || haystack.contains("bodyweight")
+        "Dumbbells" -> equipment.any { it in setOf("HANDLES", "DUMBBELLS") }
+        "Barbell" -> equipment.any { it in setOf("BAR", "SHORT_BAR", "BARBELL") }
+        "Kettlebells" -> equipment.any { it in setOf("HANDLES", "KETTLEBELLS") } && (haystack.contains("kettle") || !haystack.contains("bar"))
+        "Bands" -> equipment.any { it in setOf("STRAPS", "BANDS", "BELT") }
+        "Cables" -> equipment.any { it in setOf("BLACK_CABLES", "GREY_CABLES", "CABLES", "ROPE") }
+        "Bench" -> equipment.any { it == "BENCH" } || haystack.contains("bench")
+        "Bike" -> haystack.contains("bike") || haystack.contains("cycling") || haystack.contains("pedal")
+        "Rower" -> haystack.contains("row")
         "Challenges" -> false
         "Strength" -> !haystack.contains("mobility") && !haystack.contains("stretch") && !haystack.contains("recovery")
         "Recovery" -> haystack.contains("mobility") || haystack.contains("stretch") || haystack.contains("recovery")
@@ -872,7 +996,7 @@ private fun TrophyButton(onClick: () -> Unit) {
         modifier = Modifier.size(44.dp).clickable(onClick = onClick),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.EmojiEvents, contentDescription = "Achievements", tint = Color(0xFFF8C56F), modifier = Modifier.size(23.dp))
+            AchievementLucideIcon("Achievement", contentDescription = "Achievements", tint = Color(0xFFF8C56F), ambient = true, modifier = Modifier.size(23.dp))
         }
     }
 }
@@ -897,28 +1021,228 @@ private fun StreakFlame(streak: Int) {
 }
 
 @Composable
-private fun AchievementCollectionSheet(profile: GymProfile?, onDismiss: () -> Unit) {
+private fun AchievementCollectionSheet(
+    profile: GymProfile?,
+    profiles: List<GymProfile>,
+    sessionHistory: List<GymSessionRecord>,
+    weeklyProgress: GymWeeklyProgress,
+    onDismiss: () -> Unit,
+) {
     if (profile == null) return
-    val achievements = GymProgression.achievementProgress(profile.totalWorkouts, profile.progression.lifetimeMinutes)
-    val hidden = listOf("???" to "Secret achievement", "IRON ADDICT" to null, "NIGHT OWL" to "Complete a qualifying workout late at night")
+    var view by rememberSaveable { mutableStateOf(AchievementView.ME) }
+    var selectedAchievementId by rememberSaveable { mutableStateOf<String?>(null) }
+    val partner = profiles.firstOrNull { it.id != profile.id }
+    val activePartner = when (view) {
+        AchievementView.ME -> null
+        AchievementView.PARTNER -> partner
+        AchievementView.TOGETHER -> partner
+    }
+    val subject = if (view == AchievementView.PARTNER) partner ?: profile else profile
+    val achievements = evaluateAchievements(subject, sessionHistory, if (view == AchievementView.TOGETHER) activePartner else null)
+    val almostThere = achievements.filter { it.nextTarget != null }.sortedByDescending { it.percentToNext }.take(4)
+    val selectedAchievement = achievements.firstOrNull { it.definition.id == selectedAchievementId }
     Surface(color = Color(0xF50A1016), modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.EmojiEvents, null, tint = Color(0xFFF8C56F), modifier = Modifier.size(32.dp))
-                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("ACHIEVEMENTS", color = Color.White, style = MDTheme.type.sectionTitle.copy(fontWeight = FontWeight.Bold)); Text(profile.name, color = MDTheme.colors.textSecondary, style = MDTheme.type.settingSubtitle) }
+                AchievementLucideIcon("Achievement", contentDescription = null, tint = Color(0xFFF8C56F), modifier = Modifier.size(32.dp))
+                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("ACHIEVEMENTS", color = Color.White, style = MDTheme.type.sectionTitle.copy(fontWeight = FontWeight.Bold)); Text(if (view == AchievementView.TOGETHER) "${profile.name} + ${partner?.name ?: "Partner"}" else subject.name, color = MDTheme.colors.textSecondary, style = MDTheme.type.settingSubtitle) }
                 TextButton(onClick = onDismiss) { Text("Close") }
             }
-            Text("YOUR COLLECTION", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
-            achievements.forEach { AchievementProgressCard(it, unlocked = it.currentTier > 0) }
-            Text("DISCOVER", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
-            hidden.forEach { (name, description) ->
-                Surface(color = Color(0x0DFFFFFF), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.EmojiEvents, null, tint = Color(0xFF65707D), modifier = Modifier.size(28.dp))
-                        Spacer(Modifier.width(12.dp)); Column { Text(name, color = Color.White, style = MDTheme.type.settingTitle); description?.let { Text(it, color = MDTheme.colors.textSecondary, style = MDTheme.type.caption) } }
+            if (partner != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    AchievementView.entries.forEach { option ->
+                        TextButton(onClick = { view = option }) {
+                            Text(option.label, color = if (view == option) Color(0xFFF8C56F) else MDTheme.colors.textSecondary)
+                        }
                     }
                 }
             }
+            AchievementScoreStrip(profile = profile, partner = partner, view = view, achievements = achievements, weeklyProgress = weeklyProgress)
+            if (almostThere.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("ALMOST THERE", color = Color(0xFFF8C56F), style = MDTheme.type.caption)
+                    Text("Your closest next unlocks", color = Color.White, style = MDTheme.type.settingTitle)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    almostThere.forEach { achievement -> AlmostThereCard(achievement, onClick = { selectedAchievementId = achievement.definition.id }) }
+                }
+            }
+            Text("YOUR COLLECTION", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+            achievements.forEach { AchievementProgressCard(it, onClick = { selectedAchievementId = it.definition.id }) }
+        }
+        selectedAchievement?.let { selected ->
+            AchievementDetailDialog(
+                achievement = selected,
+                categoryAchievements = achievements.filter { it.definition.category == selected.definition.category && it.definition.id != selected.definition.id },
+                profile = subject,
+                onDismiss = { selectedAchievementId = null },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AchievementDetailDialog(
+    achievement: GymAchievementStatus,
+    categoryAchievements: List<GymAchievementStatus>,
+    profile: GymProfile,
+    onDismiss: () -> Unit,
+) {
+    val next = achievement.nextTarget
+    val tint = when (achievement.definition.category) {
+        "Together" -> Color(0xFFF8C56F)
+        "Cycling" -> Color(0xFF38CBFF)
+        "Story" -> Color(0xFFFF8A5B)
+        else -> Color(0xFF7CF7B8)
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(color = Color(0xFF111A22), shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(0.86f).heightIn(max = 720.dp)) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = onDismiss) { Text("Close") } }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Reuse the collection icon and its motion profile; the detail card must never
+            // substitute a generic trophy for a category-specific achievement.
+            AchievementLucideIcon(
+                category = achievement.definition.category,
+                contentDescription = null,
+                tint = tint,
+                animate = true,
+                modifier = Modifier.size(40.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(achievement.definition.name, color = Color.White, style = MDTheme.type.sectionTitle.copy(fontWeight = FontWeight.Bold))
+                Text("${achievement.definition.category} · ${achievement.definition.rarity}", color = tint, style = MDTheme.type.caption)
+            }
+        }
+        Text(achievement.definition.description, color = MDTheme.colors.textSecondary, style = MDTheme.type.body)
+        Text("HOW TO UNLOCK", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+        Surface(
+            color = Color(0x0AFFFFFF),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = achievement.definition.unlockCriteria,
+                color = MDTheme.colors.textTertiary,
+                style = MDTheme.type.settingSubtitle,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+            )
+        }
+        Surface(color = tint.copy(alpha = 0.11f), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(if (next == null) "ALL TIERS COMPLETE" else "NEXT TIER", color = tint, style = MDTheme.type.caption)
+                Text(if (next == null) "Mastered" else "${achievementValueLabel(achievement)} / ${achievementValueLabel(GymAchievementStatus(achievement.definition, next))}", color = Color.White, style = MDTheme.type.settingTitle)
+                Box(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(Color(0x243FFFFFF))) {
+                    Box(Modifier.fillMaxWidth(achievement.percentToNext).height(8.dp).background(tint))
+                }
+                Text(if (next == null) "Every tier is yours." else "${achievementValueLabel(GymAchievementStatus(achievement.definition, next - achievement.current))} remaining · +${achievement.nextReward ?: 0} XP", color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+            }
+        }
+        Text("PLAYER STATS", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            ProfileEditMetric("Level", GymProgression.levelFromXp(profile.totalXp).toString(), Modifier.weight(1f))
+            ProfileEditMetric("XP", DecimalFormat("#,##0").format(profile.totalXp), Modifier.weight(1f))
+            ProfileEditMetric("Workouts", profile.totalWorkouts.toString(), Modifier.weight(1f))
+            ProfileEditMetric("Active time", "${profile.progression.lifetimeMinutes} min", Modifier.weight(1f))
+        }
+        if (categoryAchievements.isNotEmpty()) {
+            Text("MORE ${achievement.definition.category.uppercase()}", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+            categoryAchievements.forEach { related ->
+                Surface(color = Color(0x0DFFFFFF), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AchievementLucideIcon(related.definition.category, null, tint = MDTheme.colors.textSecondary, ambient = true, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(related.definition.name, color = Color.White, style = MDTheme.type.settingTitle)
+                            Text(related.definition.description, color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+                        }
+                        Text(if (related.nextTarget == null) "DONE" else "${related.currentTier}/${related.definition.tiers.size}", color = tint, style = MDTheme.type.caption)
+                    }
+                }
+            }
+        }
+            }
+        }
+    }
+}
+
+private enum class AchievementView(val label: String) { ME("Me"), PARTNER("Partner"), TOGETHER("Together") }
+
+@Composable
+private fun AchievementScoreStrip(
+    profile: GymProfile,
+    partner: GymProfile?,
+    view: AchievementView,
+    weeklyProgress: GymWeeklyProgress,
+    achievements: List<GymAchievementStatus>,
+) {
+    val discovered = achievements.count { it.currentTier > 0 }
+    Surface(color = Color(0x0DFFFFFF), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("${profile.totalXp} XP  ·  LEVEL ${GymProgression.levelFromXp(profile.totalXp)}", color = Color.White, style = MDTheme.type.settingTitle)
+            Text("$discovered / ${achievements.size} achievements progressed", color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+            if (view == AchievementView.ME) Text("${weeklyProgress.completedWorkouts} / ${profile.progression.weeklyWorkoutTarget} workouts this week", color = Color(0xFFF8C56F), style = MDTheme.type.caption)
+            if (view == AchievementView.TOGETHER && partner != null) Text("${profile.name}: ${profile.totalXp} XP  ·  ${partner.name}: ${partner.totalXp} XP", color = Color(0xFFF8C56F), style = MDTheme.type.caption)
+        }
+    }
+}
+
+@Composable
+private fun AlmostThereCard(achievement: GymAchievementStatus, onClick: () -> Unit) {
+    val target = achievement.nextTarget ?: return
+    val remaining = target - achievement.current
+    val tint = when (achievement.definition.category) {
+        "Together" -> Color(0xFFF8C56F)
+        "Cycling" -> Color(0xFF38CBFF)
+        "Story" -> Color(0xFFFF8A5B)
+        else -> Color(0xFF7CF7B8)
+    }
+    Surface(
+        color = tint.copy(alpha = 0.11f),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.width(300.dp).clickable(onClick = onClick),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AchievementLucideIcon(achievement.definition.category, contentDescription = null, tint = tint, animate = true, ambient = true, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(achievement.definition.name, color = Color.White, style = MDTheme.type.settingTitle)
+            }
+            Text(achievement.definition.description, color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+            Text("${achievementValueLabel(GymAchievementStatus(achievement.definition, remaining))} remaining", color = tint, style = MDTheme.type.settingSubtitle.copy(fontWeight = FontWeight.Bold))
+            Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(Color(0x243FFFFFF))) {
+                Box(
+                    Modifier.fillMaxWidth(achievement.percentToNext)
+                        .height(6.dp)
+                        .background(tint),
+                )
+            }
+            Text("${achievementValueLabel(achievement)} / ${achievementValueLabel(GymAchievementStatus(achievement.definition, target))}", color = Color.White, style = MDTheme.type.caption)
+        }
+    }
+}
+
+@Composable
+private fun AchievementProgressCard(achievement: GymAchievementStatus, onClick: () -> Unit) {
+    val next = achievement.nextTarget
+    val unlocked = achievement.currentTier > 0
+    Surface(color = if (unlocked) Color(0x147CF7B8) else Color(0x0DFFFFFF), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AchievementLucideIcon(achievement.definition.category, contentDescription = null, tint = if (unlocked) Color(0xFFF8C56F) else Color(0xFF8995A3), ambient = true, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.width(10.dp)); Text(achievement.definition.name, color = Color.White, style = MDTheme.type.settingTitle); Spacer(Modifier.weight(1f)); Text(if (unlocked) "TIER ${achievement.currentTier}" else achievement.definition.rarity.uppercase(), color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+            }
+            Text(if (next == null) "All tiers complete" else "${achievementValueLabel(achievement)} / ${achievementValueLabel(GymAchievementStatus(achievement.definition, next))}", color = MDTheme.colors.textSecondary, style = MDTheme.type.settingSubtitle)
+            Text(achievement.definition.description, color = Color.White, style = MDTheme.type.caption)
+            next?.let { Text("Next reward +${achievement.nextReward ?: 0} XP", color = Color(0xFFF8C56F), style = MDTheme.type.caption) }
+            Box(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape).background(Color(0x243FFFFFF))) { Box(Modifier.fillMaxWidth(achievement.percentToNext).height(7.dp).background(if (unlocked) Color(0xFF7CF7B8) else Color(0xFF38CBFF))) }
         }
     }
 }
@@ -2092,31 +2416,58 @@ private fun ExerciseCatalogHeader(count: Int) {
 }
 
 @Composable
-private fun ExerciseCatalogRow(entry: GymExerciseCatalogEntry) {
+private fun ExerciseCatalogRow(entry: GymExerciseCatalogEntry, onClick: () -> Unit) {
     val subtitleParts = listOf(
         entry.muscleGroups.firstOrNull()?.replace('_', ' '),
         entry.equipment.firstOrNull()?.replace('_', ' '),
         entry.sidedness,
     ).filterNotNull().filter { it.isNotBlank() }
-    Surface(color = Color(0x0FFFFFFF), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(entry.name, color = Color.White, style = MDTheme.type.settingTitle)
-            if (subtitleParts.isNotEmpty()) {
-                Text(
-                    subtitleParts.joinToString(" / ") { it.replaceFirstChar { ch -> ch.uppercase() } },
-                    color = MDTheme.colors.textSecondary,
-                    style = MDTheme.type.caption,
-                )
+    Surface(color = Color(0x0FFFFFFF), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(color = Color(0x1438CBFF), shape = RoundedCornerShape(14.dp), modifier = Modifier.size(46.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    ExerciseLucideIcon(entryIconLabel(entry), null, Color(0xFF7DE6FF), ambient = true, modifier = Modifier.size(24.dp))
+                }
             }
-            if (entry.muscles.isNotEmpty()) {
-                Text(
-                    entry.muscles.take(4).joinToString(" / ") { it.replaceFirstChar { ch -> ch.uppercase() } },
-                    color = MDTheme.colors.textTertiary,
-                    style = MDTheme.type.caption,
-                )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(entry.name, color = Color.White, style = MDTheme.type.settingTitle)
+                if (subtitleParts.isNotEmpty()) {
+                    Text(subtitleParts.joinToString(" / ") { it.replaceFirstChar { ch -> ch.uppercase() } }, color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+                }
+                if (entry.muscles.isNotEmpty()) Text(entry.muscles.take(4).joinToString(" / ") { it.replaceFirstChar { ch -> ch.uppercase() } }, color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
             }
         }
     }
+}
+
+@Composable
+private fun ExerciseCatalogDetailDialog(entry: GymExerciseCatalogEntry, onDismiss: () -> Unit) {
+    val equipment = entry.equipment.firstOrNull()?.replace('_', ' ') ?: "bodyweight"
+    val targets = entry.muscles.ifEmpty { entry.muscleGroups }.take(4).joinToString(" · ") { it.replace('_', ' ').replaceFirstChar(Char::uppercase) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(color = Color(0xFF111A22), shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(0.88f)) {
+            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = onDismiss) { Text("Close") } }
+                Surface(color = Color(0x1738CBFF), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().height(150.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        ExerciseLucideIcon(entryIconLabel(entry), null, Color(0xFF7DE6FF), animate = true, ambient = true, modifier = Modifier.size(72.dp))
+                    }
+                }
+                Text(entry.name, color = Color.White, style = MDTheme.type.sectionTitle.copy(fontWeight = FontWeight.Bold))
+                Text("CURRENT WORKOUT", color = Color(0xFF7DE6FF), style = MDTheme.type.caption)
+                Text("Perform ${entry.name.lowercase()} with controlled form. Use ${equipment.replaceFirstChar(Char::uppercase)} and keep the effort focused on ${targets.ifBlank { "the intended muscle group" }}.", color = MDTheme.colors.textSecondary, style = MDTheme.type.body)
+                if (targets.isNotBlank()) Text("TARGETS  $targets", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+            }
+        }
+    }
+}
+
+private fun entryIconLabel(entry: GymExerciseCatalogEntry): String = buildString {
+    append(entry.name)
+    append(' ')
+    append(entry.equipment.joinToString(" "))
+    append(' ')
+    append(entry.muscleGroups.joinToString(" "))
 }
 
 @Composable
@@ -2465,26 +2816,30 @@ private fun GeneratorMuscleStep(
     onSelectDuration: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        GeneratorDurationPicker(durationMinutes, onSelectDuration)
-        Text("Choose your focus", color = Color.White, style = MDTheme.type.settingTitle)
-        Text(
-            "Select the areas you want to train today. Leave all unselected for a balanced full-body workout.",
-            color = MDTheme.colors.textSecondary,
-            style = MDTheme.type.settingSubtitle,
-        )
-        GymMuscleGroup.entries.chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                row.forEach { group ->
-                    Box(Modifier.weight(1f)) {
-                        SelectionCard(
-                            title = group.displayLabel,
-                            subtitle = if (group in selectedMuscles) "Selected" else "Tap to target",
-                            selected = group in selectedMuscles,
-                            onClick = { onToggleMuscle(group) },
-                        )
+        StaggeredSetupItem(0) { GeneratorDurationPicker(durationMinutes, onSelectDuration) }
+        StaggeredSetupItem(1) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Choose your focus", color = Color.White, style = MDTheme.type.settingTitle)
+                Text(
+                    "Select the areas you want to train today. Leave all unselected for a balanced full-body workout.",
+                    color = MDTheme.colors.textSecondary,
+                    style = MDTheme.type.settingSubtitle,
+                )
+                GymMuscleGroup.entries.chunked(3).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        row.forEach { group ->
+                            Box(Modifier.weight(1f)) {
+                                SelectionCard(
+                                    title = group.displayLabel,
+                                    subtitle = if (group in selectedMuscles) "Selected" else "Tap to target",
+                                    selected = group in selectedMuscles,
+                                    onClick = { onToggleMuscle(group) },
+                                )
+                            }
+                        }
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
-                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -2492,27 +2847,65 @@ private fun GeneratorMuscleStep(
 
 @Composable
 private fun GeneratorDurationPicker(durationMinutes: Int, onSelectDuration: (Int) -> Unit) {
-    var manual by rememberSaveable(durationMinutes) { mutableStateOf("") }
+    var customPickerVisible by rememberSaveable { mutableStateOf(false) }
+    val presets = listOf(30 to "30 min", 45 to "45 min", 60 to "1 hour", 90 to "1h 30")
+    val customDuration = durationMinutes !in presets.map { it.first }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Choose your workout duration", color = Color.White, style = MDTheme.type.settingTitle)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf(30 to "30 min", 45 to "45 min", 60 to "1 hour", 90 to "1h 30").forEach { (minutes, label) ->
+            presets.forEach { (minutes, label) ->
                 FilterChip(label = label, selected = durationMinutes == minutes, onClick = { onSelectDuration(minutes) })
             }
-            OutlinedTextField(
-                value = manual,
-                onValueChange = { value ->
-                    manual = value.filter(Char::isDigit)
-                    manual.toIntOrNull()?.let(onSelectDuration)
-                },
-                label = { Text("Custom") },
-                suffix = { Text("min") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(130.dp),
+            FilterChip(
+                label = if (customDuration) "Custom · ${formatDurationBadge(durationMinutes)}" else "Custom",
+                selected = customDuration,
+                onClick = { customPickerVisible = true },
             )
         }
     }
+    if (customPickerVisible) {
+        CustomDurationDialog(
+            initialMinutes = durationMinutes,
+            onDismiss = { customPickerVisible = false },
+            onApply = { minutes -> onSelectDuration(minutes); customPickerVisible = false },
+        )
+    }
+}
+
+@Composable
+private fun CustomDurationDialog(initialMinutes: Int, onDismiss: () -> Unit, onApply: (Int) -> Unit) {
+    var hours by rememberSaveable { mutableStateOf((initialMinutes / 60).toString()) }
+    var minutes by rememberSaveable { mutableStateOf((initialMinutes % 60).toString()) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(color = Color(0xFF111A22), shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("Custom workout time", color = Color.White, style = MDTheme.type.sectionTitle)
+                Text("Set the session length; the value will appear on your Custom badge.", color = MDTheme.colors.textSecondary, style = MDTheme.type.settingSubtitle)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(value = hours, onValueChange = { hours = it.filter(Char::isDigit).take(2) }, label = { Text("Hours") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = minutes, onValueChange = { minutes = it.filter(Char::isDigit).take(2) }, label = { Text("Minutes") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                    Button(onClick = { onApply((hours.toIntOrNull() ?: 0).coerceIn(0, 12) * 60 + (minutes.toIntOrNull() ?: 0).coerceIn(0, 59)) }, modifier = Modifier.weight(1f)) { Text("Apply") }
+                }
+            }
+        }
+    }
+}
+
+private fun formatDurationBadge(totalMinutes: Int): String = when {
+    totalMinutes < 60 -> "$totalMinutes min"
+    totalMinutes % 60 == 0 -> "${totalMinutes / 60}h"
+    else -> "${totalMinutes / 60}h ${totalMinutes % 60}m"
+}
+
+@Composable
+private fun StaggeredSetupItem(index: Int, content: @Composable () -> Unit) {
+    var revealed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { revealed = true }
+    val progress by animateFloatAsState(if (revealed) 1f else 0f, tween(durationMillis = 340, delayMillis = index * 80, easing = FastOutSlowInEasing), label = "setupStagger$index")
+    Box(Modifier.graphicsLayer(alpha = progress, translationY = (1f - progress) * 18f)) { content() }
 }
 
 @Composable
@@ -2619,8 +3012,14 @@ private fun ActiveSessionHud(
     onPauseResume: () -> Unit,
     onEnd: () -> Unit,
     onDismissStatus: () -> Unit,
+    freeRideVideoUri: String?,
+    onSelectFreeRideVideo: () -> Unit,
 ) {
     val session = uiState.activeSession ?: return
+    if (session.workoutType == GymWorkoutType.CYCLING && session.challenge == null && session.players.size == 1) {
+        FreeRideHud(session, freeRideVideoUri, onSelectFreeRideVideo, onPauseResume, onEnd)
+        return
+    }
     if (session.players.size == 2) {
         SplitSessionHud(session, onPauseResume, onEnd)
         return
@@ -2695,6 +3094,67 @@ private fun ActiveSessionHud(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FreeRideHud(
+    session: GymActiveSessionState,
+    videoUri: String?,
+    onSelectVideo: () -> Unit,
+    onPauseResume: () -> Unit,
+    onEnd: () -> Unit,
+) {
+    val rider = session.players.first()
+    Row(Modifier.fillMaxSize().padding(20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                AchievementLucideIcon("Cycling", null, Color(0xFF38CBFF), ambient = true, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.width(10.dp)); Text("FREE RIDE", color = Color.White, style = MDTheme.type.settingTitle)
+                Spacer(Modifier.weight(1f)); TextButton(onClick = onSelectVideo) { Text(if (videoUri == null) "SELECT VIDEO" else "CHANGE VIDEO") }
+            }
+            Spacer(Modifier.height(12.dp))
+            Surface(color = Color(0xFF101A22), shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (videoUri != null) {
+                    AndroidView(
+                        factory = { context -> VideoView(context).apply { setVideoURI(Uri.parse(videoUri)); setOnPreparedListener { it.isLooping = true; start() } } },
+                        update = { view -> if (!view.isPlaying) view.start() },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ExerciseLucideIcon("Bike", null, Color(0xFF38CBFF), animate = true, ambient = true, modifier = Modifier.size(72.dp))
+                            Text("Choose a ride video to begin", color = MDTheme.colors.textSecondary, style = MDTheme.type.body)
+                            Button(onClick = onSelectVideo) { Text("SELECT VIDEO") }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                ControlButton(if (session.isPaused) "RESUME" else "PAUSE", if (session.isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause, onPauseResume, Modifier.weight(1f))
+                ControlButton("END & SAVE", Icons.Filled.Stop, onEnd, Modifier.weight(1f), Color(0xFFFF8A5B))
+            }
+        }
+        Column(Modifier.width(230.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            FreeRideMetric("TIME", formatDuration(session.elapsedSeconds), Color(0xFFE8F7FF))
+            FreeRideMetric("HEALTH · BPM", "${rider.heartRate ?: "--"}", Color(0xFF7CF7B8))
+            FreeRideMetric("SPEED · KM/H", "%.1f".format(rider.speedKph ?: 0.0), Color(0xFF38CBFF))
+            FreeRideMetric("CADENCE · RPM", "${rider.cadenceRpm?.toInt() ?: "--"}", Color(0xFFF8C56F))
+            FreeRideMetric("OUTPUT · W", "${rider.powerWatts?.toInt() ?: "--"}", Color(0xFFFF8A5B))
+            FreeRideMetric("DISTANCE · KM", "%.2f".format(rider.distanceKm), Color(0xFFBCA7FF))
+        }
+    }
+}
+
+@Composable
+private fun FreeRideMetric(label: String, value: String, tint: Color) {
+    Surface(color = Color(0x141FFFFFF), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(label, color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+            Text(value, color = tint, style = MDTheme.type.clock.copy(fontSize = MDTheme.type.clock.fontSize * .32f, fontWeight = FontWeight.Bold))
         }
     }
 }
@@ -3158,6 +3618,10 @@ private fun SummarySheet(
     summary: GymSessionSummaryState,
     onDismiss: () -> Unit,
 ) {
+    if (summary.session.workoutType == GymWorkoutType.CYCLING && summary.session.challengeId == null) {
+        FreeRideSummarySheet(summary, onDismiss)
+        return
+    }
     Surface(
         color = Color(0xEE081018),
         shape = RoundedCornerShape(30.dp),
@@ -3198,6 +3662,51 @@ private fun SummarySheet(
                 Text("Back to Gym")
             }
         }
+    }
+}
+
+@Composable
+private fun FreeRideSummarySheet(summary: GymSessionSummaryState, onDismiss: () -> Unit) {
+    val rider = summary.session.players.firstOrNull() ?: return
+    var rating by remember { mutableStateOf(0) }
+    Surface(color = Color(0xF0081018), shape = RoundedCornerShape(30.dp), modifier = Modifier.fillMaxWidth(0.72f)) {
+        Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Text("GREAT RIDE!", color = Color.White, style = MDTheme.type.sectionTitle.copy(fontWeight = FontWeight.Bold))
+            Text("Free Ride complete · ${formatDuration(summary.session.activeSeconds)} active", color = MDTheme.colors.textSecondary, style = MDTheme.type.settingSubtitle)
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+                Surface(color = Color(0x111FFFFF), shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f)) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("YOUR RIDE", color = Color(0xFF38CBFF), style = MDTheme.type.caption)
+                        Text(rider.displayName, color = Color.White, style = MDTheme.type.settingTitle)
+                        Text("${rider.score} points · +${rider.xpEarned} XP", color = MDTheme.colors.textSecondary, style = MDTheme.type.settingSubtitle)
+                        Text("RATE THIS RIDE", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            (1..5).forEach { star -> Text(if (star <= rating) "★" else "☆", color = if (star <= rating) Color(0xFFF8C56F) else Color.White, style = MDTheme.type.clock.copy(fontSize = MDTheme.type.clock.fontSize * .32f), modifier = Modifier.clickable { rating = star }) }
+                        }
+                    }
+                }
+                Surface(color = Color(0x111FFFFF), shape = RoundedCornerShape(20.dp), modifier = Modifier.weight(1f)) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("YOUR STATS", color = Color.White, style = MDTheme.type.settingTitle)
+                        FreeRideSummaryMetric("OUTPUT", rider.metrics.averagePowerWatts?.let { "$it W" } ?: "--")
+                        FreeRideSummaryMetric("CALORIES", "${rider.metrics.calories}")
+                        FreeRideSummaryMetric("DISTANCE", formatDistance(rider.metrics.distanceKm))
+                        FreeRideSummaryMetric("AVG HEART RATE", rider.metrics.averageHeartRate?.let { "$it BPM" } ?: "--")
+                        FreeRideSummaryMetric("BEST POWER", rider.metrics.maxPowerWatts?.let { "$it W" } ?: "--")
+                    }
+                }
+            }
+            rider.achievements.takeIf { it.isNotEmpty() }?.let { unlocked -> Text("UNLOCKED  ${unlocked.joinToString(" · ")}", color = Color(0xFFF8C56F), style = MDTheme.type.caption) }
+            Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(0.55f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38CBFF), contentColor = Color(0xFF06131A))) { Text("DONE") }
+        }
+    }
+}
+
+@Composable
+private fun FreeRideSummaryMetric(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+        Text(value, color = Color.White, style = MDTheme.type.settingSubtitle)
     }
 }
 

@@ -18,6 +18,9 @@ class PhotoCacheManager(context: Context) {
 
     private val cacheDir: File = File(context.applicationContext.cacheDir, "photorama_photos").apply { mkdirs() }
     private val smbRepository = SmbRepository(context.applicationContext)
+    // NAS SMB clients allocate connection buffers while opening a stream. The visible image and
+    // background preload must not open separate connections together on the low-memory mirror.
+    private val downloadLock = Any()
 
     private fun keyFor(photo: LanPhoto): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(photo.url.toByteArray(Charsets.UTF_8))
@@ -37,12 +40,12 @@ class PhotoCacheManager(context: Context) {
 
     /** Downloads [photo] from [share] into the cache if not already present, then enforces
      * [maxSizeBytes]. Blocking - must be called off the UI thread. Returns null on failure. */
-    fun ensureCached(photo: LanPhoto, share: SmbShare, maxSizeBytes: Long): File? {
-        getCachedFile(photo)?.let { return it }
+    fun ensureCached(photo: LanPhoto, share: SmbShare, maxSizeBytes: Long): File? = synchronized(downloadLock) {
+        getCachedFile(photo)?.let { return@synchronized it }
 
         val destination = File(cacheDir, keyFor(photo))
         val temp = File(cacheDir, "${destination.name}.tmp")
-        return try {
+        try {
             smbRepository.openStream(share, photo.url).use { input ->
                 temp.outputStream().use { output ->
                     input.copyTo(output)
@@ -53,6 +56,12 @@ class PhotoCacheManager(context: Context) {
             destination
         } catch (e: Exception) {
             Log.e("PhotoCacheManager", "failed to cache ${photo.name}: ${e.message}")
+            temp.delete()
+            null
+        } catch (e: OutOfMemoryError) {
+            // Keep the launcher alive if the camera/audio encoder and a NAS fetch briefly contend
+            // for the VM heap. The slideshow retains its last image and will retry next cycle.
+            Log.w("PhotoCacheManager", "skipped ${photo.name}; insufficient memory for NAS fetch")
             temp.delete()
             null
         }

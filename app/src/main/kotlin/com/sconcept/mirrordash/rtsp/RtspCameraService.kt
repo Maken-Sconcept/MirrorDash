@@ -11,6 +11,7 @@ import com.pedro.common.ConnectChecker
 import com.pedro.rtspserver.RtspServerCamera1
 
 const val RTSP_CAMERA_PORT = 8554
+private const val RTSP_ENCODER_PORT = 8555
 const val RTSP_QUALITY_LOW = "low"
 const val RTSP_QUALITY_MEDIUM = "medium"
 const val RTSP_QUALITY_HIGH = "high"
@@ -40,6 +41,7 @@ object RtspStreamQuality {
 class RtspCameraService : Service(), ConnectChecker {
     private var camera: RtspServerCamera1? = null
     private var activeProfile: RtspVideoProfile? = null
+    private var compatibilityProxy: RtspCompatibilityProxy? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val allowedClients = intent?.getStringArrayListExtra(EXTRA_ALLOWED_CLIENT_IPS).orEmpty()
@@ -61,8 +63,10 @@ class RtspCameraService : Service(), ConnectChecker {
             activeProfile = null
         }
         if (camera == null) {
-            val server = RtspServerCamera1(this, this, RTSP_CAMERA_PORT)
-            server.streamClient.setDelay(0)
+            val server = RtspServerCamera1(this, this, RTSP_ENCODER_PORT)
+            // The server's per-client queue rejects a literal zero-delay cache. A single 100 ms
+            // buffer is the library's safe low-latency minimum and prevents negotiation failures.
+            server.streamClient.setDelay(100)
             if (!server.prepareVideo(profile.width, profile.height, profile.fps, profile.bitrate, 0)) {
                 RtspLanFirewall.remove(RTSP_CAMERA_PORT)
                 stopSelf(startId)
@@ -76,6 +80,12 @@ class RtspCameraService : Service(), ConnectChecker {
             server.startStream()
             camera = server
             activeProfile = profile
+            val publicIp = localRtspIpv4Address()
+            if (publicIp == null) {
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+            compatibilityProxy = RtspCompatibilityProxy(RTSP_CAMERA_PORT, RTSP_ENCODER_PORT, publicIp).also { it.start() }
         }
         return START_STICKY
     }
@@ -84,6 +94,8 @@ class RtspCameraService : Service(), ConnectChecker {
         camera?.stopStream()
         camera = null
         activeProfile = null
+        compatibilityProxy?.stop()
+        compatibilityProxy = null
         RtspLanFirewall.remove(RTSP_CAMERA_PORT)
         super.onDestroy()
     }

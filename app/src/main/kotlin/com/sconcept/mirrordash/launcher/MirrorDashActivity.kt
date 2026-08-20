@@ -95,6 +95,7 @@ private const val IPTV_REMOTE_VOLUME_STEP = 0.05f
 class MirrorDashActivity : ComponentActivity() {
 
     private val container by lazy { AppContainer.get(applicationContext) }
+    private val memoryTrimCoordinator by lazy { MemoryTrimCoordinator(applicationContext) }
 
     private val launcherViewModel: LauncherViewModel by viewModels { LauncherViewModel.factory(container.settingsRepository) }
     private val clockViewModel: ClockViewModel by viewModels { ClockViewModel.factory(application, container.settingsRepository) }
@@ -138,6 +139,7 @@ class MirrorDashActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        memoryTrimCoordinator.start()
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
