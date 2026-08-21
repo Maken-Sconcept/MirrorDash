@@ -1,0 +1,32 @@
+{
+  "jellyfin": {
+    "url": "http://172.17.0.3:30013/web/#/home",
+    "username": "maken",
+    "password": "jelB1pypm74!",
+    "autoAuth": true
+  },
+  "homeAssistant": {
+    "url": "http://172.17.0.6:8123/home/overview",
+    "username": "maken",
+    "password": "homB1pypm74!",
+    "autoAuth": true
+  },
+  "walkieTalkie": {
+    "autoAddDiscovered": true
+  },
+  "iptv": {
+    "url": "http://edge.bz:8080",
+    "mac": "00:77:70:E9:01:01"
+  },
+  "rtsp": {
+    "enabled": false,
+    "allowedClientIps": ["172.17.0.6"],
+    "quality": "medium"
+  },
+  "nas": {
+    "server": "172.17.0.3",
+    "shareName": "berthier",
+    "username": "maken",
+    "password": "truB1pypm74!"
+  }
+}

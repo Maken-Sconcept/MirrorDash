@@ -78,24 +78,45 @@ class IptvRecordingService : Service() {
         )
     }
 
+    /** Unlike the "download complete" notification ([IptvRecordingEngine.notifyDownloadComplete]),
+     * this one didn't used to jump anywhere useful - tapping it just opened the app to whatever
+     * page it happened to be on. Now carries the same [EXTRA_OPEN_DOWNLOAD_MANAGER] extra, so
+     * "check on my recording" works the same way whether you tap the completion notification or
+     * this ongoing one. Also now shows a real OS progress bar ([NotificationCompat.Builder.setProgress])
+     * once [ActiveRecording.totalBytes] is known (a VOD download, essentially always) - the one
+     * piece of "current progress" that's visible without even opening the app, per the brief. */
     private fun buildNotification(active: ActiveRecording?): Notification {
         val openIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MirrorDashActivity::class.java),
+            Intent(this, MirrorDashActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_OPEN_DOWNLOAD_MANAGER, true)
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val title = if (active?.trigger == RecordingTrigger.DOWNLOAD) "Downloading" else "Recording"
         val text = active?.let { "${it.channelName} — ${formatMegabytes(it.bytesWritten)} — ${it.destinationLabel}" }
             ?: "Starting…"
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Recording")
+            .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+        val total = active?.totalBytes
+        if (total != null && total > 0) {
+            builder.setProgress(100, ((active.bytesWritten * 100L) / total).toInt().coerceIn(0, 100), false)
+        } else if (active != null) {
+            // Known to be in progress but no size to show a fraction of (a live-channel
+            // recording, or a VOD download whose server sent no Content-Length) - an
+            // indeterminate bar still reads as "this is actively happening," which a bare text
+            // line updating once a second doesn't convey nearly as well at a glance.
+            builder.setProgress(0, 0, true)
+        }
+        return builder.build()
     }
 
     private fun updateNotification(active: ActiveRecording) {

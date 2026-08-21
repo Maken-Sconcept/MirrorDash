@@ -1,5 +1,7 @@
 package com.sconcept.mirrordash.weather
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -24,65 +26,75 @@ class WeatherRepository {
         private const val FORECAST_HOURS = 24
     }
 
-    fun resolveLocation(input: String): Result<WeatherLocation> = runCatching {
-        val trimmed = input.trim()
-        require(trimmed.isNotBlank()) { "Enter a city or coordinates first." }
+    // Both entry points below dispatch onto Dispatchers.IO themselves rather than trusting every
+    // call site to remember to - HttpURLConnection is blocking I/O, and viewModelScope.launch
+    // defaults to Dispatchers.Main.immediate, so calling these directly from a ViewModel throws
+    // NetworkOnMainThreadException on every single attempt (which is exactly what silently made
+    // weather never work at all, regardless of how correct the configured location was).
 
-        parseCoordinates(trimmed)?.let { (latitude, longitude) ->
-            return@runCatching WeatherLocation(
+    suspend fun resolveLocation(input: String): Result<WeatherLocation> = withContext(Dispatchers.IO) {
+        runCatching {
+            val trimmed = input.trim()
+            require(trimmed.isNotBlank()) { "Enter a city or coordinates first." }
+
+            parseCoordinates(trimmed)?.let { (latitude, longitude) ->
+                return@runCatching WeatherLocation(
+                    query = trimmed,
+                    label = String.format(Locale.US, "%.4f, %.4f", latitude, longitude),
+                    latitude = latitude,
+                    longitude = longitude,
+                )
+            }
+
+            val encoded = URLEncoder.encode(trimmed, StandardCharsets.UTF_8.name())
+            val response = readJson(
+                "https://geocoding-api.open-meteo.com/v1/search?name=$encoded&count=1&language=en&format=json",
+            )
+            val results = response.optJSONArray("results")
+                ?: error("No matching city was found.")
+            require(results.length() > 0) { "No matching city was found." }
+
+            val best = results.getJSONObject(0)
+            WeatherLocation(
                 query = trimmed,
-                label = String.format(Locale.US, "%.4f, %.4f", latitude, longitude),
-                latitude = latitude,
-                longitude = longitude,
+                label = buildLocationLabel(best),
+                latitude = best.getDouble("latitude"),
+                longitude = best.getDouble("longitude"),
             )
         }
-
-        val encoded = URLEncoder.encode(trimmed, StandardCharsets.UTF_8.name())
-        val response = readJson(
-            "https://geocoding-api.open-meteo.com/v1/search?name=$encoded&count=1&language=en&format=json",
-        )
-        val results = response.optJSONArray("results")
-            ?: error("No matching city was found.")
-        require(results.length() > 0) { "No matching city was found." }
-
-        val best = results.getJSONObject(0)
-        WeatherLocation(
-            query = trimmed,
-            label = buildLocationLabel(best),
-            latitude = best.getDouble("latitude"),
-            longitude = best.getDouble("longitude"),
-        )
     }
 
-    fun fetchWeather(location: WeatherLocation, useFahrenheit: Boolean): Result<WeatherSnapshot> = runCatching {
-        val unit = if (useFahrenheit) "fahrenheit" else "celsius"
-        val url = buildString {
-            append("https://api.open-meteo.com/v1/forecast?")
-            append("latitude=${location.latitude}")
-            append("&longitude=${location.longitude}")
-            append("&current=temperature_2m,weather_code,is_day")
-            append("&hourly=temperature_2m,weather_code,is_day")
-            append("&forecast_hours=$FORECAST_HOURS")
-            append("&daily=weather_code,temperature_2m_max,temperature_2m_min")
-            append("&forecast_days=$FORECAST_DAYS")
-            append("&timezone=auto")
-            append("&temperature_unit=$unit")
-        }
-        val response = readJson(url)
-        val current = response.getJSONObject("current")
-        val weatherCode = current.getInt("weather_code")
-        val isDay = current.optInt("is_day", 1) == 1
-        val daily = response.getJSONObject("daily")
+    suspend fun fetchWeather(location: WeatherLocation, useFahrenheit: Boolean): Result<WeatherSnapshot> = withContext(Dispatchers.IO) {
+        runCatching {
+            val unit = if (useFahrenheit) "fahrenheit" else "celsius"
+            val url = buildString {
+                append("https://api.open-meteo.com/v1/forecast?")
+                append("latitude=${location.latitude}")
+                append("&longitude=${location.longitude}")
+                append("&current=temperature_2m,weather_code,is_day")
+                append("&hourly=temperature_2m,weather_code,is_day")
+                append("&forecast_hours=$FORECAST_HOURS")
+                append("&daily=weather_code,temperature_2m_max,temperature_2m_min")
+                append("&forecast_days=$FORECAST_DAYS")
+                append("&timezone=auto")
+                append("&temperature_unit=$unit")
+            }
+            val response = readJson(url)
+            val current = response.getJSONObject("current")
+            val weatherCode = current.getInt("weather_code")
+            val isDay = current.optInt("is_day", 1) == 1
+            val daily = response.getJSONObject("daily")
 
-        WeatherSnapshot(
-            location = location,
-            currentTemperature = current.getDouble("temperature_2m"),
-            weatherCode = weatherCode,
-            condition = weatherConditionForCode(weatherCode),
-            isDay = isDay,
-            hourlyForecast = parseHourlyForecast(response.getJSONObject("hourly")),
-            forecast = parseForecast(daily),
-        )
+            WeatherSnapshot(
+                location = location,
+                currentTemperature = current.getDouble("temperature_2m"),
+                weatherCode = weatherCode,
+                condition = weatherConditionForCode(weatherCode),
+                isDay = isDay,
+                hourlyForecast = parseHourlyForecast(response.getJSONObject("hourly")),
+                forecast = parseForecast(daily),
+            )
+        }
     }
 
     private fun parseForecast(daily: JSONObject): List<WeatherDayForecast> {

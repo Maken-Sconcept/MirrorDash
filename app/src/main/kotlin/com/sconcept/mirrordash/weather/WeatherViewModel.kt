@@ -1,15 +1,13 @@
 package com.sconcept.mirrordash.weather
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sconcept.mirrordash.settings.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.minutes
@@ -37,13 +35,6 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
         val enabled: Boolean,
     )
 
-    private val locationConfig = settingsRepository.settings
-        .map {
-            LocationConfig(it.weatherLocationQuery, it.weatherLocationLabel, it.weatherLatitude, it.weatherLongitude, it.weatherUseFahrenheit, it.weatherEnabled)
-        }
-        .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, LocationConfig("", "", "", "", false, true))
-
     private var lastKnownCondition: WeatherCondition? = null
     private var lastKnownTemperature: Int? = null
     private var lastKnownLabel: String? = null
@@ -63,7 +54,22 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
     }
 
     private suspend fun refreshInternal() {
-        val config = locationConfig.value
+        // Reads the settings Flow directly (suspending for its real first emission) rather than
+        // through a StateFlow snapshot - DataStore's first read is async disk I/O, so a
+        // SharingStarted.Eagerly-shared StateFlow could still hold its blank initial placeholder
+        // the moment this runs from init{}, silently losing the race and reporting "not
+        // configured" for the *entire* 20-minute refresh interval before ever seeing the real
+        // persisted location.
+        val settings = settingsRepository.settings.first()
+        val config = LocationConfig(
+            settings.weatherLocationQuery,
+            settings.weatherLocationLabel,
+            settings.weatherLatitude,
+            settings.weatherLongitude,
+            settings.weatherUseFahrenheit,
+            settings.weatherEnabled,
+        )
+        Log.i(TAG, "refreshInternal: enabled=${config.enabled} query='${config.query}' lat=${config.latitude} lon=${config.longitude}")
         if (!config.enabled) {
             _uiState.value = WeatherUiState(isConfigured = false)
             return
@@ -71,17 +77,19 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
         var lat = config.latitude.toDoubleOrNull()
         var lon = config.longitude.toDoubleOrNull()
         if ((lat == null || lon == null) && config.query.isNotBlank()) {
-            repository.resolveLocation(config.query).getOrNull()?.let { resolved ->
-                lat = resolved.latitude
-                lon = resolved.longitude
-                settingsRepository.update {
-                    weatherLocationQuery = resolved.query
-                    weatherLocationLabel = resolved.label
-                    weatherLatitude = resolved.latitude.toString()
-                    weatherLongitude = resolved.longitude.toString()
-                    weatherEnabled = true
+            repository.resolveLocation(config.query)
+                .onFailure { Log.w(TAG, "Could not resolve weather location '${config.query}'", it) }
+                .getOrNull()?.let { resolved ->
+                    lat = resolved.latitude
+                    lon = resolved.longitude
+                    settingsRepository.update {
+                        weatherLocationQuery = resolved.query
+                        weatherLocationLabel = resolved.label
+                        weatherLatitude = resolved.latitude.toString()
+                        weatherLongitude = resolved.longitude.toString()
+                        weatherEnabled = true
+                    }
                 }
-            }
         }
         if (lat == null || lon == null) {
             _uiState.value = WeatherUiState(isConfigured = false)
@@ -94,6 +102,7 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
 
         result.fold(
             onSuccess = { snapshot ->
+                Log.i(TAG, "refreshInternal: success temp=${snapshot.currentTemperature} condition=${snapshot.condition}")
                 lastKnownCondition = snapshot.condition
                 lastKnownTemperature = snapshot.currentTemperature.roundToInt()
                 lastKnownLabel = config.label.ifBlank { null }
@@ -109,6 +118,7 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
                 )
             },
             onFailure = { error ->
+                Log.w(TAG, "Weather fetch failed for ${config.label.ifBlank { config.query }} ($lat, $lon)", error)
                 _uiState.value = WeatherUiState(
                     isLoading = false,
                     temperature = lastKnownTemperature,
@@ -124,6 +134,7 @@ class WeatherViewModel(private val settingsRepository: SettingsRepository) : Vie
     }
 
     companion object {
+        private const val TAG = "WeatherViewModel"
         private const val REFRESH_INTERVAL_MINUTES = 20
 
         fun factory(settingsRepository: SettingsRepository): ViewModelProvider.Factory =

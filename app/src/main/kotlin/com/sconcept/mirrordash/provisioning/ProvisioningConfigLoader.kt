@@ -6,15 +6,14 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
- * Reads the provisioning file from this app's own external-files directory - no runtime
- * permission needed, reachable via `adb push`/`adb pull` without root even where a file-manager
- * app can no longer browse the app's Android/data folder directly (API 30+). Never throws: a
- * missing or malformed file just means "nothing to provision," logged for whoever's setting the
- * unit up.
+ * Loads the bundled default first-run configuration and lets an external file override it. The
+ * external-files location needs no runtime permission and is reachable with `adb push`/`adb pull`
+ * even where a file manager cannot browse Android/data directly (API 30+).
  */
 object ProvisioningConfigLoader {
     private const val TAG = "ProvisioningConfig"
     const val FILE_NAME = "mirrordash_config.json"
+    private const val BUNDLED_ASSET_PATH = "provisioning/$FILE_NAME"
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -22,11 +21,21 @@ object ProvisioningConfigLoader {
 
     fun load(context: Context): ProvisioningConfig? {
         val file = configFile(context)
-        if (!file.exists()) return null
+        if (file.exists()) {
+            return decode(file.readText(), file.absolutePath)
+        }
         return runCatching {
-            json.decodeFromString<ProvisioningConfig>(file.readText())
+            context.assets.open(BUNDLED_ASSET_PATH).bufferedReader().use { it.readText() }
+        }.mapCatching { payload ->
+            json.decodeFromString<ProvisioningConfig>(payload)
         }.onFailure { error ->
-            Log.w(TAG, "Failed to parse ${file.absolutePath}: ${error.message}")
+            Log.w(TAG, "Failed to load bundled provisioning config: ${error.message}")
         }.getOrNull()
     }
+
+    private fun decode(payload: String, source: String): ProvisioningConfig? = runCatching {
+        json.decodeFromString<ProvisioningConfig>(payload)
+    }.onFailure { error ->
+        Log.w(TAG, "Failed to parse $source: ${error.message}")
+    }.getOrNull()
 }

@@ -77,196 +77,198 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
     val settings = uiState.settings
     var showClockFontBrowser by remember { mutableStateOf(false) }
 
-    SettingGroup(title = "Clock size") {
-        Text(
-            "${settings.clockFontSizeSp}sp",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Slider(
-            value = settings.clockFontSizeSp.toFloat(),
-            onValueChange = { viewModel.setClockFontSize(it.toInt()) },
-            valueRange = 64f..180f,
-            steps = 0,
-            colors = SliderDefaults.colors(
-                thumbColor = MDTheme.colors.accent,
-                activeTrackColor = MDTheme.colors.accent,
-                inactiveTrackColor = MDTheme.colors.divider,
-            ),
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Clock style") {
-        Text(
-            "Choose the layout language first, then tune the colors and base font.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(12.dp))
-
-        ClockStyleCatalog.presets.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                row.forEach { style ->
-                    ClockStyleCard(
-                        style = style,
-                        selected = settings.clockStyleId == style.id,
-                        fontId = settings.clockFontId,
-                        downloadedFonts = settings.downloadedClockFonts,
-                        primaryColor = Color(settings.clockTextColorArgb),
-                        accentColor = Color(settings.clockAccentColorArgb),
-                        onClick = { viewModel.setClockStyle(style.id) },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                if (row.size == 1) {
-                    Spacer(Modifier.weight(1f))
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-        }
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Clock font") {
-        Text(
-            ClockFontLibrary.label(settings.clockFontId, settings.downloadedClockFonts),
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(12.dp))
-
-        Text(
-            "Base pack: 15 fonts bundled with the app and copied into the app's private clock-fonts folder.",
-            style = MDTheme.type.caption,
-            color = MDTheme.colors.textTertiary,
-        )
-        Spacer(Modifier.height(12.dp))
-
-        Button(
-            onClick = { showClockFontBrowser = true },
-            colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
-        ) {
-            Text("Browse more Google Fonts")
-        }
-
-        if (uiState.clockFontStatusMessage != null) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                uiState.clockFontStatusMessage,
-                style = MDTheme.type.caption,
-                color = if (uiState.downloadingClockFontId == null && uiState.clockFontStatusMessage.contains("failed", ignoreCase = true)) {
-                    MDTheme.colors.danger
-                } else {
-                    MDTheme.colors.textSecondary
-                },
-            )
-        }
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Primary color") {
-        ColorSwatchRow(
-            colors = ClockColorPresets,
-            selected = Color(settings.clockTextColorArgb),
-            onSelect = { viewModel.setClockTextColor(it) },
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Accent color") {
-        ColorSwatchRow(
-            colors = ClockColorPresets,
-            selected = Color(settings.clockAccentColorArgb),
-            onSelect = { viewModel.setClockAccentColor(it) },
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Show on Clock") {
-        SettingRow(title = "Show clock", subtitle = "Time and date") {
-            Switch(
-                checked = settings.clockShowTime,
-                onCheckedChange = viewModel::setClockShowTime,
-                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        SettingRow(title = "Show widgets", subtitle = "Weather and any custom text widgets") {
-            Switch(
-                checked = settings.clockShowWidgets,
-                onCheckedChange = viewModel::setClockShowWidgets,
-                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Turn both off for a fullscreen Photorama slideshow with nothing overlaid.",
-            style = MDTheme.type.caption,
-            color = MDTheme.colors.textTertiary,
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
     // clockBackgroundMode, not photoramaEnabled, is what ClockViewModel actually renders off of -
     // reading photoramaEnabled here instead would let this switch's checked state disagree with
     // what's really on screen wherever the two fields aren't in sync (e.g. a pre-existing device
     // where photoramaEnabled was set true long before clockBackgroundMode ever existed).
     val usePhotoramaBackground = settings.clockBackgroundMode == CLOCK_BACKGROUND_MODE_PHOTORAMA
 
-    SettingGroup(title = "Background") {
-        SettingRow(
-            title = "Use Photorama as background",
-            subtitle = "Show a live photo slideshow behind the clock instead of a solid color",
-        ) {
-            Switch(
-                checked = usePhotoramaBackground,
-                onCheckedChange = viewModel::setPhotoramaEnabled,
-                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
-            )
-        }
+    GroupedSettingsContent(
+        subsections = listOf(
+            SettingsSubsection(title = "Style", subtitle = "Clock size and layout") {
+                SettingGroup(title = "Clock size") {
+                    Text(
+                        "${settings.clockFontSizeSp}sp",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Slider(
+                        value = settings.clockFontSizeSp.toFloat(),
+                        onValueChange = { viewModel.setClockFontSize(it.toInt()) },
+                        valueRange = 64f..800f,
+                        steps = 0,
+                        colors = SliderDefaults.colors(
+                            thumbColor = MDTheme.colors.accent,
+                            activeTrackColor = MDTheme.colors.accent,
+                            inactiveTrackColor = MDTheme.colors.divider,
+                        ),
+                    )
+                }
 
-        if (usePhotoramaBackground) {
-            Spacer(Modifier.height(20.dp))
-            PhotoramaSourceSection(uiState, viewModel)
-        }
+                Spacer(Modifier.height(28.dp))
 
-        Spacer(Modifier.height(16.dp))
+                SettingGroup(title = "Clock style") {
+                    Text(
+                        "Choose the layout language first, then tune the colors and base font.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(12.dp))
 
-        Text(
-            "Background color",
-            style = MDTheme.type.settingTitle,
-            color = MDTheme.colors.textPrimary,
-            modifier = Modifier.alpha(if (usePhotoramaBackground) 0.4f else 1f),
-        )
-        Spacer(Modifier.height(10.dp))
-        ColorSwatchRow(
-            colors = ClockBackgroundPresets,
-            selected = Color(settings.clockBackgroundColorArgb),
-            onSelect = { viewModel.setClockBackgroundColor(it) },
-            enabled = !usePhotoramaBackground,
-        )
-    }
+                    ClockStyleCatalog.presets.chunked(2).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                            row.forEach { style ->
+                                ClockStyleCard(
+                                    style = style,
+                                    selected = settings.clockStyleId == style.id,
+                                    fontId = settings.clockFontId,
+                                    downloadedFonts = settings.downloadedClockFonts,
+                                    primaryColor = Color(settings.clockTextColorArgb),
+                                    accentColor = Color(settings.clockAccentColorArgb),
+                                    onClick = { viewModel.setClockStyle(style.id) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            if (row.size == 1) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+            },
+            SettingsSubsection(title = "Colors & Font", subtitle = "Clock font, primary color, and accent color") {
+                SettingGroup(title = "Clock font") {
+                    Text(
+                        ClockFontLibrary.label(settings.clockFontId, settings.downloadedClockFonts),
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(12.dp))
 
-    Spacer(Modifier.height(28.dp))
+                    Text(
+                        "Base pack: 15 fonts bundled with the app and copied into the app's private clock-fonts folder.",
+                        style = MDTheme.type.caption,
+                        color = MDTheme.colors.textTertiary,
+                    )
+                    Spacer(Modifier.height(12.dp))
 
-    SettingGroup(title = "Position") {
-        Text(
-            "Long-press and drag the clock or any widget on the Clock page to move it.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        TextButton(onClick = viewModel::resetClockLayout) {
-            Text("Reset clock position", color = MDTheme.colors.accent)
-        }
-    }
+                    Button(
+                        onClick = { showClockFontBrowser = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
+                    ) {
+                        Text("Browse more Google Fonts")
+                    }
+
+                    if (uiState.clockFontStatusMessage != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            uiState.clockFontStatusMessage,
+                            style = MDTheme.type.caption,
+                            color = if (uiState.downloadingClockFontId == null && uiState.clockFontStatusMessage.contains("failed", ignoreCase = true)) {
+                                MDTheme.colors.danger
+                            } else {
+                                MDTheme.colors.textSecondary
+                            },
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(28.dp))
+
+                SettingGroup(title = "Primary color") {
+                    ColorSwatchRow(
+                        colors = ClockColorPresets,
+                        selected = Color(settings.clockTextColorArgb),
+                        onSelect = { viewModel.setClockTextColor(it) },
+                    )
+                }
+
+                Spacer(Modifier.height(28.dp))
+
+                SettingGroup(title = "Accent color") {
+                    ColorSwatchRow(
+                        colors = ClockColorPresets,
+                        selected = Color(settings.clockAccentColorArgb),
+                        onSelect = { viewModel.setClockAccentColor(it) },
+                    )
+                }
+            },
+            SettingsSubsection(title = "Visibility", subtitle = "What shows up on the Clock page") {
+                SettingGroup(title = "Show on Clock") {
+                    SettingRow(title = "Show clock", subtitle = "Time and date") {
+                        Switch(
+                            checked = settings.clockShowTime,
+                            onCheckedChange = viewModel::setClockShowTime,
+                            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    SettingRow(title = "Show widgets", subtitle = "Weather and any custom text widgets") {
+                        Switch(
+                            checked = settings.clockShowWidgets,
+                            onCheckedChange = viewModel::setClockShowWidgets,
+                            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Turn both off for a fullscreen Photorama slideshow with nothing overlaid.",
+                        style = MDTheme.type.caption,
+                        color = MDTheme.colors.textTertiary,
+                    )
+                }
+            },
+            SettingsSubsection(title = "Background", subtitle = "Solid color or a Photorama photo slideshow") {
+                SettingGroup(title = "Background") {
+                    SettingRow(
+                        title = "Use Photorama as background",
+                        subtitle = "Show a live photo slideshow behind the clock instead of a solid color",
+                    ) {
+                        Switch(
+                            checked = usePhotoramaBackground,
+                            onCheckedChange = viewModel::setPhotoramaEnabled,
+                            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                        )
+                    }
+
+                    if (usePhotoramaBackground) {
+                        Spacer(Modifier.height(20.dp))
+                        PhotoramaSourceSection(uiState, viewModel)
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Text(
+                        "Background color",
+                        style = MDTheme.type.settingTitle,
+                        color = MDTheme.colors.textPrimary,
+                        modifier = Modifier.alpha(if (usePhotoramaBackground) 0.4f else 1f),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    ColorSwatchRow(
+                        colors = ClockBackgroundPresets,
+                        selected = Color(settings.clockBackgroundColorArgb),
+                        onSelect = { viewModel.setClockBackgroundColor(it) },
+                        enabled = !usePhotoramaBackground,
+                    )
+                }
+            },
+            SettingsSubsection(title = "Position", subtitle = "Reset a dragged clock back to its default spot") {
+                SettingGroup(title = "Position") {
+                    Text(
+                        "Long-press and drag the clock or any widget on the Clock page to move it.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    TextButton(onClick = viewModel::resetClockLayout) {
+                        Text("Reset clock position", color = MDTheme.colors.accent)
+                    }
+                }
+            },
+        ),
+    )
 
     if (uiState.browser != null) {
         // A plain composable call here would size itself against AppearanceSettingsContent's own
@@ -409,6 +411,36 @@ private fun LocalSourceSection(folderUri: String, viewModel: SettingsViewModel) 
 @Composable
 private fun NasSourceSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     val settings = uiState.settings
+    Column {
+        Text(
+            if (settings.smbShare.isConfigured) "Using the shared NAS connection from Launcher settings." else "Set up the shared NAS connection in Launcher settings before choosing a folder.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = settings.photoramaFolderPath.ifBlank { "No folder selected" },
+                style = MDTheme.type.settingSubtitle,
+                color = MDTheme.colors.textSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = { viewModel.openFolderBrowser(settings.photoramaFolderPath) },
+                enabled = settings.smbShare.isConfigured,
+            ) {
+                Text("Browse", color = MDTheme.colors.accent)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        ChangeSourceButton(viewModel)
+    }
+}
+
+/** Shared NAS login used by Photos, IPTV, Gym video playback, and any future NAS feature. */
+@Composable
+internal fun SharedNasConnectionSettings(uiState: SettingsUiState, viewModel: SettingsViewModel) {
+    val settings = uiState.settings
     var host by remember(settings.smbHost) { mutableStateOf(settings.smbHost) }
     var share by remember(settings.smbShareName) { mutableStateOf(settings.smbShareName) }
     var username by remember(settings.smbUsername) { mutableStateOf(settings.smbUsername) }
@@ -464,31 +496,10 @@ private fun NasSourceSection(uiState: SettingsUiState, viewModel: SettingsViewMo
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = settings.photoramaFolderPath.ifBlank { "No folder selected" },
-                style = MDTheme.type.settingSubtitle,
-                color = MDTheme.colors.textSecondary,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                onClick = { viewModel.openFolderBrowser(settings.photoramaFolderPath) },
-                enabled = uiState.nasTestResult == NasTestResult.SUCCESS || settings.smbHost.isNotBlank(),
-            ) {
-                Text("Browse", color = MDTheme.colors.accent)
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ChangeSourceButton(viewModel)
-            if (settings.smbHost.isNotBlank()) {
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = viewModel::forgetNasConnection) {
-                    Text("Forget connection", color = MDTheme.colors.danger)
-                }
+        if (settings.smbHost.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = viewModel::forgetNasConnection) {
+                Text("Forget shared connection", color = MDTheme.colors.danger)
             }
         }
     }
@@ -527,6 +538,32 @@ private fun PhotoramaSlideshowSettings(settings: MirrorDashSettings, viewModel: 
             Switch(
                 checked = settings.photoramaShuffle,
                 onCheckedChange = viewModel::setPhotoramaShuffle,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        SettingRow(
+            title = "Replay long video clips",
+            subtitle = "Show random sections again until 60% of each video has been seen",
+        ) {
+            Switch(
+                checked = settings.photoramaReplayLongVideoSegments,
+                onCheckedChange = viewModel::setPhotoramaReplayLongVideoSegments,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        SettingRow(
+            title = "Mute Photorama videos",
+            subtitle = "Videos start muted; unmute an individual video from the Clock page",
+        ) {
+            Switch(
+                checked = settings.photoramaVideosMuted,
+                onCheckedChange = viewModel::setPhotoramaVideosMuted,
                 colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
             )
         }

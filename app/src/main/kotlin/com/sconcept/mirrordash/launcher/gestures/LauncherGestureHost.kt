@@ -93,6 +93,7 @@ fun LauncherGestureHost(
     pageBarBackgroundColor: Color? = null,
     pageBarSelectedColor: Color? = null,
     pageBarUnselectedColor: Color? = null,
+    requireTwoFingerPageSwipe: Boolean = false,
     modifier: Modifier = Modifier,
     onFailsafeHoldTriggered: () -> Unit = {},
     onNightClockActiveChanged: (Boolean) -> Unit = {},
@@ -360,7 +361,21 @@ fun LauncherGestureHost(
     ) {
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize(),
+            // Compose pages (including IPTV) otherwise retain HorizontalPager's native
+            // one-finger drag. When enabled, all page movement comes through the shared,
+            // parallel two-finger detector below instead.
+            modifier = Modifier
+                .fillMaxSize()
+                .pageSwipePriority(
+                    enabled = requireTwoFingerPageSwipe,
+                    requireTwoFingers = true,
+                    onSwipe = { forward ->
+                        val target = (pagerState.currentPage + if (forward) 1 else -1)
+                            .coerceIn(0, pageCount + pageIndexOffset - 1)
+                        if (target != pagerState.currentPage) scope.launch { pagerState.animateScrollToPage(target) }
+                    },
+                ),
+            userScrollEnabled = !requireTwoFingerPageSwipe,
             flingBehavior = PagerDefaults.flingBehavior(
                 state = pagerState,
                 pagerSnapDistance = if (isTravel) PagerSnapDistance.atMost(pageCount) else PagerSnapDistance.atMost(1),

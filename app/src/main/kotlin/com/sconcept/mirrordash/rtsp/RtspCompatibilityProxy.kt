@@ -3,6 +3,7 @@ package com.sconcept.mirrordash.rtsp
 import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.net.BindException
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -23,9 +24,26 @@ class RtspCompatibilityProxy(
     private val executor = Executors.newCachedThreadPool()
     private var serverSocket: ServerSocket? = null
 
-    fun start() {
-        if (!running.compareAndSet(false, true)) return
-        serverSocket = ServerSocket(publicPort)
+    /**
+     * Starts the LAN listener. The requested port can be held briefly by a previous process or
+     * by another installed RTSP service; that must never crash the Home activity which owns this
+     * foreground service.
+     */
+    @Synchronized
+    fun start(): Boolean {
+        if (!running.compareAndSet(false, true)) return serverSocket != null
+        val socket = try {
+            ServerSocket(publicPort)
+        } catch (error: BindException) {
+            running.set(false)
+            Log.w(TAG, "RTSP compatibility port $publicPort is already in use", error)
+            return false
+        } catch (error: Exception) {
+            running.set(false)
+            Log.e(TAG, "Unable to open RTSP compatibility port $publicPort", error)
+            return false
+        }
+        serverSocket = socket
         executor.execute {
             while (running.get()) {
                 runCatching { serverSocket?.accept() }.getOrNull()?.let { client ->
@@ -33,6 +51,7 @@ class RtspCompatibilityProxy(
                 }
             }
         }
+        return true
     }
 
     fun stop() {

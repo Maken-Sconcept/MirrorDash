@@ -94,47 +94,32 @@ private fun WidgetsSettingsContent(uiState: SettingsUiState, viewModel: Settings
     )
     Spacer(Modifier.height(20.dp))
 
-    SettingGroup(title = "Weather source") {
-        WeatherSourceSettingsContent(uiState, viewModel)
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Weather widgets") {
-        WeatherWidgetsSettingsContent(uiState, viewModel)
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Text widgets") {
-        TextWidgetsSettingsContent(
-            uiState = uiState,
-            viewModel = viewModel,
-            showDragHint = false,
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Calendar widgets") {
-        CalendarWidgetsSettingsContent(uiState, viewModel, onRequestCalendarAccess)
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Tasks widgets") {
-        TasksWidgetsSettingsContent(uiState, viewModel)
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Stocks widgets") {
-        StocksWidgetsSettingsContent(uiState, viewModel)
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "News widgets") {
-        NewsWidgetsSettingsContent(uiState, viewModel)
-    }
+    GroupedSettingsContent(
+        subsections = listOf(
+            SettingsSubsection(title = "Weather", subtitle = "Location source and weather widgets on the Clock") {
+                SettingGroup(title = "Weather source") {
+                    WeatherSourceSettingsContent(uiState, viewModel)
+                }
+                Spacer(Modifier.height(28.dp))
+                SettingGroup(title = "Weather widgets") {
+                    WeatherWidgetsSettingsContent(uiState, viewModel)
+                }
+            },
+            SettingsSubsection(title = "Text widgets", subtitle = "Custom captions you place anywhere on the Clock") {
+                TextWidgetsSettingsContent(uiState = uiState, viewModel = viewModel, showDragHint = false)
+            },
+            SettingsSubsection(title = "Calendar widgets", subtitle = "Upcoming events pulled from this device's calendars") {
+                CalendarWidgetsSettingsContent(uiState, viewModel, onRequestCalendarAccess)
+            },
+            SettingsSubsection(title = "Tasks widgets", subtitle = "On-device checklists you can tick off from the Clock") {
+                TasksWidgetsSettingsContent(uiState, viewModel)
+            },
+            SettingsSubsection(title = "Stocks widgets", subtitle = "Ticker symbols with live price and change") {
+                StocksWidgetsSettingsContent(uiState, viewModel)
+            },
+            SettingsSubsection(title = "News widgets", subtitle = "A rotating headline from an RSS or Atom feed") {
+                NewsWidgetsSettingsContent(uiState, viewModel)
+            },
+        ),
+    )
 }

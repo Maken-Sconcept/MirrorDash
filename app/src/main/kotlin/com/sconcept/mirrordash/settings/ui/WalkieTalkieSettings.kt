@@ -103,221 +103,224 @@ fun WalkieTalkieSettingsContent(uiState: SettingsUiState, viewModel: SettingsVie
 
     Spacer(Modifier.height(24.dp))
 
-    SettingGroup(title = "Nearby devices") {
-        val alreadyAddedIps = remember(settings.walkieTalkiePeers) { settings.walkieTalkiePeers.map { it.ip }.toSet() }
-        val nearby = uiState.nearbyWalkieTalkiePeers.filter { it.ip !in alreadyAddedIps }
+    GroupedSettingsContent(
+        subsections = listOf(
+            SettingsSubsection(title = "Devices", subtitle = "Nearby scanning and saved devices you can talk to") {
+                SettingGroup(title = "Nearby devices") {
+                    val alreadyAddedIps = remember(settings.walkieTalkiePeers) { settings.walkieTalkiePeers.map { it.ip }.toSet() }
+                    val nearby = uiState.nearbyWalkieTalkiePeers.filter { it.ip !in alreadyAddedIps }
 
-        if (!settings.walkieTalkieEnabled) {
-            Text(
-                "Turn on Walkie-Talkie to scan for nearby MirrorDash units.",
-                style = MDTheme.type.settingSubtitle,
-                color = MDTheme.colors.textTertiary,
-            )
-        } else if (nearby.isEmpty()) {
-            ScanningRow()
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                nearby.forEach { peer ->
-                    NearbyDeviceRow(
-                        name = peer.name,
-                        ip = peer.ip,
-                        onAdd = { viewModel.addWalkieTalkiePeer(peer.name, peer.ip) },
-                    )
-                }
-            }
-        }
-    }
-
-    Spacer(Modifier.height(16.dp))
-
-    SettingRow(
-        title = "Automatically add discovered devices",
-        subtitle = "Skip the per-device \"Add\" tap - anything found above joins Saved devices on its own",
-    ) {
-        Switch(
-            checked = settings.walkieTalkieAutoAddDiscovered,
-            onCheckedChange = viewModel::setWalkieTalkieAutoAddDiscovered,
-            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Saved devices") {
-        if (settings.walkieTalkiePeers.isEmpty()) {
-            Text(
-                "Save a nearby device or add one manually, then hold its talk button here to call it directly.",
-                style = MDTheme.type.settingSubtitle,
-                color = MDTheme.colors.textTertiary,
-            )
-        } else {
-            BroadcastTalkRow(
-                peerCount = settings.walkieTalkiePeers.size,
-                isTransmitting = walkieState.activeTransmitTarget == WALKIE_TALKIE_TARGET_ALL,
-                isSpeaking = unknownIncomingSpeaker != null,
-                speakingLabel = unknownIncomingSpeaker,
-                enabled = settings.walkieTalkieEnabled && walkieState.hasMicPermission,
-                onPressStart = { viewModel.pressToTalk(WALKIE_TALKIE_TARGET_ALL) },
-                onPressEnd = viewModel::releaseToTalk,
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                settings.walkieTalkiePeers.forEach { peer ->
-                    TalkDeviceRow(
-                        peer = peer,
-                        isNearby = peer.ip in nearbyIps,
-                        isDefaultTarget = settings.walkieTalkieTarget == peer.ip,
-                        isSpeaking = walkieState.activeIncomingPeerIp == peer.ip,
-                        isTransmitting = walkieState.activeTransmitTarget == peer.ip,
-                        talkEnabled = settings.walkieTalkieEnabled && walkieState.hasMicPermission,
-                        onPressStart = { viewModel.pressToTalk(peer.ip) },
-                        onPressEnd = viewModel::releaseToTalk,
-                        onRemove = { viewModel.removeWalkieTalkiePeer(peer) },
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = newPeerName,
-                onValueChange = { newPeerName = it },
-                placeholder = { Text("Name") },
-                singleLine = true,
-                colors = fieldColors(),
-                modifier = Modifier.weight(1f).trackFieldFocusForIdleTimer(),
-            )
-            Spacer(Modifier.width(8.dp))
-            OutlinedTextField(
-                value = newPeerIp,
-                onValueChange = { newPeerIp = it },
-                placeholder = { Text("IP address") },
-                singleLine = true,
-                colors = fieldColors(),
-                modifier = Modifier.weight(1f).trackFieldFocusForIdleTimer(),
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = {
-                    if (newPeerName.isNotBlank() && newPeerIp.isNotBlank()) {
-                        viewModel.addWalkieTalkiePeer(newPeerName, newPeerIp)
-                        newPeerName = ""
-                        newPeerIp = ""
+                    if (!settings.walkieTalkieEnabled) {
+                        Text(
+                            "Turn on Walkie-Talkie to scan for nearby MirrorDash units.",
+                            style = MDTheme.type.settingSubtitle,
+                            color = MDTheme.colors.textTertiary,
+                        )
+                    } else if (nearby.isEmpty()) {
+                        ScanningRow()
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            nearby.forEach { peer ->
+                                NearbyDeviceRow(
+                                    name = peer.name,
+                                    ip = peer.ip,
+                                    onAdd = { viewModel.addWalkieTalkiePeer(peer.name, peer.ip) },
+                                )
+                            }
+                        }
                     }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
-            ) {
-                Text("Add")
-            }
-        }
-    }
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(16.dp))
 
-    SettingGroup(title = "Floating button route") {
-        Text(
-            "The floating push-to-talk button outside Settings still follows one default route.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
+                SettingRow(
+                    title = "Automatically add discovered devices",
+                    subtitle = "Skip the per-device \"Add\" tap - anything found above joins Saved devices on its own",
+                ) {
+                    Switch(
+                        checked = settings.walkieTalkieAutoAddDiscovered,
+                        onCheckedChange = viewModel::setWalkieTalkieAutoAddDiscovered,
+                        colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                    )
+                }
 
-        Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(28.dp))
 
-        RouteRow(
-            label = "All devices",
-            subtitle = if (settings.walkieTalkiePeers.isEmpty()) {
-                "Broadcast to every saved device once you add them."
-            } else {
-                "Broadcast to every saved device."
+                SettingGroup(title = "Saved devices") {
+                    if (settings.walkieTalkiePeers.isEmpty()) {
+                        Text(
+                            "Save a nearby device or add one manually, then hold its talk button here to call it directly.",
+                            style = MDTheme.type.settingSubtitle,
+                            color = MDTheme.colors.textTertiary,
+                        )
+                    } else {
+                        BroadcastTalkRow(
+                            peerCount = settings.walkieTalkiePeers.size,
+                            isTransmitting = walkieState.activeTransmitTarget == WALKIE_TALKIE_TARGET_ALL,
+                            isSpeaking = unknownIncomingSpeaker != null,
+                            speakingLabel = unknownIncomingSpeaker,
+                            enabled = settings.walkieTalkieEnabled && walkieState.hasMicPermission,
+                            onPressStart = { viewModel.pressToTalk(WALKIE_TALKIE_TARGET_ALL) },
+                            onPressEnd = viewModel::releaseToTalk,
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            settings.walkieTalkiePeers.forEach { peer ->
+                                TalkDeviceRow(
+                                    peer = peer,
+                                    isNearby = peer.ip in nearbyIps,
+                                    isDefaultTarget = settings.walkieTalkieTarget == peer.ip,
+                                    isSpeaking = walkieState.activeIncomingPeerIp == peer.ip,
+                                    isTransmitting = walkieState.activeTransmitTarget == peer.ip,
+                                    talkEnabled = settings.walkieTalkieEnabled && walkieState.hasMicPermission,
+                                    onPressStart = { viewModel.pressToTalk(peer.ip) },
+                                    onPressEnd = viewModel::releaseToTalk,
+                                    onRemove = { viewModel.removeWalkieTalkiePeer(peer) },
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = newPeerName,
+                            onValueChange = { newPeerName = it },
+                            placeholder = { Text("Name") },
+                            singleLine = true,
+                            colors = fieldColors(),
+                            modifier = Modifier.weight(1f).trackFieldFocusForIdleTimer(),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = newPeerIp,
+                            onValueChange = { newPeerIp = it },
+                            placeholder = { Text("IP address") },
+                            singleLine = true,
+                            colors = fieldColors(),
+                            modifier = Modifier.weight(1f).trackFieldFocusForIdleTimer(),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (newPeerName.isNotBlank() && newPeerIp.isNotBlank()) {
+                                    viewModel.addWalkieTalkiePeer(newPeerName, newPeerIp)
+                                    newPeerName = ""
+                                    newPeerIp = ""
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
+                        ) {
+                            Text("Add")
+                        }
+                    }
+                }
             },
-            selected = settings.walkieTalkieTarget == WALKIE_TALKIE_TARGET_ALL,
-            onSelect = { viewModel.setWalkieTalkieTarget(WALKIE_TALKIE_TARGET_ALL) },
-        )
+            SettingsSubsection(title = "Floating button", subtitle = "Default route and on/off for the overlay talk button") {
+                SettingGroup(title = "Floating button route") {
+                    Text(
+                        "The floating push-to-talk button outside Settings still follows one default route.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
 
-        settings.walkieTalkiePeers.forEach { peer ->
-            RouteRow(
-                label = peer.name,
-                subtitle = peer.ip,
-                selected = settings.walkieTalkieTarget == peer.ip,
-                onSelect = { viewModel.setWalkieTalkieTarget(peer.ip) },
-            )
-        }
-    }
+                    Spacer(Modifier.height(10.dp))
 
-    Spacer(Modifier.height(28.dp))
+                    RouteRow(
+                        label = "All devices",
+                        subtitle = if (settings.walkieTalkiePeers.isEmpty()) {
+                            "Broadcast to every saved device once you add them."
+                        } else {
+                            "Broadcast to every saved device."
+                        },
+                        selected = settings.walkieTalkieTarget == WALKIE_TALKIE_TARGET_ALL,
+                        onSelect = { viewModel.setWalkieTalkieTarget(WALKIE_TALKIE_TARGET_ALL) },
+                    )
 
-    SettingGroup(title = "Incoming chime") {
-        SettingRow(
-            title = "Play incoming alert",
-            subtitle = "Optional short sound before an incoming discussion starts",
-        ) {
-            Switch(
-                checked = settings.walkieTalkieIncomingChimeEnabled,
-                onCheckedChange = viewModel::setWalkieTalkieIncomingChimeEnabled,
-                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
-            )
-        }
+                    settings.walkieTalkiePeers.forEach { peer ->
+                        RouteRow(
+                            label = peer.name,
+                            subtitle = peer.ip,
+                            selected = settings.walkieTalkieTarget == peer.ip,
+                            onSelect = { viewModel.setWalkieTalkieTarget(peer.ip) },
+                        )
+                    }
+                }
 
-        Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(28.dp))
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            WalkieTalkieChimes.options.forEach { option ->
-                ChimeOptionRow(
-                    label = option.label,
-                    description = option.description,
-                    selected = settings.walkieTalkieIncomingChime == option.key,
-                    muted = !settings.walkieTalkieIncomingChimeEnabled,
-                    onSelect = { viewModel.setWalkieTalkieIncomingChime(option.key) },
-                    onTest = { viewModel.previewWalkieTalkieIncomingChime(option.key) },
-                )
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Text(
-            if (settings.walkieTalkieIncomingChimeEnabled) {
-                "Test any option here. The selected chime will play once when a new incoming burst begins."
-            } else {
-                "Incoming chimes are muted. You can still use Test to audition sounds before turning them back on."
+                SettingRow(
+                    title = "Floating button",
+                    subtitle = "Keep a push-to-talk button available while using other apps",
+                ) {
+                    Switch(
+                        checked = settings.walkieTalkieOverlayEnabled,
+                        onCheckedChange = viewModel::setWalkieTalkieOverlayEnabled,
+                        colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                    )
+                }
             },
-            style = MDTheme.type.caption,
-            color = MDTheme.colors.textTertiary,
-        )
-    }
+            SettingsSubsection(title = "Incoming chime", subtitle = "Alert sound before an incoming discussion starts") {
+                SettingGroup(title = "Incoming chime") {
+                    SettingRow(
+                        title = "Play incoming alert",
+                        subtitle = "Optional short sound before an incoming discussion starts",
+                    ) {
+                        Switch(
+                            checked = settings.walkieTalkieIncomingChimeEnabled,
+                            onCheckedChange = viewModel::setWalkieTalkieIncomingChimeEnabled,
+                            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                        )
+                    }
 
-    Spacer(Modifier.height(28.dp))
+                    Spacer(Modifier.height(12.dp))
 
-    SettingGroup(title = "Mic boost") {
-        Text(
-            WalkieTalkieMicBoost.label(settings.walkieTalkieMicBoostPercent),
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Slider(
-            value = settings.walkieTalkieMicBoostPercent.toFloat(),
-            onValueChange = { viewModel.setWalkieTalkieMicBoost(it.toInt()) },
-            valueRange = 100f..300f,
-            colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
-        )
-    }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WalkieTalkieChimes.options.forEach { option ->
+                            ChimeOptionRow(
+                                label = option.label,
+                                description = option.description,
+                                selected = settings.walkieTalkieIncomingChime == option.key,
+                                muted = !settings.walkieTalkieIncomingChimeEnabled,
+                                onSelect = { viewModel.setWalkieTalkieIncomingChime(option.key) },
+                                onTest = { viewModel.previewWalkieTalkieIncomingChime(option.key) },
+                            )
+                        }
+                    }
 
-    Spacer(Modifier.height(24.dp))
+                    Spacer(Modifier.height(8.dp))
 
-    SettingRow(
-        title = "Floating button",
-        subtitle = "Keep a push-to-talk button available while using other apps",
-    ) {
-        Switch(
-            checked = settings.walkieTalkieOverlayEnabled,
-            onCheckedChange = viewModel::setWalkieTalkieOverlayEnabled,
-            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
-        )
-    }
+                    Text(
+                        if (settings.walkieTalkieIncomingChimeEnabled) {
+                            "Test any option here. The selected chime will play once when a new incoming burst begins."
+                        } else {
+                            "Incoming chimes are muted. You can still use Test to audition sounds before turning them back on."
+                        },
+                        style = MDTheme.type.caption,
+                        color = MDTheme.colors.textTertiary,
+                    )
+                }
+            },
+            SettingsSubsection(title = "Microphone", subtitle = "Boost mic gain for units with a quiet mic") {
+                SettingGroup(title = "Mic boost") {
+                    Text(
+                        WalkieTalkieMicBoost.label(settings.walkieTalkieMicBoostPercent),
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Slider(
+                        value = settings.walkieTalkieMicBoostPercent.toFloat(),
+                        onValueChange = { viewModel.setWalkieTalkieMicBoost(it.toInt()) },
+                        valueRange = 100f..300f,
+                        colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+                    )
+                }
+            },
+        ),
+    )
 }
 
 @Composable

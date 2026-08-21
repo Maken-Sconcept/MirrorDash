@@ -1,6 +1,7 @@
 package com.sconcept.mirrordash.gym
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -25,6 +26,9 @@ private data class GymUiExtraState(
     val selectedChallengeId: String? = defaultGymChallenges().firstOrNull()?.id,
     val generatorStep: GymGeneratorStep = GymGeneratorStep.MUSCLES,
     val generatorPreferences: GymGeneratorPreferences = defaultGymGeneratorPreferences(),
+    val selectedExerciseId: String? = null,
+    val favoriteExerciseIds: Set<String> = emptySet(),
+    val workoutQueueIds: List<String> = emptyList(),
 )
 
 class GymViewModel(
@@ -32,13 +36,21 @@ class GymViewModel(
     private val repository: GymRepository,
     private val contentRepository: GymContentRepository,
     private val sessionEngine: GymSessionEngine,
+    private val healthConnectGateway: GymHealthConnectGateway,
 ) : AndroidViewModel(application) {
     private val extra = MutableStateFlow(GymUiExtraState())
-    private val exerciseCatalog = MutableStateFlow<List<GymExerciseCatalogEntry>>(emptyList())
+    private val loadedExerciseCatalog = MutableStateFlow<List<GymExerciseCatalogEntry>>(emptyList())
+    /** Direct catalogue stream for exercise browsing; it remains available while the dashboard state settles. */
+    val exerciseCatalog: StateFlow<List<GymExerciseCatalogEntry>> = loadedExerciseCatalog
 
     init {
         viewModelScope.launch {
-            exerciseCatalog.value = contentRepository.loadPhoenixSeedCatalog()
+            loadedExerciseCatalog.value = runCatching { contentRepository.loadWorkoutCatalog() }
+                .onSuccess { catalog -> Log.i("GymViewModel", "Loaded ${catalog.size} exercises from the workout catalog") }
+                .getOrElse { error ->
+                    Log.e("GymViewModel", "Workout library could not be loaded", error)
+                    emptyList()
+                }
         }
     }
 
@@ -46,8 +58,9 @@ class GymViewModel(
         repository.storedState,
         sessionEngine.runtimeState,
         extra,
-        exerciseCatalog,
-    ) { stored, runtime, extraState, catalog ->
+        loadedExerciseCatalog,
+        healthConnectGateway.snapshot,
+    ) { stored, runtime, extraState, catalog, wearableHealth ->
         val selectedProfiles = resolveSelectedProfiles(stored.profiles, extraState.selectedPlayerIds)
         val selectedDashboards = selectedProfiles.map { profile ->
             val heartRateDevice = runtime.devices.firstOrNull {
@@ -58,12 +71,15 @@ class GymViewModel(
                 weeklyProgress = buildWeeklyProgress(profile, stored.sessionHistory),
                 dashboardStats = buildDashboardStats(profile, stored.sessionHistory),
                 heartRateSummary = deriveHeartRateSummary(profile, heartRateDevice),
+                activeAchievements = buildActiveAchievements(profile, stored.sessionHistory),
             )
         }
         val primaryDashboard = selectedDashboards.firstOrNull()
         val generatedWorkout = buildGymGeneratedWorkoutPlan(extraState.generatorPreferences, catalog)
+        Log.i("GymViewModel", "Publishing ${catalog.size} exercises to the Gym UI")
         GymUiState(
             featureSettings = stored.featureSettings,
+            displayOrientationMode = stored.displayOrientationMode,
             profiles = stored.profiles,
             devicePreferences = stored.devicePreferences,
             devices = runtime.devices,
@@ -72,7 +88,10 @@ class GymViewModel(
             dashboardStats = primaryDashboard?.dashboardStats ?: GymDashboardStats(),
             activeSession = runtime.activeSession,
             latestSummary = runtime.latestSummary,
-            availableChallenges = defaultGymChallenges(),
+            availableChallenges = if (stored.featureSettings.challengesEnabled) defaultGymChallenges() else emptyList(),
+            activeAchievements = selectedProfiles.firstOrNull()?.takeIf { stored.featureSettings.challengesEnabled }?.let { profile ->
+                buildActiveAchievements(profile, stored.sessionHistory)
+            }.orEmpty(),
             dashboardTab = extraState.dashboardTab,
             setupVisible = extraState.setupVisible,
             connectionCenterExpanded = extraState.connectionCenterExpanded,
@@ -89,6 +108,10 @@ class GymViewModel(
             exerciseCatalogCount = catalog.size,
             exerciseCatalogHighlights = catalog.take(6).map { it.name },
             exerciseCatalog = catalog,
+            selectedExerciseId = extraState.selectedExerciseId,
+            favoriteExerciseIds = extraState.favoriteExerciseIds,
+            workoutQueueIds = extraState.workoutQueueIds,
+            wearableHealth = wearableHealth,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GymUiState())
 
@@ -99,6 +122,30 @@ class GymViewModel(
     fun setWorkoutLibraryFilter(filter: String) {
         extra.update { it.copy(workoutLibraryFilter = filter) }
     }
+
+    fun openExercise(exerciseId: String) = extra.update { it.copy(selectedExerciseId = exerciseId) }
+
+    fun closeExercise() = extra.update { it.copy(selectedExerciseId = null) }
+
+    fun toggleFavoriteExercise(exerciseId: String) = extra.update { state ->
+        state.copy(favoriteExerciseIds = state.favoriteExerciseIds.let { favorites ->
+            if (exerciseId in favorites) favorites - exerciseId else favorites + exerciseId
+        })
+    }
+
+    fun toggleWorkoutQueue(exerciseId: String) = extra.update { state ->
+        state.copy(workoutQueueIds = if (exerciseId in state.workoutQueueIds) {
+            state.workoutQueueIds - exerciseId
+        } else {
+            state.workoutQueueIds + exerciseId
+        })
+    }
+
+    fun setChallengesEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateFeatureSettings { it.copy(challengesEnabled = enabled) } }
+    }
+
+    fun refreshWearableHealth() = healthConnectGateway.refreshHealthSummary(force = true)
 
     fun toggleSetup() {
         extra.update { it.copy(setupVisible = !it.setupVisible) }
@@ -282,10 +329,11 @@ class GymViewModel(
 
     fun startSelectedSession() {
         val state = uiState.value
+        val selectedChallenge = state.availableChallenges.firstOrNull { it.id == state.selectedChallengeId }
         sessionEngine.startSession(
             workoutType = state.selectedWorkoutType,
             playerIds = state.selectedPlayerIds,
-            challengeId = state.selectedChallengeId.takeIf {
+            challenge = selectedChallenge?.takeIf {
                 state.selectedWorkoutType == GymWorkoutType.CHALLENGE || state.selectedWorkoutType == GymWorkoutType.HYBRID
             },
             generatedWorkout = state.generatedWorkout.takeIf {
@@ -299,7 +347,10 @@ class GymViewModel(
 
     fun endAndSaveSession() = sessionEngine.endSession(save = true)
 
-    fun discardSession() = sessionEngine.endSession(save = false)
+    fun discardSession() {
+        sessionEngine.endSession(save = false)
+        extra.update { it.copy(dashboardTab = GymDashboardTab.WORKOUTS, setupVisible = false) }
+    }
 
     fun dismissSummary() = sessionEngine.dismissSummary()
 
@@ -334,10 +385,11 @@ class GymViewModel(
             repository: GymRepository,
             contentRepository: GymContentRepository,
             sessionEngine: GymSessionEngine,
+            healthConnectGateway: GymHealthConnectGateway,
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return GymViewModel(application, repository, contentRepository, sessionEngine) as T
+                return GymViewModel(application, repository, contentRepository, sessionEngine, healthConnectGateway) as T
             }
         }
     }

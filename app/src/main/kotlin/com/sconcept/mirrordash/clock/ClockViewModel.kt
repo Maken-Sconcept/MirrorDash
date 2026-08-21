@@ -167,6 +167,17 @@ class ClockViewModel(
         }
     }
 
+    /** Pinch-to-resize on the Clock page (see [com.sconcept.mirrordash.clock.DraggableAnchor])
+     * lands here already clamped to the same 70-140 range Settings' own scale slider uses. */
+    fun setWeatherWidgetScale(id: String, scalePercent: Int) {
+        val current = appearance.value.weatherWidgets
+        viewModelScope.launch {
+            settingsRepository.update {
+                weatherWidgets = current.map { if (it.id == id) it.copy(scalePercent = scalePercent) else it }
+            }
+        }
+    }
+
     /** Mirrors SettingsViewModel's own removeXxxWidget functions (the ones its widget-list
      * editors use) - duplicated here rather than reused directly so the trash icon that appears
      * mid-drag on the Clock page (see [DraggableAnchor]'s `onRemove`) can call straight through
@@ -235,6 +246,14 @@ class ClockViewModel(
         }
     }
 
+    fun setTextWidgetFontSize(id: String, sp: Int) {
+        viewModelScope.launch {
+            settingsRepository.update {
+                customTextWidgets = customTextWidgets.map { if (it.id == id) it.copy(fontSizeSp = sp) else it }
+            }
+        }
+    }
+
     fun setCalendarWidgetAnchor(id: String, anchor: OverlayAnchor) {
         val clamped = ClockLayoutHelper.clamp(anchor)
         viewModelScope.launch {
@@ -251,6 +270,14 @@ class ClockViewModel(
         viewModelScope.launch {
             settingsRepository.update {
                 calendarWidgets = calendarWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
+            }
+        }
+    }
+
+    fun setCalendarWidgetFontSize(id: String, sp: Int) {
+        viewModelScope.launch {
+            settingsRepository.update {
+                calendarWidgets = calendarWidgets.map { if (it.id == id) it.copy(fontSizeSp = sp) else it }
             }
         }
     }
@@ -275,6 +302,14 @@ class ClockViewModel(
         }
     }
 
+    fun setTasksWidgetFontSize(id: String, sp: Int) {
+        viewModelScope.launch {
+            settingsRepository.update {
+                tasksWidgets = tasksWidgets.map { if (it.id == id) it.copy(fontSizeSp = sp) else it }
+            }
+        }
+    }
+
     fun setStocksWidgetAnchor(id: String, anchor: OverlayAnchor) {
         val clamped = ClockLayoutHelper.clamp(anchor)
         viewModelScope.launch {
@@ -295,6 +330,14 @@ class ClockViewModel(
         }
     }
 
+    fun setStocksWidgetFontSize(id: String, sp: Int) {
+        viewModelScope.launch {
+            settingsRepository.update {
+                stocksWidgets = stocksWidgets.map { if (it.id == id) it.copy(fontSizeSp = sp) else it }
+            }
+        }
+    }
+
     fun setNewsWidgetAnchor(id: String, anchor: OverlayAnchor) {
         val clamped = ClockLayoutHelper.clamp(anchor)
         viewModelScope.launch {
@@ -311,6 +354,14 @@ class ClockViewModel(
         viewModelScope.launch {
             settingsRepository.update {
                 newsWidgets = newsWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
+            }
+        }
+    }
+
+    fun setNewsWidgetFontSize(id: String, sp: Int) {
+        viewModelScope.launch {
+            settingsRepository.update {
+                newsWidgets = newsWidgets.map { if (it.id == id) it.copy(fontSizeSp = sp) else it }
             }
         }
     }

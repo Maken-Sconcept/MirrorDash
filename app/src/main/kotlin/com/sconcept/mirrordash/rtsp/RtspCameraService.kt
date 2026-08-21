@@ -85,7 +85,17 @@ class RtspCameraService : Service(), ConnectChecker {
                 stopSelf(startId)
                 return START_NOT_STICKY
             }
-            compatibilityProxy = RtspCompatibilityProxy(RTSP_CAMERA_PORT, RTSP_ENCODER_PORT, publicIp).also { it.start() }
+            val proxy = RtspCompatibilityProxy(RTSP_CAMERA_PORT, RTSP_ENCODER_PORT, publicIp)
+            if (!proxy.start()) {
+                Log.e(TAG, "RTSP compatibility port $RTSP_CAMERA_PORT is unavailable; service will not start")
+                server.stopStream()
+                camera = null
+                activeProfile = null
+                RtspLanFirewall.remove(RTSP_CAMERA_PORT)
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+            compatibilityProxy = proxy
         }
         return START_STICKY
     }

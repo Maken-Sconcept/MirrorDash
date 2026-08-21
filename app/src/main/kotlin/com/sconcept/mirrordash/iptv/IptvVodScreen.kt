@@ -4,6 +4,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
@@ -37,9 +39,12 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -132,16 +138,21 @@ fun IptvVodBrowser(
 
     // Picking a result is the far more common way out of a search than pressing the IME's own
     // search/enter key (SearchBox handles that path) - tapping a grid/list item while the
-    // keyboard is still up otherwise leaves it lingering over the newly-opened player, since a
-    // composable disposing (the search row scrolls out of view under nothing, in FILTER mode; the
-    // whole browser gets covered by VodPlayerScreen either way) doesn't itself tell Android to
-    // hide the IME.
+    // keyboard is still up otherwise leaves it lingering over the newly-opened detail screen,
+    // since a composable disposing (the search row scrolls out of view under nothing, in FILTER
+    // mode; the whole browser gets covered either way) doesn't itself tell Android to hide the IME.
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    val handlePlay: (StalkerVodItem) -> Unit = { item ->
+
+    // Tapping a card/row opens the info screen rather than playing immediately (brief: "the
+    // detailed page should have description... both in the list and in the detailed page" - there
+    // was no detail page at all before this) - scoped to contentType exactly like `query` below,
+    // so switching Movies/Series tabs doesn't leave a stale detail screen open underneath.
+    var detailItem by remember(contentType) { mutableStateOf<StalkerVodItem?>(null) }
+    val handleOpenDetail: (StalkerVodItem) -> Unit = { item ->
         keyboardController?.hide()
         focusManager.clearFocus(force = true)
-        onPlay(item)
+        detailItem = item
     }
 
     // Keyed on contentType, not remembered anywhere in IptvUiState - unlike the view mode toggle
@@ -169,87 +180,237 @@ fun IptvVodBrowser(
         onDeepSearch(trimmed)
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        if (categories.isNotEmpty()) {
-            VodCategoryTabsRow(categories = categories, selectedCategoryId = selectedCategoryId, onSelect = onSelectCategory)
-            SearchAndViewModeRow(
-                query = query,
-                onQueryChange = { query = it },
-                searchMode = searchMode,
-                onSetSearchMode = { mode ->
-                    searchMode = mode
-                    if (mode == IptvSearchMode.FILTER && activeDeepQuery != null) onClearDeepSearch()
-                },
-                viewMode = viewMode,
-                onSetViewMode = onSetViewMode,
-            )
-        }
-        if (items.isNotEmpty()) {
-            VodListStatusRow(
-                label = label,
-                loadedCount = items.size,
-                totalItems = totalItems,
-                hasMore = hasMore,
-                filteredCount = if (searchMode == IptvSearchMode.FILTER) {
-                    query.trim().takeIf { it.isNotBlank() }?.let { filteredItems.size }
-                } else {
-                    null
-                },
-                isDeepSearch = searchMode == IptvSearchMode.DEEP && activeDeepQuery != null,
-            )
-        }
-        when {
-            error != null && items.isEmpty() -> CenteredVodMessage(
-                title = if (searchMode == IptvSearchMode.DEEP) "Deep search failed" else "Can't load $label",
-                subtitle = error,
-            )
-            (loading && items.isEmpty()) -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = MDTheme.colors.accent)
-                    if (searchMode == IptvSearchMode.DEEP) {
-                        Spacer(Modifier.height(12.dp))
-                        Text("Searching the full catalog…", style = MDTheme.type.settingSubtitle, color = Color.White.copy(alpha = 0.7f))
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (categories.isNotEmpty()) {
+                VodCategoryTabsRow(categories = categories, selectedCategoryId = selectedCategoryId, onSelect = onSelectCategory)
+                SearchAndViewModeRow(
+                    query = query,
+                    onQueryChange = { query = it },
+                    searchMode = searchMode,
+                    onSetSearchMode = { mode ->
+                        searchMode = mode
+                        if (mode == IptvSearchMode.FILTER && activeDeepQuery != null) onClearDeepSearch()
+                    },
+                    viewMode = viewMode,
+                    onSetViewMode = onSetViewMode,
+                )
+            }
+            if (items.isNotEmpty()) {
+                VodListStatusRow(
+                    label = label,
+                    loadedCount = items.size,
+                    totalItems = totalItems,
+                    hasMore = hasMore,
+                    filteredCount = if (searchMode == IptvSearchMode.FILTER) {
+                        query.trim().takeIf { it.isNotBlank() }?.let { filteredItems.size }
+                    } else {
+                        null
+                    },
+                    isDeepSearch = searchMode == IptvSearchMode.DEEP && activeDeepQuery != null,
+                )
+            }
+            when {
+                error != null && items.isEmpty() -> CenteredVodMessage(
+                    title = if (searchMode == IptvSearchMode.DEEP) "Deep search failed" else "Can't load $label",
+                    subtitle = error,
+                )
+                (loading && items.isEmpty()) -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = MDTheme.colors.accent)
+                        if (searchMode == IptvSearchMode.DEEP) {
+                            Spacer(Modifier.height(12.dp))
+                            Text("Searching the full catalog…", style = MDTheme.type.settingSubtitle, color = Color.White.copy(alpha = 0.7f))
+                        }
                     }
                 }
+                categories.isEmpty() -> CenteredVodMessage(
+                    title = "No $label",
+                    subtitle = "This provider doesn't seem to offer $label through this portal.",
+                )
+                searchMode == IptvSearchMode.DEEP && activeDeepQuery != null && items.isEmpty() -> CenteredVodMessage(
+                    title = "No matches",
+                    subtitle = "Nothing in the whole $label catalog matches \"$activeDeepQuery\".",
+                )
+                items.isEmpty() -> CenteredVodMessage(title = "Nothing here", subtitle = "This category came back empty.")
+                filteredItems.isEmpty() -> EmptyWithLoadMore(
+                    title = "No matches",
+                    subtitle = if (hasMore) {
+                        "No matches in what's loaded so far - load more to search further, or switch to Deep search."
+                    } else {
+                        "Nothing in this category matches \"$query\"."
+                    },
+                    hasMore = hasMore,
+                    loading = loadingMore,
+                    onLoadMore = onLoadMore,
+                )
+                viewMode == VodViewMode.LIST -> VodItemList(
+                    items = filteredItems,
+                    health = uiState.streamHealth,
+                    onCheckHealth = onCheckHealth,
+                    onPlay = handleOpenDetail,
+                    onDownload = onDownload,
+                    activeDownload = activeDownload,
+                    footer = { LoadMoreFooter(hasMore = hasMore, loading = loadingMore, onLoadMore = onLoadMore) },
+                )
+                else -> VodItemGrid(
+                    items = filteredItems,
+                    health = uiState.streamHealth,
+                    onCheckHealth = onCheckHealth,
+                    onPlay = handleOpenDetail,
+                    onDownload = onDownload,
+                    activeDownload = activeDownload,
+                    footer = { LoadMoreFooter(hasMore = hasMore, loading = loadingMore, onLoadMore = onLoadMore) },
+                )
             }
-            categories.isEmpty() -> CenteredVodMessage(
-                title = "No $label",
-                subtitle = "This provider doesn't seem to offer $label through this portal.",
+        }
+
+        detailItem?.let { item ->
+            VodDetailScreen(
+                item = item,
+                health = uiState.streamHealth[item.id] ?: StreamHealth.UNKNOWN,
+                activeDownload = activeDownload,
+                onCheckHealth = onCheckHealth,
+                onPlay = { detailItem = null; onPlay(item) },
+                onDownload = { onDownload(item) },
+                onDismiss = { detailItem = null },
             )
-            searchMode == IptvSearchMode.DEEP && activeDeepQuery != null && items.isEmpty() -> CenteredVodMessage(
-                title = "No matches",
-                subtitle = "Nothing in the whole $label catalog matches \"$activeDeepQuery\".",
-            )
-            items.isEmpty() -> CenteredVodMessage(title = "Nothing here", subtitle = "This category came back empty.")
-            filteredItems.isEmpty() -> EmptyWithLoadMore(
-                title = "No matches",
-                subtitle = if (hasMore) {
-                    "No matches in what's loaded so far - load more to search further, or switch to Deep search."
+        }
+    }
+}
+
+/** The "detailed page" the brief asks for - previously there was no stop between the grid/list
+ * and playback at all, so a title's synopsis/ratings were never visible except as the cramped
+ * one-line/two-line snippets on [VodItemRow]/[VodItemCard]. A wide backdrop (not the grid's
+ * cropped 2:3 poster) with the full, untruncated description underneath, Play and Download as
+ * two equally-weighted actions rather than one implicit tap-to-play - closer to how a streaming
+ * app's own info screen reads than to a file browser's context menu. [onCheckHealth] runs again
+ * here (already requested once when the card/row composed) since a stream can go from
+ * unknown/offline to online between browsing and opening this, and there's plenty of room here
+ * to show it clearly ([HealthDot] alone, unlabeled, is easy to miss at grid-card size). */
+@Composable
+private fun VodDetailScreen(
+    item: StalkerVodItem,
+    health: StreamHealth,
+    activeDownload: ActiveRecording?,
+    onCheckHealth: (StalkerVodItem) -> Unit,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    LaunchedEffect(item.id) { onCheckHealth(item) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.96f))
+            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
+    ) {
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                if (item.logoUrl != null) {
+                    Image(
+                        painter = rememberAsyncImagePainter(model = item.logoUrl),
+                        contentDescription = item.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 } else {
-                    "Nothing in this category matches \"$query\"."
-                },
-                hasMore = hasMore,
-                loading = loadingMore,
-                onLoadMore = onLoadMore,
-            )
-            viewMode == VodViewMode.LIST -> VodItemList(
-                items = filteredItems,
-                health = uiState.streamHealth,
-                onCheckHealth = onCheckHealth,
-                onPlay = handlePlay,
-                onDownload = onDownload,
-                activeDownload = activeDownload,
-                footer = { LoadMoreFooter(hasMore = hasMore, loading = loadingMore, onLoadMore = onLoadMore) },
-            )
-            else -> VodItemGrid(
-                items = filteredItems,
-                health = uiState.streamHealth,
-                onCheckHealth = onCheckHealth,
-                onPlay = handlePlay,
-                onDownload = onDownload,
-                activeDownload = activeDownload,
-                footer = { LoadMoreFooter(hasMore = hasMore, loading = loadingMore, onLoadMore = onLoadMore) },
-            )
+                    Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.08f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Movie, contentDescription = null, tint = Color.White.copy(alpha = 0.3f), modifier = Modifier.size(64.dp))
+                    }
+                }
+                // A flat scrim would fight the artwork everywhere; fading it in only over the
+                // bottom third keeps the backdrop legible while still guaranteeing the title/close
+                // button below/above it never sit on top of a bright, low-contrast frame.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Brush.verticalGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.9f))),
+                )
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(16.dp)
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.5f)),
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)
+                }
+            }
+
+            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+                Text(item.name, style = MDTheme.type.sectionTitle, color = Color.White)
+
+                if (item.ratingImdb != null || item.ratingTomatoes != null || health != StreamHealth.UNKNOWN) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        item.ratingImdb?.let { RatingBadge("IMDb", it) }
+                        item.ratingTomatoes?.let { RatingBadge("RT", it) }
+                        if (health != StreamHealth.UNKNOWN) {
+                            HealthDot(health = health)
+                            Text(
+                                when (health) {
+                                    StreamHealth.CHECKING -> "Checking stream…"
+                                    StreamHealth.ONLINE -> "Stream online"
+                                    StreamHealth.OFFLINE -> "Stream offline"
+                                    StreamHealth.UNKNOWN -> ""
+                                },
+                                style = MDTheme.type.caption,
+                                color = Color.White.copy(alpha = 0.6f),
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        onClick = onPlay,
+                        colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = Color.White),
+                    ) {
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Play")
+                    }
+                    val isDownloading = activeDownload?.channelId == item.id
+                    val downloadFraction = downloadProgressFraction(activeDownload, item.id)
+                    OutlinedButton(
+                        onClick = onDownload,
+                        enabled = activeDownload == null || isDownloading,
+                    ) {
+                        if (isDownloading) {
+                            Box(modifier = Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                                if (downloadFraction != null) {
+                                    CircularProgressIndicator(
+                                        progress = { downloadFraction },
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                } else {
+                                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.fillMaxSize())
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(downloadFraction?.let { "${(it * 100).toInt()}%" } ?: "Downloading…")
+                        } else {
+                            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Download")
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    item.description?.takeIf { it.isNotBlank() } ?: "No description available for this title.",
+                    style = MDTheme.type.body,
+                    color = Color.White.copy(alpha = if (item.description.isNullOrBlank()) 0.5f else 0.85f),
+                )
+                Spacer(Modifier.height(24.dp))
+            }
         }
     }
 }
@@ -517,6 +678,18 @@ private fun VodItemCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        // Brief: description "both in the list and in the detailed page" - VodItemRow (the list
+        // layout) already showed one; the grid card didn't. One line only, unlike the row's two -
+        // a card is already tight on vertical space between artwork and the next row of cards.
+        item.description?.takeIf { it.isNotBlank() }?.let { description ->
+            Text(
+                description,
+                style = MDTheme.type.caption,
+                color = Color.White.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

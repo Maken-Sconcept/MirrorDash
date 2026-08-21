@@ -122,8 +122,8 @@ private fun StocksWidgetEditor(
         Text("${widget.fontSizeSp}sp", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
         Slider(
             value = widget.fontSizeSp.toFloat(),
-            onValueChange = { value -> onChange { it.copy(fontSizeSp = value.toInt().coerceIn(12, 40)) } },
-            valueRange = 12f..40f,
+            onValueChange = { value -> onChange { it.copy(fontSizeSp = value.toInt().coerceIn(12, 800)) } },
+            valueRange = 12f..800f,
             colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
         )
     }

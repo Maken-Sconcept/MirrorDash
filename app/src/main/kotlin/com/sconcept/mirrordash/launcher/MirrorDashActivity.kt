@@ -51,6 +51,7 @@ import com.sconcept.mirrordash.gym.GymScreen
 import com.sconcept.mirrordash.gym.GymViewModel
 import com.sconcept.mirrordash.homeassistant.HomeAssistantScreen
 import com.sconcept.mirrordash.iptv.EXTRA_OPEN_DOWNLOAD_MANAGER
+import com.sconcept.mirrordash.iptv.IptvDownloadStatusPill
 import com.sconcept.mirrordash.iptv.IptvPageState
 import com.sconcept.mirrordash.iptv.IptvScreen
 import com.sconcept.mirrordash.iptv.IptvViewModel
@@ -111,7 +112,7 @@ class MirrorDashActivity : ComponentActivity() {
         SettingsViewModel.factory(application, container.settingsRepository)
     }
     private val gymViewModel: GymViewModel by viewModels {
-        GymViewModel.factory(application, container.gymRepository, container.gymContentRepository, container.gymSessionEngine)
+        GymViewModel.factory(application, container.gymRepository, container.gymContentRepository, container.gymSessionEngine, container.gymHealthConnectGateway)
     }
     private val iptvViewModel: IptvViewModel by viewModels {
         IptvViewModel.factory(application, container.settingsRepository, container.iptvSessionCoordinator)
@@ -503,6 +504,7 @@ private fun MirrorDashRoot(
             pageCount = orderedPages.size,
             initialPage = pageIndex.coerceIn(0, orderedPages.lastIndex),
             pageLabels = orderedPages.map { it.label },
+            requireTwoFingerPageSwipe = settingsUiState.settings.pageSwipeRequireTwoFingers,
             onPageSettled = { index ->
                 launcherViewModel.onPageSettled(index)
                 currentPageIndex = index
@@ -566,11 +568,24 @@ private fun MirrorDashRoot(
                 )
             },
             notificationsContent = { _, close ->
+                val context = LocalContext.current
                 val notifications by NotificationRepository.notifications.collectAsStateWithLifecycle()
                 val accessState by NotificationRepository.accessState.collectAsStateWithLifecycle()
+                // The listener can reconnect after the panel is composed (or be temporarily
+                // disconnected by Android) even while the user has granted Notification Access.
+                // The platform setting is the permission source of truth; the listener state is
+                // only the live-feed connection state. Do not show a grant prompt for the latter.
+                val effectiveAccessState = if (
+                    accessState == com.sconcept.mirrordash.launcher.notifications.NotificationAccessState.GRANTED ||
+                    NotificationRepository.isAccessGranted(context)
+                ) {
+                    com.sconcept.mirrordash.launcher.notifications.NotificationAccessState.GRANTED
+                } else {
+                    accessState
+                }
                 BackHandler(onBack = close)
                 NotificationsScreen(
-                    accessState = accessState,
+                    accessState = effectiveAccessState,
                     notifications = notifications,
                     onOpen = { notification ->
                         runCatching { notification.contentIntent?.send() }
@@ -583,6 +598,7 @@ private fun MirrorDashRoot(
                         requestedPage = orderedPages.indexOf(LauncherPage.Settings).takeIf { it >= 0 }
                         close()
                     },
+                    onClose = close,
                     brightnessLevel255 = settingsUiState.settings.brightnessLevel255,
                     onBrightnessChange = settingsViewModel::setBrightnessLevel,
                 )
@@ -594,6 +610,10 @@ private fun MirrorDashRoot(
         // sit directly over a settings row that happens to render in that same corner.
         if (orderedPages.getOrNull(currentPageIndex) != LauncherPage.Settings) {
             InAppPttOverlay(context)
+        }
+
+        if (settingsUiState.settings.iptvShowRecordingStatusPill) {
+            IptvDownloadStatusPill()
         }
 
         AnimatedVisibility(visible = showOnboarding && !isDefaultLauncher) {
@@ -667,6 +687,7 @@ private fun LauncherPageContent(
                 onClockAnchorChange = clockViewModel::setClockAnchor,
                 onWeatherWidgetAnchorChange = clockViewModel::setWeatherWidgetAnchor,
                 photoramaState = photorama,
+                onPhotoramaVideoMuted = { settingsViewModel.setPhotoramaVideosMuted(true) },
                 // Active mirroring must always be allowed to take over the Clock page; the
                 // separate "show clock widget" setting only controls the idle/status chip, not
                 // whether live video is visible at all.
@@ -695,6 +716,13 @@ private fun LauncherPageContent(
                 onTasksWidgetRotationChange = clockViewModel::setTasksWidgetRotation,
                 onStocksWidgetRotationChange = clockViewModel::setStocksWidgetRotation,
                 onNewsWidgetRotationChange = clockViewModel::setNewsWidgetRotation,
+                onClockFontSizeChange = clockViewModel::setFontSize,
+                onWeatherWidgetSizeChange = clockViewModel::setWeatherWidgetScale,
+                onTextWidgetSizeChange = clockViewModel::setTextWidgetFontSize,
+                onCalendarWidgetSizeChange = clockViewModel::setCalendarWidgetFontSize,
+                onTasksWidgetSizeChange = clockViewModel::setTasksWidgetFontSize,
+                onStocksWidgetSizeChange = clockViewModel::setStocksWidgetFontSize,
+                onNewsWidgetSizeChange = clockViewModel::setNewsWidgetFontSize,
             )
         }
         LauncherPage.Browser -> {
@@ -705,7 +733,13 @@ private fun LauncherPageContent(
             // on, not gated to Travel mode like the rest of the launcher chrome - requiring a
             // separate long-press-to-wake before a swipe even registers made leaving these pages
             // feel like a two-step gesture instead of a plain swipe.
-            Box(Modifier.fillMaxSize().pageSwipePriority(enabled = true, onSwipe = onSwipePage)) {
+            Box(
+                Modifier.fillMaxSize().pageSwipePriority(
+                    enabled = true,
+                    requireTwoFingers = settingsState.settings.pageSwipeRequireTwoFingers,
+                    onSwipe = onSwipePage,
+                ),
+            ) {
                 BrowserScreen(
                     homeUrl = settingsState.settings.browserHomeUrl,
                     persistedUrl = settingsState.settings.browserLastVisitedUrl,
@@ -726,7 +760,13 @@ private fun LauncherPageContent(
             LaunchedEffect(settingsState.settings.jellyfinAutoAuth) {
                 autoAuthPassword = if (settingsState.settings.jellyfinAutoAuth) settingsViewModel.jellyfinPassword() else null
             }
-            Box(Modifier.fillMaxSize().pageSwipePriority(enabled = true, onSwipe = onSwipePage)) {
+            Box(
+                Modifier.fillMaxSize().pageSwipePriority(
+                    enabled = true,
+                    requireTwoFingers = settingsState.settings.pageSwipeRequireTwoFingers,
+                    onSwipe = onSwipePage,
+                ),
+            ) {
                 JellyfinScreen(
                     serverUrl = settingsState.settings.jellyfinServerUrl,
                     startPath = settingsState.settings.jellyfinStartPath,
@@ -746,7 +786,13 @@ private fun LauncherPageContent(
             LaunchedEffect(settingsState.settings.homeAssistantAutoAuth) {
                 autoAuthPassword = if (settingsState.settings.homeAssistantAutoAuth) settingsViewModel.homeAssistantPassword() else null
             }
-            Box(Modifier.fillMaxSize().pageSwipePriority(enabled = true, onSwipe = onSwipePage)) {
+            Box(
+                Modifier.fillMaxSize().pageSwipePriority(
+                    enabled = true,
+                    requireTwoFingers = settingsState.settings.pageSwipeRequireTwoFingers,
+                    onSwipe = onSwipePage,
+                ),
+            ) {
                 HomeAssistantScreen(
                     url = settingsState.settings.homeAssistantUrl,
                     autoAuthUsername = settingsState.settings.homeAssistantUsername,

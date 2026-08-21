@@ -1,5 +1,6 @@
 package com.sconcept.mirrordash.gym
 
+import android.content.Context
 import kotlin.math.PI
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -8,6 +9,7 @@ object GymBuiltInAdapterIds {
     const val VITRUVIAN_COMMUNITY = "vitruvian.community.mock"
     const val ECHELON_COMMUNITY = "echelon.community.mock"
     const val HEART_RATE_RELAY = "heartrate.bridge.mock"
+    const val SAMSUNG_HEALTH_CONNECT = "samsung.health.connect"
 }
 
 fun defaultAdapterId(kind: FitnessDeviceKind): String = when (kind) {
@@ -48,6 +50,12 @@ interface GymDeviceAdapter {
         elapsedSeconds: Int,
         activeSeconds: Int,
     ): FitnessTelemetry?
+
+    fun onConnected(preference: FitnessDevicePreference) = Unit
+
+    fun refreshTelemetry() = Unit
+
+    fun statusMessage(): String? = null
 }
 
 class GymAdapterRegistry(
@@ -65,11 +73,12 @@ class GymAdapterRegistry(
         adaptersById.getValue(defaultAdapterId(kind))
 
     companion object {
-        fun createDefault(): GymAdapterRegistry = GymAdapterRegistry(
+        fun createDefault(healthConnectGateway: GymHealthConnectGateway): GymAdapterRegistry = GymAdapterRegistry(
             listOf(
                 VitruvianCommunityAdapter,
                 EchelonCommunityAdapter,
                 HeartRateRelayAdapter,
+                SamsungHealthConnectAdapter(healthConnectGateway),
             ),
         )
     }
@@ -274,4 +283,46 @@ private object HeartRateRelayAdapter : GymDeviceAdapter {
             calories = activeSeconds * 0.18,
         )
     }
+}
+
+private class SamsungHealthConnectAdapter(
+    private val healthConnect: GymHealthConnectGateway,
+) : GymDeviceAdapter {
+    override val adapterId: String = GymBuiltInAdapterIds.SAMSUNG_HEALTH_CONNECT
+    override val integrationLabel: String = "Samsung Health via Health Connect"
+
+    override fun isAvailable(mockDevicesEnabled: Boolean): Boolean = healthConnect.isSamsungHealthInstalled()
+
+    override fun buildSnapshot(
+        preference: FitnessDevicePreference,
+        existing: FitnessDeviceSnapshot?,
+    ): FitnessDeviceSnapshot = mergeSnapshot(preference, existing, integrationLabel)
+
+    override fun connectSequence(preference: FitnessDevicePreference): List<GymDeviceTransition> = listOf(
+        GymDeviceTransition(delayMs = 0, state = FitnessConnectionState.CONNECTING, errorMessage = null),
+        GymDeviceTransition(delayMs = 350, state = FitnessConnectionState.READY, errorMessage = healthConnect.statusMessage(), resetPacketAge = true),
+    )
+
+    override fun disconnectSequence(
+        preference: FitnessDevicePreference,
+        activeSession: Boolean,
+    ): List<GymDeviceTransition> = listOf(
+        GymDeviceTransition(delayMs = 0, state = FitnessConnectionState.DISCONNECTED, clearTelemetry = true),
+    )
+
+    override fun sampleTelemetry(
+        device: FitnessDeviceSnapshot,
+        elapsedSeconds: Int,
+        activeSeconds: Int,
+    ): FitnessTelemetry? = healthConnect.currentTelemetry()
+
+    override fun onConnected(preference: FitnessDevicePreference) {
+        healthConnect.refreshLatestHeartRate()
+    }
+
+    override fun refreshTelemetry() {
+        healthConnect.refreshLatestHeartRate()
+    }
+
+    override fun statusMessage(): String? = healthConnect.statusMessage()
 }

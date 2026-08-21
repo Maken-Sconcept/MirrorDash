@@ -10,6 +10,9 @@ private data class GymExerciseTemplate(
     val durationMinutes: Int,
     val repScheme: String,
     val coachingCue: String,
+    val workSeconds: Int = durationMinutes * 60,
+    val restSeconds: Int = recommendedRestSeconds(repScheme),
+    val intensity: String = "steady",
 )
 
 fun defaultGymGeneratorPreferences(): GymGeneratorPreferences = GymGeneratorPreferences(
@@ -61,6 +64,9 @@ fun buildGymGeneratedWorkoutPlan(
             focusLabel = template.focusLabel,
             targetedMuscles = template.targetedMuscles,
             durationMinutes = template.durationMinutes,
+            workSeconds = template.workSeconds,
+            restSeconds = template.restSeconds,
+            intensity = template.intensity,
             repScheme = template.repScheme,
             coachingCue = template.coachingCue,
         )
@@ -138,10 +144,13 @@ private fun List<GymExerciseCatalogEntry>.toCatalogTemplates(): List<GymExercise
         targetedMuscles = targetedMuscles,
         equipment = mappedEquipment,
         supportedGoals = inferGoals(targetedMuscles),
-        minimumLevel = inferMinimumLevel(entry),
+        minimumLevel = entry.level.toGymTrainingLevel(),
         durationMinutes = inferDurationMinutes(targetedMuscles, mappedEquipment),
         repScheme = inferRepScheme(targetedMuscles, mappedEquipment),
         coachingCue = inferCoachingCue(targetedMuscles, mappedEquipment),
+        workSeconds = entry.pacing.workSeconds,
+        restSeconds = entry.pacing.restSeconds,
+        intensity = entry.pacing.intensity,
     )
 }.distinctBy { it.title.lowercase() }
 
@@ -177,6 +186,13 @@ private fun inferGoals(targetedMuscles: List<String>): Set<GymTrainingGoal> {
 private fun inferMinimumLevel(entry: GymExerciseCatalogEntry): GymTrainingLevel = when (entry.sidedness?.lowercase()) {
     "alternating", "unilateral" -> GymTrainingLevel.BEGINNER
     else -> GymTrainingLevel.NOVICE
+}
+
+private fun String.toGymTrainingLevel(): GymTrainingLevel = when (uppercase()) {
+    "NOVICE" -> GymTrainingLevel.NOVICE
+    "INTERMEDIATE" -> GymTrainingLevel.INTERMEDIATE
+    "ADVANCED" -> GymTrainingLevel.ADVANCED
+    else -> GymTrainingLevel.BEGINNER
 }
 
 private fun inferDurationMinutes(

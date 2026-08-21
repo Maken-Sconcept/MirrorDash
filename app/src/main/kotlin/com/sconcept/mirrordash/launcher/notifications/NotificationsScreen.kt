@@ -77,6 +77,7 @@ fun NotificationsScreen(
     onClearAll: () -> Unit,
     onGrantAccess: () -> Unit,
     onOpenSettings: () -> Unit,
+    onClose: () -> Unit,
     brightnessLevel255: Int,
     onBrightnessChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -106,14 +107,17 @@ fun NotificationsScreen(
                 Text(timeText, style = MDTheme.type.sectionTitle, color = MDTheme.colors.textPrimary)
                 Text(todayLabel(), style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
             }
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MDTheme.colors.surface)
-                    .clickable(onClick = onOpenSettings)
-                    .padding(12.dp),
-            ) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = MDTheme.colors.textSecondary, modifier = Modifier.size(22.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onClose) { Text("Close", color = MDTheme.colors.textSecondary) }
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MDTheme.colors.surface)
+                        .clickable(onClick = onOpenSettings)
+                        .padding(12.dp),
+                ) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = MDTheme.colors.textSecondary, modifier = Modifier.size(22.dp))
+                }
             }
         }
 

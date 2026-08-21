@@ -1,6 +1,7 @@
 package com.sconcept.mirrordash.photorama
 
 import android.app.Application
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 data class PhotoramaUiState(
     val isConfigured: Boolean = false,
@@ -37,7 +39,14 @@ data class PhotoramaUiState(
     val hasNoPhotos: Boolean = false,
 )
 
-data class PhotoramaMedia(val source: Any, val type: PhotoramaMediaType)
+data class PhotoramaMedia(
+    val source: Any,
+    val type: PhotoramaMediaType,
+    val videoSegment: PhotoramaVideoSegment? = null,
+    val videoMuted: Boolean = true,
+)
+
+data class PhotoramaVideoSegment(val startMs: Long, val endMs: Long)
 
 /**
  * Coroutine/StateFlow rewrite of BerthierOptions' `SlideshowController` (a Handler + callback-
@@ -60,6 +69,8 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
     private var order: List<Int> = emptyList()
     private var position = -1
     private var currentPhotoUrl: String? = null
+    private val videoViewedRanges = mutableMapOf<String, List<LongRange>>()
+    private val videoDurationsMs = mutableMapOf<String, Long>()
     private var reconnectAttempt = 0
     private var lastIndexedAtMs = 0L
     private var watchJob: Job? = null
@@ -76,6 +87,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
         val localFolderUri: String,
         val includeSubfolders: Boolean,
         val playLivePhotos: Boolean,
+        val replayLongVideoSegments: Boolean,
     ) {
         val isConfigured: Boolean
             get() = when (source) {
@@ -87,6 +99,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
 
     companion object {
         private const val INDEX_REFRESH_INTERVAL_MS = 15 * 60 * 1000L
+        private const val MAX_VIDEO_VIEWED_FRACTION = 0.60
         private const val MAX_RECONNECT_BACKOFF_SECONDS = 300L
         private const val MAX_RECONNECT_ATTEMPT_SHIFT = 5
 
@@ -124,6 +137,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                         localFolderUri = s.photoramaLocalFolderUri,
                         includeSubfolders = s.photoramaIncludeSubfolders,
                         playLivePhotos = s.photoramaPlayLivePhotos,
+                        replayLongVideoSegments = s.photoramaReplayLongVideoSegments,
                     )
                 }
                 .distinctUntilChanged()
@@ -141,6 +155,8 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                     order = emptyList()
                     position = -1
                     currentPhotoUrl = null
+                    videoViewedRanges.clear()
+                    videoDurationsMs.clear()
                     reconnectAttempt = 0
                     _uiState.value = _uiState.value.copy(isConfigured = true, currentMedia = null, hasNoPhotos = false)
                     refreshIndex()
@@ -170,6 +186,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                 selectLivePhotoMedia(result.value, settings.photoramaPlayLivePhotos),
                 settings.photoramaShuffle,
                 settings.photoramaIntervalSeconds,
+                settings.photoramaReplayLongVideoSegments,
                 share,
                 settings.photoramaCacheSizeMb,
             )
@@ -177,7 +194,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
         }
     }
 
-    private suspend fun onIndexed(newPhotos: List<LanPhoto>, shuffle: Boolean, intervalSeconds: Int, share: SmbShare, cacheSizeMb: Int) {
+    private suspend fun onIndexed(newPhotos: List<LanPhoto>, shuffle: Boolean, intervalSeconds: Int, replayLongVideoSegments: Boolean, share: SmbShare, cacheSizeMb: Int) {
         reconnectAttempt = 0
         lastIndexedAtMs = System.currentTimeMillis()
         _uiState.value = _uiState.value.copy(connectionState = SmbConnectionState.CONNECTED)
@@ -199,22 +216,22 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             position = order.indexOf(currentIndex).coerceAtLeast(0)
         } else {
             if (position !in order.indices) position = 0
-            showCurrent(share, cacheSizeMb)
+            showCurrent(share, cacheSizeMb, intervalSeconds, replayLongVideoSegments)
         }
-        runAdvanceLoop(intervalSeconds, shuffle, share, cacheSizeMb)
+        runAdvanceLoop(intervalSeconds, share, cacheSizeMb)
     }
 
     private suspend fun onIndexFailed(state: SmbConnectionState, intervalSeconds: Int, share: SmbShare, cacheSizeMb: Int) {
         _uiState.value = _uiState.value.copy(connectionState = state)
         if (photos.isNotEmpty()) {
             if (position !in order.indices) position = 0
-            showCurrent(share, cacheSizeMb)
-            runAdvanceLoop(intervalSeconds, false, share, cacheSizeMb, singleShot = true)
+            showCurrent(share, cacheSizeMb, intervalSeconds, false)
+            runAdvanceLoop(intervalSeconds, share, cacheSizeMb, singleShot = true)
         }
         scheduleReconnect(intervalSeconds, share, cacheSizeMb)
     }
 
-    private suspend fun runAdvanceLoop(intervalSeconds: Int, shuffle: Boolean, share: SmbShare, cacheSizeMb: Int, singleShot: Boolean = false) {
+    private suspend fun runAdvanceLoop(intervalSeconds: Int, share: SmbShare, cacheSizeMb: Int, singleShot: Boolean = false) {
         val scope = viewModelScope
         if (!scope.isActive) return
         do {
@@ -228,17 +245,22 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                 return
             }
             val settings = settingsRepository.settings.first()
-            if (settings.photoramaShuffle && order.size > 1 && position >= order.lastIndex) {
+            if (position >= order.lastIndex) {
                 val currentIndex = order.getOrNull(position)
-                order = buildOrder(photos.size, true, avoidFirstIndex = currentIndex)
+                // A video's 60% allowance is per loop. Once every queued entry has had its
+                // turn, start a fresh loop and let that video's unused sections participate
+                // again alongside the still images.
+                videoViewedRanges.clear()
+                videoDurationsMs.clear()
+                order = buildOrder(photos.size, settings.photoramaShuffle, avoidFirstIndex = currentIndex)
                 position = -1
             }
             position = (position + 1) % order.size
-            showCurrent(share, cacheSizeMb)
+            showCurrent(share, cacheSizeMb, settings.photoramaIntervalSeconds, settings.photoramaReplayLongVideoSegments)
         } while (!singleShot)
     }
 
-    private suspend fun showCurrent(share: SmbShare, cacheSizeMb: Int) {
+    private suspend fun showCurrent(share: SmbShare, cacheSizeMb: Int, intervalSeconds: Int, replayLongVideoSegments: Boolean) {
         val photoIndex = order.getOrNull(position) ?: return
         val photo = photos.getOrNull(photoIndex) ?: return
         currentPhotoUrl = photo.url
@@ -253,7 +275,25 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             }
         }
         if (ready != null) {
-            _uiState.value = _uiState.value.copy(currentMedia = PhotoramaMedia(ready, photo.mediaType), hasNoPhotos = false)
+            val videoSegment = if (photo.mediaType == PhotoramaMediaType.VIDEO && replayLongVideoSegments) {
+                chooseVideoSegment(photo.url, ready, intervalSeconds)
+            } else {
+                null
+            }
+            if (videoSegment != null && videoViewedFraction(photo.url) < MAX_VIDEO_VIEWED_FRACTION) {
+                // Video entries may recur during the current loop, unlike stills. Each recurrence
+                // receives a newly chosen time range, and stops being appended at 60% coverage.
+                order = order + photoIndex
+            }
+            _uiState.value = _uiState.value.copy(
+                currentMedia = PhotoramaMedia(
+                    source = ready,
+                    type = photo.mediaType,
+                    videoSegment = videoSegment,
+                    videoMuted = settingsRepository.settings.first().photoramaVideosMuted,
+                ),
+                hasNoPhotos = false,
+            )
         }
         preloadNext(share, cacheSizeMb)
     }
@@ -271,6 +311,55 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
     }
 
     private fun isLocalPhotoUrl(url: String): Boolean = url.startsWith("content://")
+
+    private fun chooseVideoSegment(url: String, source: Any, intervalSeconds: Int): PhotoramaVideoSegment? {
+        val durationMs = videoDurationMs(source) ?: return null
+        val segmentDurationMs = intervalSeconds * 1000L
+        if (durationMs <= segmentDurationMs) return null
+
+        val maxStartMs = durationMs - segmentDurationMs
+        val viewedRanges = videoViewedRanges[url].orEmpty()
+        // Prefer a fully unseen interval so repeats expose genuinely different parts of the
+        // video. The first eligible candidate is still random, rather than being biased to a
+        // fixed beginning or end.
+        val startMs = List(40) { kotlin.random.Random.nextLong(maxStartMs + 1) }
+            .firstOrNull { start ->
+                val end = start + segmentDurationMs - 1
+                viewedRanges.none { viewed -> start > viewed.last || end < viewed.first }
+            }
+            ?: kotlin.random.Random.nextLong(maxStartMs + 1)
+        val endMs = startMs + segmentDurationMs
+        videoDurationsMs[url] = durationMs
+        videoViewedRanges[url] = mergeRange(videoViewedRanges[url].orEmpty(), startMs..(endMs - 1))
+        return PhotoramaVideoSegment(startMs, endMs)
+    }
+
+    private fun videoDurationMs(source: Any): Long? = runCatching {
+        MediaMetadataRetriever().use { retriever ->
+            when (source) {
+                is File -> retriever.setDataSource(source.absolutePath)
+                is Uri -> retriever.setDataSource(getApplication<Application>(), source)
+                else -> return null
+            }
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+        }
+    }.getOrNull()
+
+    private fun mergeRange(existing: List<LongRange>, added: LongRange): List<LongRange> {
+        val sorted = (existing + listOf(added)).sortedBy { it.first }
+        return sorted.fold(emptyList<LongRange>()) { merged, range ->
+            val last = merged.lastOrNull()
+            if (last == null || range.first > last.last + 1) merged + listOf(range)
+            else merged.dropLast(1) + listOf(last.first..maxOf(last.last, range.last))
+        }
+    }
+
+    private fun videoViewedFraction(url: String): Double {
+        val ranges = videoViewedRanges[url].orEmpty()
+        val viewedMs = ranges.sumOf { it.last - it.first + 1 }
+        val durationMs = videoDurationsMs[url] ?: return 0.0
+        return viewedMs.toDouble() / durationMs.toDouble()
+    }
 
     /** Apple exports a Live Photo as an image and a same-named MOV. Keep one entry per capture:
      * the motion clip when enabled, or the still image when disabled. Unpaired MOVs are kept as

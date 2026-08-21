@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -36,9 +37,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -102,6 +108,18 @@ import kotlin.math.roundToInt
 // dragged widget from clipping off-screen, not a "keep away from the corners" restriction.
 private val EDGE_INSET = 18.dp
 
+// Same min/max each widget type's own Settings slider already enforces (see e.g.
+// TasksWidgetsSettings.kt's Slider valueRange) - the on-canvas size slider and the Settings slider
+// must agree on range, or a value set by one could look clamped/wrong reopening the other. Every
+// type shares the same generous 800 ceiling - "allow gigantic clocks" widened the clock first, but
+// the same slider interaction now exists on every widget type, so the same headroom applies to
+// all of them rather than leaving some capped at their old, much smaller max. Only the floor stays
+// per-type, since nobody asked for smaller minimums.
+private val CLOCK_FONT_SIZE_RANGE = 64f..800f
+private val WEATHER_WIDGET_SCALE_RANGE = 70f..800f
+private val TEXT_WIDGET_FONT_SIZE_RANGE = 12f..800f
+private val SMALL_WIDGET_FONT_SIZE_RANGE = 12f..800f
+
 /**
  * The default Home surface (brief section 11). The clock and weather clusters are freely
  * draggable (long-press then drag) - restored at the user's request - each backed by exactly
@@ -118,6 +136,7 @@ fun ClockScreen(
     onWeatherWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     modifier: Modifier = Modifier,
     photoramaState: PhotoramaUiState = PhotoramaUiState(),
+    onPhotoramaVideoMuted: () -> Unit = {},
     airPlayStatus: AirPlayUiState? = null,
     onTextWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
     calendar: CalendarAgendaUiState = CalendarAgendaUiState(),
@@ -143,6 +162,13 @@ fun ClockScreen(
     onTasksWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
     onStocksWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
     onNewsWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
+    onClockFontSizeChange: (sp: Int) -> Unit = {},
+    onWeatherWidgetSizeChange: (id: String, scalePercent: Int) -> Unit = { _, _ -> },
+    onTextWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
+    onCalendarWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
+    onTasksWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
+    onStocksWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
+    onNewsWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
 ) {
     val typography = remember(appearance.fontSizeSp) { mirrorDashTypography(appearance.fontSizeSp) }
     val clockData by rememberClockRenderData(weather = weather, showWeather = appearance.showWidgets)
@@ -167,6 +193,7 @@ fun ClockScreen(
                 onClockAnchorChange = onClockAnchorChange,
                 onWeatherWidgetAnchorChange = onWeatherWidgetAnchorChange,
                 photoramaState = photoramaState,
+                onPhotoramaVideoMuted = onPhotoramaVideoMuted,
                 airPlayStatus = airPlayStatus,
                 onTextWidgetAnchorChange = onTextWidgetAnchorChange,
                 calendar = calendar,
@@ -195,6 +222,13 @@ fun ClockScreen(
                 onTasksWidgetRotationChange = onTasksWidgetRotationChange,
                 onStocksWidgetRotationChange = onStocksWidgetRotationChange,
                 onNewsWidgetRotationChange = onNewsWidgetRotationChange,
+                onClockFontSizeChange = onClockFontSizeChange,
+                onWeatherWidgetSizeChange = onWeatherWidgetSizeChange,
+                onTextWidgetSizeChange = onTextWidgetSizeChange,
+                onCalendarWidgetSizeChange = onCalendarWidgetSizeChange,
+                onTasksWidgetSizeChange = onTasksWidgetSizeChange,
+                onStocksWidgetSizeChange = onStocksWidgetSizeChange,
+                onNewsWidgetSizeChange = onNewsWidgetSizeChange,
             )
         }
     }
@@ -208,6 +242,7 @@ private fun ClockContent(
     onClockAnchorChange: (OverlayAnchor) -> Unit,
     onWeatherWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     photoramaState: PhotoramaUiState,
+    onPhotoramaVideoMuted: () -> Unit,
     airPlayStatus: AirPlayUiState?,
     onTextWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     calendar: CalendarAgendaUiState,
@@ -236,10 +271,17 @@ private fun ClockContent(
     onTasksWidgetRotationChange: (id: String, degrees: Float) -> Unit,
     onStocksWidgetRotationChange: (id: String, degrees: Float) -> Unit,
     onNewsWidgetRotationChange: (id: String, degrees: Float) -> Unit,
+    onClockFontSizeChange: (sp: Int) -> Unit,
+    onWeatherWidgetSizeChange: (id: String, scalePercent: Int) -> Unit,
+    onTextWidgetSizeChange: (id: String, sp: Int) -> Unit,
+    onCalendarWidgetSizeChange: (id: String, sp: Int) -> Unit,
+    onTasksWidgetSizeChange: (id: String, sp: Int) -> Unit,
+    onStocksWidgetSizeChange: (id: String, sp: Int) -> Unit,
+    onNewsWidgetSizeChange: (id: String, sp: Int) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         when (appearance.background) {
-            is ClockBackground.Photorama -> PhotoramaBackdrop(photoramaState)
+            is ClockBackground.Photorama -> PhotoramaBackdrop(photoramaState, onPhotoramaVideoMuted)
             is ClockBackground.SolidColor -> Box(
                 Modifier.fillMaxSize().background(appearance.background.color),
             )
@@ -259,6 +301,10 @@ private fun ClockContent(
                 onRemove = onClockRemove,
                 rotationDegrees = appearance.clockRotationDegrees,
                 onRotationChange = onClockRotationChange,
+                resizeValue = appearance.fontSizeSp.toFloat(),
+                resizeRange = CLOCK_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { onClockFontSizeChange(it.roundToInt()) },
             ) {
                 Column(Modifier.alpha(1f - contentDimAlpha)) {
                     ClockTextBlock(
@@ -280,6 +326,10 @@ private fun ClockContent(
                 onAnchorChange = onWeatherWidgetAnchorChange,
                 onRemove = onWeatherWidgetRemove,
                 onRotationChange = onWeatherWidgetRotationChange,
+                resizeValue = { it.scalePercent.toFloat() },
+                resizeRange = WEATHER_WIDGET_SCALE_RANGE,
+                resizeLabel = { "${it.roundToInt()}%" },
+                onResizeChange = { id, value -> onWeatherWidgetSizeChange(id, value.roundToInt()) },
             ) { widget -> WeatherWidgetSurface(widget = widget, weather = weather, textColor = appearance.textColor) }
 
             WidgetOverlayLayer(
@@ -291,6 +341,10 @@ private fun ClockContent(
                 onAnchorChange = onTextWidgetAnchorChange,
                 onRemove = onTextWidgetRemove,
                 onRotationChange = onTextWidgetRotationChange,
+                resizeValue = { it.fontSizeSp.toFloat() },
+                resizeRange = TEXT_WIDGET_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { id, value -> onTextWidgetSizeChange(id, value.roundToInt()) },
             ) { widget -> AnimatedWidgetText(widget) }
 
             WidgetOverlayLayer(
@@ -302,6 +356,10 @@ private fun ClockContent(
                 onAnchorChange = onCalendarWidgetAnchorChange,
                 onRemove = onCalendarWidgetRemove,
                 onRotationChange = onCalendarWidgetRotationChange,
+                resizeValue = { it.fontSizeSp.toFloat() },
+                resizeRange = SMALL_WIDGET_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { id, value -> onCalendarWidgetSizeChange(id, value.roundToInt()) },
             ) { widget ->
                 CalendarAgendaWidgetSurface(
                     widget = widget,
@@ -319,6 +377,10 @@ private fun ClockContent(
                 onAnchorChange = onTasksWidgetAnchorChange,
                 onRemove = onTasksWidgetRemove,
                 onRotationChange = onTasksWidgetRotationChange,
+                resizeValue = { it.fontSizeSp.toFloat() },
+                resizeRange = SMALL_WIDGET_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { id, value -> onTasksWidgetSizeChange(id, value.roundToInt()) },
             ) { widget ->
                 TasksWidgetSurface(
                     widget = widget,
@@ -336,6 +398,10 @@ private fun ClockContent(
                 onAnchorChange = onStocksWidgetAnchorChange,
                 onRemove = onStocksWidgetRemove,
                 onRotationChange = onStocksWidgetRotationChange,
+                resizeValue = { it.fontSizeSp.toFloat() },
+                resizeRange = SMALL_WIDGET_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { id, value -> onStocksWidgetSizeChange(id, value.roundToInt()) },
             ) { widget ->
                 StocksTickerWidgetSurface(
                     widget = widget,
@@ -353,6 +419,10 @@ private fun ClockContent(
                 onAnchorChange = onNewsWidgetAnchorChange,
                 onRemove = onNewsWidgetRemove,
                 onRotationChange = onNewsWidgetRotationChange,
+                resizeValue = { it.fontSizeSp.toFloat() },
+                resizeRange = SMALL_WIDGET_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { id, value -> onNewsWidgetSizeChange(id, value.roundToInt()) },
             ) { widget ->
                 NewsTickerWidgetSurface(
                     widget = widget,
@@ -634,11 +704,11 @@ private fun AirPlayStatusWidget(state: AirPlayUiState, modifier: Modifier = Modi
  * connecting-with-reason) - now that Photorama only ever exists as this backdrop, a broken or
  * still-connecting source needs to say so here rather than just sitting on plain black. */
 @Composable
-private fun PhotoramaBackdrop(state: PhotoramaUiState) {
+private fun PhotoramaBackdrop(state: PhotoramaUiState, onVideoMuted: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         val media = state.currentMedia
         if (media != null) {
-            PhotoramaMediaBackdrop(media)
+            PhotoramaMediaBackdrop(media, onVideoMuted)
         }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
 
@@ -664,7 +734,7 @@ private fun PhotoramaBackdrop(state: PhotoramaUiState) {
 }
 
 @Composable
-private fun PhotoramaMediaBackdrop(media: PhotoramaMedia) {
+private fun PhotoramaMediaBackdrop(media: PhotoramaMedia, onVideoMuted: () -> Unit) {
     when (media.type) {
         PhotoramaMediaType.IMAGE -> Crossfade(
             targetState = media.source,
@@ -678,28 +748,66 @@ private fun PhotoramaMediaBackdrop(media: PhotoramaMedia) {
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        PhotoramaMediaType.VIDEO -> PhotoramaVideoBackdrop(media.source)
+        PhotoramaMediaType.VIDEO -> PhotoramaVideoBackdrop(media.source, media.videoSegment, media.videoMuted, onVideoMuted)
     }
 }
 
 @Composable
-private fun PhotoramaVideoBackdrop(source: Any) {
+private fun PhotoramaVideoBackdrop(
+    source: Any,
+    segment: com.sconcept.mirrordash.photorama.PhotoramaVideoSegment?,
+    initiallyMuted: Boolean,
+    onVideoMuted: () -> Unit,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val uri = remember(source) { if (source is File) source.toUri() else source as Uri }
+    var isMuted by remember(source, segment) { mutableStateOf(initiallyMuted) }
     val player = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
-            repeatMode = Player.REPEAT_MODE_ONE
+            repeatMode = if (segment == null) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             playWhenReady = true
             prepare()
         }
     }
+    LaunchedEffect(player, segment) {
+        if (segment != null) {
+            player.seekTo(segment.startMs)
+            player.play()
+            delay(segment.endMs - segment.startMs)
+            player.pause()
+        }
+    }
+    LaunchedEffect(player, isMuted) {
+        player.volume = if (isMuted) 0f else 1f
+    }
     DisposableEffect(player) { onDispose { player.release() } }
-    AndroidView(
-        factory = { PlayerView(it).apply { useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; this.player = player } },
-        update = { it.player = player },
-        modifier = Modifier.fillMaxSize(),
-    )
+    Box(Modifier.fillMaxSize()) {
+        AndroidView(
+            factory = { PlayerView(it).apply { useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; this.player = player } },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxSize(),
+        )
+        IconButton(
+            onClick = {
+                val willMute = !isMuted
+                isMuted = willMute
+                if (willMute) onVideoMuted()
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.56f)),
+        ) {
+            Icon(
+                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = if (isMuted) "Unmute this video" else "Mute this video",
+                tint = Color.White,
+            )
+        }
+    }
 }
 
 private fun photoramaStatusMessage(state: PhotoramaUiState): Pair<String, String?> = when {
@@ -740,6 +848,10 @@ internal fun DraggableAnchor(
     onRemove: (() -> Unit)? = null,
     rotationDegrees: Float = 0f,
     onRotationChange: ((Float) -> Unit)? = null,
+    resizeValue: Float? = null,
+    resizeRange: ClosedFloatingPointRange<Float>? = null,
+    resizeLabel: ((Float) -> String)? = null,
+    onResizeChange: ((Float) -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     var sizePx by remember { mutableStateOf(IntSize.Zero) }
@@ -766,18 +878,15 @@ internal fun DraggableAnchor(
     Box(
         modifier = Modifier
             .offset { IntOffset(left.toInt(), top.toInt()) }
-            .onSizeChanged { sizePx = it }
-            .then(
-                if (showOutline) {
-                    Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, MDTheme.colors.accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                        .padding(6.dp)
-                } else {
-                    Modifier.padding(6.dp)
-                },
-            )
-            .pointerInput(anchor, parentWidthPx, parentHeightPx, sizePx) {
+            // sizePx is deliberately not a key - it changes the instant a +/- size button resizes
+            // the content (onSizeChanged fires), which would otherwise cancel and restart this same
+            // gesture on every single step. A restart mid-hold orphans whichever finger was already
+            // down (the fresh detector waits for a brand-new press, not one already in progress),
+            // which is exactly what made the widget's held/draggable state seem to "lose focus"
+            // after a couple of taps on the buttons below. sizePx is still read live where it's
+            // needed (it's a remembered MutableState, not a snapshot), just never used to decide
+            // whether to relaunch.
+            .pointerInput(anchor, parentWidthPx, parentHeightPx) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = {
                         isDragging = true
@@ -809,8 +918,29 @@ internal fun DraggableAnchor(
                 )
             },
     ) {
-        Box(Modifier.graphicsLayer(rotationZ = rotationDegrees)) {
-            content()
+        // The clip/border/padding below is scoped to THIS inner box (just the content) rather
+        // than the outer one - the outer box is also where the trash icon and rotate handle get
+        // positioned, both deliberately drawn outside the content's own bounds (a corner badge,
+        // a floating handle above the top edge). A clip on their shared ancestor would cut off
+        // anything painted past that ancestor's bounds, including both of them, regardless of
+        // showOutline - which is exactly why the rotate handle (and the trash icon) went invisible.
+        Box(
+            modifier = Modifier
+                .onSizeChanged { sizePx = it }
+                .then(
+                    if (showOutline) {
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, MDTheme.colors.accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .padding(6.dp)
+                    } else {
+                        Modifier.padding(6.dp)
+                    },
+                ),
+        ) {
+            Box(Modifier.graphicsLayer(rotationZ = rotationDegrees)) {
+                content()
+            }
         }
 
         if (onRemove != null && showRemoveAffordance) {
@@ -844,12 +974,31 @@ internal fun DraggableAnchor(
                     .offset(y = -(ROTATE_HANDLE_TOUCH_SIZE + ROTATE_HANDLE_GAP)),
             )
         }
+
+        if (onResizeChange != null && resizeValue != null && resizeRange != null && showOutline) {
+            SizeSlider(
+                value = resizeValue,
+                range = resizeRange,
+                label = resizeLabel,
+                onChange = onResizeChange,
+                // Below the card's bottom edge, mirroring the rotate handle's placement above the
+                // top edge - never over the content itself, where it'd sit under the exact finger
+                // holding the widget down.
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = SIZE_SLIDER_HEIGHT + SIZE_SLIDER_GAP),
+            )
+        }
     }
 }
 
 private val ROTATE_HANDLE_TOUCH_SIZE = 44.dp
 private val ROTATE_HANDLE_VISIBLE_SIZE = 30.dp
-private val ROTATE_HANDLE_GAP = 8.dp
+private val ROTATE_HANDLE_GAP = 10.dp
+
+private val SIZE_SLIDER_WIDTH = 200.dp
+private val SIZE_SLIDER_HEIGHT = 72.dp
+private val SIZE_SLIDER_GAP = 10.dp
 
 @Composable
 private fun RemoveWidgetButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -867,6 +1016,49 @@ private fun RemoveWidgetButton(onClick: () -> Unit, modifier: Modifier = Modifie
             contentDescription = "Remove widget",
             tint = Color.White,
             modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+/** A direct-manipulation size control - a slider rather than step buttons, now that "allow
+ * gigantic clocks" means a range wide enough (64-800sp for the clock) that reaching a size far
+ * from the current one one tap/repeat-tick at a time was no longer reasonable. Every widget
+ * type's own size knob is a single scalar (font size, or Weather's scalePercent) that already
+ * drives every proportional element in its renderer, so dragging it here can never distort one
+ * axis independently of the other - "aspect ratio" is never a separate concern to track. */
+@Composable
+private fun SizeSlider(
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    label: ((Float) -> String)?,
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .width(SIZE_SLIDER_WIDTH)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.5f))
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        if (label != null) {
+            Text(
+                text = label(value),
+                style = MDTheme.type.caption,
+                color = Color.White,
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = MDTheme.colors.accent,
+                activeTrackColor = MDTheme.colors.accent,
+                inactiveTrackColor = MDTheme.colors.divider,
+            ),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -976,6 +1168,10 @@ internal fun <T : AnchoredWidget> WidgetOverlayLayer(
     onAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     onRemove: (id: String) -> Unit,
     onRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
+    resizeValue: ((T) -> Float)? = null,
+    resizeRange: ClosedFloatingPointRange<Float>? = null,
+    resizeLabel: ((Float) -> String)? = null,
+    onResizeChange: (id: String, value: Float) -> Unit = { _, _ -> },
     content: @Composable (T) -> Unit,
 ) {
     widgets.forEach { widget ->
@@ -988,6 +1184,10 @@ internal fun <T : AnchoredWidget> WidgetOverlayLayer(
             onRemove = { onRemove(widget.id) },
             rotationDegrees = widget.rotationDegrees,
             onRotationChange = { onRotationChange(widget.id, it) },
+            resizeValue = resizeValue?.invoke(widget),
+            resizeRange = resizeRange,
+            resizeLabel = resizeLabel,
+            onResizeChange = { onResizeChange(widget.id, it) },
         ) {
             Box(Modifier.alpha(1f - contentDimAlpha)) {
                 content(widget)

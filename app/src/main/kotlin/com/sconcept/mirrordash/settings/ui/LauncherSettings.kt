@@ -93,6 +93,18 @@ fun LauncherSettingsContent(
 
     Spacer(Modifier.height(28.dp))
 
+    SettingGroup(title = "Shared NAS connection") {
+        Text(
+            "One NAS login is used by Photos, IPTV recording, Gym videos, and other NAS-enabled features. Each feature keeps its own destination folder.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(14.dp))
+        SharedNasConnectionSettings(uiState, viewModel)
+    }
+
+    Spacer(Modifier.height(28.dp))
+
     SettingRow(
         title = "Default launcher",
         subtitle = if (isDefaultLauncher) "MirrorDash is your Home app" else "Not currently your Home app",
@@ -223,6 +235,43 @@ fun LauncherSettingsContent(
                 colors = ButtonDefaults.buttonColors(containerColor = MDTheme.colors.accent, contentColor = MDTheme.colors.onAccent),
             ) {
                 Text("Grant permission")
+            }
+        }
+    }
+
+    Spacer(Modifier.height(28.dp))
+
+    SettingGroup(title = "Page swipe") {
+        Text(
+            "How swiping between tabs is triggered on embedded web pages (Jellyfin, Browser, " +
+                "Home Assistant) - their own content still gets first crack at every touch, so " +
+                "this only decides which gesture counts as \"the user actually meant to change " +
+                "pages\" rather than scroll, tap, or pinch-zoom that content.",
+            style = MDTheme.type.settingSubtitle,
+            color = MDTheme.colors.textSecondary,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        ) {
+            Switch(
+                checked = uiState.settings.pageSwipeRequireTwoFingers,
+                onCheckedChange = viewModel::setPageSwipeRequireTwoFingers,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("Require two fingers", style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+                Text(
+                    if (uiState.settings.pageSwipeRequireTwoFingers) {
+                        "On - a single finger never changes pages, only scrolls/taps/pinches like normal; swipe with two fingers together to change pages."
+                    } else {
+                        "Off - a single-finger horizontal drag changes pages, same as every other page in MirrorDash."
+                    },
+                    style = MDTheme.type.caption,
+                    color = MDTheme.colors.textTertiary,
+                )
             }
         }
     }

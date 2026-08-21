@@ -32,7 +32,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -41,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +67,8 @@ private val ROW_HEIGHT = 72.dp
 private val PX_PER_MINUTE = 4.dp
 private const val WINDOW_HOURS = 6
 private const val WINDOW_MINUTES = WINDOW_HOURS * 60
+
+private enum class GuideLayout { CARDS, LIST }
 
 /**
  * Plex-style Live TV guide: channels down the left (logo + number badge), a shared time axis
@@ -114,6 +119,7 @@ fun IptvGuideOverlay(
     val flingBehavior = smoothFlingBehavior()
     val windowStartSeconds = remember { flooredToHalfHourEpochSeconds() }
     val totalWidth = PX_PER_MINUTE * WINDOW_MINUTES
+    var layout by rememberSaveable { mutableStateOf(GuideLayout.CARDS) }
 
     Box(
         modifier = modifier
@@ -133,6 +139,13 @@ fun IptvGuideOverlay(
                         Icon(Icons.Filled.FullscreenExit, contentDescription = "Regular size", tint = Color.White)
                     }
                 }
+                IconButton(onClick = { layout = if (layout == GuideLayout.CARDS) GuideLayout.LIST else GuideLayout.CARDS }) {
+                    Icon(
+                        if (layout == GuideLayout.CARDS) Icons.Filled.ViewList else Icons.Filled.GridView,
+                        contentDescription = if (layout == GuideLayout.CARDS) "Show channel list" else "Show channel cards",
+                        tint = Color.White,
+                    )
+                }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Filled.Close, contentDescription = "Close guide", tint = Color.White)
                 }
@@ -141,6 +154,22 @@ fun IptvGuideOverlay(
             if (genres.size > 1) {
                 GenreTabsRow(genres = genres, selectedGenreId = selectedGenreId, onSelect = onSelectGenre)
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+            }
+
+            if (layout == GuideLayout.CARDS) {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(channels, key = { it.id }) { channel ->
+                        var programs by remember(channel.id) { mutableStateOf<List<EpgProgram>>(emptyList()) }
+                        LaunchedEffect(channel.id) { programs = loadEpg(channel) }
+                        GuideChannelCard(
+                            channel = channel,
+                            programs = programs,
+                            selected = channel.id == currentChannelId,
+                            onClick = { onSelectChannel(channel) },
+                        )
+                    }
+                }
+                return@Column
             }
 
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -198,6 +227,30 @@ fun IptvGuideOverlay(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GuideChannelCard(channel: StalkerChannel, programs: List<EpgProgram>, selected: Boolean, onClick: () -> Unit) {
+    val now = System.currentTimeMillis() / 1000L
+    val current = programs.firstOrNull { it.startEpochSeconds <= now && now < it.endEpochSeconds }
+        ?: programs.firstOrNull()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) MDTheme.colors.accent.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.07f))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+    ) {
+        ChannelLogoCell(channel, selected, onClick, Modifier.size(72.dp, 52.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text("${channel.number}  ${channel.name}", color = Color.White, style = MDTheme.type.settingTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(current?.title ?: "No programme information", color = Color.White.copy(alpha = 0.65f), style = MDTheme.type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

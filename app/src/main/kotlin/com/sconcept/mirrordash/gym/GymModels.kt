@@ -15,6 +15,7 @@ enum class GymWorkoutType {
 enum class GymDashboardTab {
     HOME,
     WORKOUTS,
+    CHALLENGES,
 }
 
 enum class GymGeneratorStep {
@@ -69,6 +70,9 @@ data class GymGeneratedExercise(
     val focusLabel: String,
     val targetedMuscles: List<String>,
     val durationMinutes: Int,
+    val workSeconds: Int = durationMinutes * 60,
+    val restSeconds: Int = 75,
+    val intensity: String = "steady",
     val repScheme: String,
     val coachingCue: String,
 )
@@ -133,6 +137,7 @@ data class GymProfile(
 
 @Serializable
 data class GymFeatureSettings(
+    val challengesEnabled: Boolean = true,
     val soundsEnabled: Boolean = true,
     val countdownEnabled: Boolean = true,
     val showHeartRate: Boolean = true,
@@ -245,6 +250,7 @@ data class GymScoreEvent(
     val title: String,
     val detail: String,
     val scoreDelta: Int,
+    val elapsedSeconds: Int = 0,
 )
 
 data class GymPlayerLiveStats(
@@ -282,6 +288,8 @@ data class GymActiveSessionState(
     val elapsedSeconds: Int = 0,
     val activeSeconds: Int = 0,
     val pausedSeconds: Int = 0,
+    /** Recovery observed while the session remains live (for example, no bike cadence). */
+    val trackerObservedBreakSeconds: Int = 0,
     val isPaused: Boolean = false,
     val players: List<GymPlayerLiveStats> = emptyList(),
     val primaryDeviceKind: FitnessDeviceKind = FitnessDeviceKind.CARDIO,
@@ -300,6 +308,7 @@ data class GymStoredState(
     val profiles: List<GymProfile>,
     val devicePreferences: List<FitnessDevicePreference>,
     val sessionHistory: List<GymSessionRecord>,
+    val displayOrientationMode: String = "AUTO",
 )
 
 data class GymRuntimeState(
@@ -330,15 +339,37 @@ data class GymDashboardStats(
     val totalRepetitions: Int = 0,
 )
 
+data class GymWearableHealthSnapshot(
+    val status: String = "Connect Samsung Health to view wearable data",
+    val updatedAtEpochMs: Long? = null,
+    val latestHeartRate: Int? = null,
+    val restingHeartRate: Int? = null,
+    val stepsToday: Long? = null,
+    val activeCaloriesToday: Int? = null,
+    val distanceTodayKm: Double? = null,
+    val workoutsThisWeek: Int? = null,
+    val lastWorkoutLabel: String? = null,
+    val sleepMinutes: Int? = null,
+    val sleepDeepMinutes: Int? = null,
+    val sleepRemMinutes: Int? = null,
+    val sleepLightMinutes: Int? = null,
+    val sleepStartEpochMs: Long? = null,
+    val bloodOxygenPercent: Double? = null,
+    val bodyWeightKg: Double? = null,
+    val bodyFatPercent: Double? = null,
+)
+
 data class GymProfileDashboardSnapshot(
     val profile: GymProfile,
     val weeklyProgress: GymWeeklyProgress = GymWeeklyProgress(),
     val dashboardStats: GymDashboardStats = GymDashboardStats(),
     val heartRateSummary: String = "--",
+    val activeAchievements: List<GymActiveAchievement> = emptyList(),
 )
 
 data class GymUiState(
     val featureSettings: GymFeatureSettings = GymFeatureSettings(),
+    val displayOrientationMode: String = "AUTO",
     val profiles: List<GymProfile> = defaultGymProfiles(),
     val devicePreferences: List<FitnessDevicePreference> = defaultGymDevicePreferences(),
     val devices: List<FitnessDeviceSnapshot> = defaultGymDevicePreferences().map { it.toSnapshot() },
@@ -348,6 +379,7 @@ data class GymUiState(
     val activeSession: GymActiveSessionState? = null,
     val latestSummary: GymSessionSummaryState? = null,
     val availableChallenges: List<GymChallengeDefinition> = defaultGymChallenges(),
+    val activeAchievements: List<GymActiveAchievement> = emptyList(),
     val dashboardTab: GymDashboardTab = GymDashboardTab.HOME,
     val setupVisible: Boolean = false,
     val connectionCenterExpanded: Boolean = false,
@@ -364,6 +396,10 @@ data class GymUiState(
     val exerciseCatalogCount: Int = 0,
     val exerciseCatalogHighlights: List<String> = emptyList(),
     val exerciseCatalog: List<GymExerciseCatalogEntry> = emptyList(),
+    val selectedExerciseId: String? = null,
+    val favoriteExerciseIds: Set<String> = emptySet(),
+    val workoutQueueIds: List<String> = emptyList(),
+    val wearableHealth: GymWearableHealthSnapshot = GymWearableHealthSnapshot(),
 )
 
 fun defaultGymProfiles(): List<GymProfile> = listOf(
@@ -424,6 +460,14 @@ fun defaultGymDevicePreferences(): List<FitnessDevicePreference> = listOf(
         preferred = true,
         assignedPlayerId = "player_2",
     ),
+    FitnessDevicePreference(
+        deviceId = "galaxy_fit3_player_1",
+        displayName = "Galaxy Fit3",
+        subtitle = "Samsung Health via Health Connect",
+        kind = FitnessDeviceKind.HEART_RATE,
+        adapterId = GymBuiltInAdapterIds.SAMSUNG_HEALTH_CONNECT,
+        assignedPlayerId = "player_1",
+    ),
 )
 
 fun defaultGymChallenges(): List<GymChallengeDefinition> = listOf(
@@ -436,6 +480,56 @@ fun defaultGymChallenges(): List<GymChallengeDefinition> = listOf(
         difficultyLabel = "Explosive",
         equipmentLabel = "Bike",
         bestLabel = "584 W",
+    ),
+    GymChallengeDefinition(
+        id = "cardio_cruise_20",
+        title = "Cardio Cruise",
+        subtitle = "20 minutes of steady zone-2 cardio · 80–95 RPM",
+        durationSeconds = 1_200,
+        workoutType = GymWorkoutType.CHALLENGE,
+        difficultyLabel = "Cardio Base",
+        equipmentLabel = "Echelon Bike",
+        bestLabel = "20:00",
+    ),
+    GymChallengeDefinition(
+        id = "interval_ignite_18",
+        title = "Interval Ignite",
+        subtitle = "6 rounds of 90 seconds hard / 90 seconds easy",
+        durationSeconds = 1_080,
+        workoutType = GymWorkoutType.CHALLENGE,
+        difficultyLabel = "HIIT Cardio",
+        equipmentLabel = "Echelon Bike",
+        bestLabel = "312 W",
+    ),
+    GymChallengeDefinition(
+        id = "cadence_control_15",
+        title = "Cadence Control",
+        subtitle = "Hold a smooth 90–100 RPM through changing resistance",
+        durationSeconds = 900,
+        workoutType = GymWorkoutType.CHALLENGE,
+        difficultyLabel = "Technique",
+        equipmentLabel = "Echelon Bike",
+        bestLabel = "96 RPM",
+    ),
+    GymChallengeDefinition(
+        id = "climb_builder_25",
+        title = "Climb Builder",
+        subtitle = "Progressive resistance blocks for leg endurance",
+        durationSeconds = 1_500,
+        workoutType = GymWorkoutType.CHALLENGE,
+        difficultyLabel = "Endurance Strength",
+        equipmentLabel = "Echelon Bike",
+        bestLabel = "428 m",
+    ),
+    GymChallengeDefinition(
+        id = "long_haul_45",
+        title = "Long Haul",
+        subtitle = "45-minute aerobic endurance ride at a sustainable effort",
+        durationSeconds = 2_700,
+        workoutType = GymWorkoutType.CHALLENGE,
+        difficultyLabel = "Endurance",
+        equipmentLabel = "Echelon Bike",
+        bestLabel = "24.8 km",
     ),
     GymChallengeDefinition(
         id = "volume_battle",
@@ -540,7 +634,8 @@ val GymGeneratorStep.displayLabel: String
 val GymDashboardTab.displayLabel: String
     get() = when (this) {
         GymDashboardTab.HOME -> "Home"
-        GymDashboardTab.WORKOUTS -> "Workouts"
+        GymDashboardTab.WORKOUTS -> "Exercises"
+        GymDashboardTab.CHALLENGES -> "Challenges"
     }
 
 val GymWorkoutType.displayLabel: String

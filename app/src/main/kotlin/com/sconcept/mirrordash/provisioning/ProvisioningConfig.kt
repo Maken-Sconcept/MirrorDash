@@ -15,6 +15,7 @@ data class ProvisioningConfig(
     val iptv: IptvConfig? = null,
     val rtsp: RtspConfig? = null,
     val nas: NasConfig? = null,
+    val weather: WeatherConfig? = null,
 )
 
 @Serializable
@@ -57,4 +58,16 @@ data class NasConfig(
     val shareName: String,
     val username: String,
     val password: String,
+)
+
+/** Overrides the app's own baked-in Montreal default (see
+ * [com.sconcept.mirrordash.settings.DEFAULT_WEATHER_LOCATION_QUERY]) for a unit deployed
+ * elsewhere. [latitude]/[longitude] are optional - when omitted, the location resolves via
+ * geocoding from [locationQuery] on first refresh, same as typing a city into Settings. */
+@Serializable
+data class WeatherConfig(
+    val locationQuery: String,
+    val latitude: String? = null,
+    val longitude: String? = null,
+    val useFahrenheit: Boolean = false,
 )

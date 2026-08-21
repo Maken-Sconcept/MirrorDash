@@ -185,9 +185,8 @@ private fun WeatherWidgetEditor(
         )
         Slider(
             value = widget.scalePercent.toFloat(),
-            onValueChange = { value -> onChange { it.copy(scalePercent = value.toInt().coerceIn(70, 140)) } },
-            valueRange = 70f..140f,
-            steps = 13,
+            onValueChange = { value -> onChange { it.copy(scalePercent = value.toInt().coerceIn(70, 800)) } },
+            valueRange = 70f..800f,
             colors = SliderDefaults.colors(
                 thumbColor = MDTheme.colors.accent,
                 activeTrackColor = MDTheme.colors.accent,

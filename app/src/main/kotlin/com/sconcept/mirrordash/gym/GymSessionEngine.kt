@@ -58,6 +58,7 @@ class GymSessionEngine private constructor(
             }
             return
         }
+        adapter.onConnected(preference)
         scope.launch {
             applyDeviceTransitions(
                 deviceId = deviceId,
@@ -100,12 +101,11 @@ class GymSessionEngine private constructor(
     fun startSession(
         workoutType: GymWorkoutType,
         playerIds: List<String>,
-        challengeId: String?,
+        challenge: GymChallengeDefinition?,
         generatedWorkout: GymGeneratedWorkoutPlan?,
     ) {
         val sessionId = "session_${System.currentTimeMillis()}"
         val selectedProfiles = storedProfiles.filter { it.id in playerIds }.ifEmpty { storedProfiles.take(1) }
-        val challenge = defaultGymChallenges().firstOrNull { it.id == challengeId }
         _runtimeState.update { state ->
             val players = selectedProfiles.map { profile ->
                 GymPlayerLiveStats(
@@ -158,7 +158,7 @@ class GymSessionEngine private constructor(
                         device
                     }
                 },
-                activeSession = session.copy(
+                    activeSession = session.copy(
                     isPaused = paused,
                     statusMessage = if (paused) "Workout paused" else "Workout resumed",
                 ),
@@ -224,11 +224,11 @@ class GymSessionEngine private constructor(
                     }
                 },
                 activeSession = null,
-                latestSummary = GymSessionSummaryState(
+                latestSummary = if (save) GymSessionSummaryState(
                     session = record,
                     title = session.generatedWorkout?.title ?: "Workout saved",
                     subtitle = "${record.durationSeconds / 60} min / ${record.players.sumOf { it.score }} pts",
-                ),
+                ) else null,
             )
         }
     }
@@ -299,12 +299,14 @@ class GymSessionEngine private constructor(
         val updatedDevices = current.devices.map { device ->
             if (device.assignedPlayerId !in session.players.map { it.profileId }) return@map device
             if (device.state == FitnessConnectionState.DISCONNECTED) return@map device
-            val telemetry = adapterRegistry.adapterFor(device).sampleTelemetry(device, nextElapsed, nextActive)
+            val adapter = adapterRegistry.adapterFor(device)
+            adapter.refreshTelemetry()
+            val telemetry = adapter.sampleTelemetry(device, nextElapsed, nextActive)
             device.copy(
                 state = FitnessConnectionState.ACTIVE,
                 lastTelemetry = telemetry,
                 lastPacketAgeSeconds = 0,
-                errorMessage = null,
+                errorMessage = if (telemetry == null) adapter.statusMessage() else null,
             )
         }
 
@@ -319,15 +321,20 @@ class GymSessionEngine private constructor(
             updated
         }
 
+        val hasTrackerObservedBreak = session.primaryDeviceKind == FitnessDeviceKind.CARDIO &&
+            updatedDevices.any { device ->
+                device.kind == FitnessDeviceKind.CARDIO && device.lastTelemetry?.cadenceRpm?.let { it < 15.0 } == true
+            }
         _runtimeState.update { state ->
             state.copy(
                 devices = updatedDevices,
                 activeSession = session.copy(
                     elapsedSeconds = nextElapsed,
                     activeSeconds = nextActive,
+                    trackerObservedBreakSeconds = session.trackerObservedBreakSeconds + if (hasTrackerObservedBreak) 1 else 0,
                     players = updatedPlayers,
                     primaryDeviceKind = primaryDeviceKind(updatedDevices, session.workoutType),
-                    recentEvents = events.takeLast(5),
+                    recentEvents = events.takeLast(20),
                     statusMessage = when {
                         session.challenge != null && nextActive == session.challenge.durationSeconds -> "${session.challenge.title} complete"
                         else -> null
@@ -344,7 +351,13 @@ class GymSessionEngine private constructor(
     ): GymPlayerLiveStats {
         val cardio = assignedDevices.firstOrNull { it.kind == FitnessDeviceKind.CARDIO }?.lastTelemetry
         val strength = assignedDevices.firstOrNull { it.kind == FitnessDeviceKind.STRENGTH }?.lastTelemetry
-        val hr = assignedDevices.firstOrNull { it.kind == FitnessDeviceKind.HEART_RATE }?.lastTelemetry
+        val profile = storedProfiles.firstOrNull { it.id == player.profileId }
+        val heartRateDevice = when {
+            profile?.healthSource == "Samsung Health" -> assignedDevices.firstOrNull { it.adapterId == GymBuiltInAdapterIds.SAMSUNG_HEALTH_CONNECT }
+            profile?.preferredHeartRateDeviceId != null -> assignedDevices.firstOrNull { it.deviceId == profile.preferredHeartRateDeviceId }
+            else -> assignedDevices.firstOrNull { it.kind == FitnessDeviceKind.HEART_RATE }
+        }
+        val hr = heartRateDevice?.lastTelemetry
         val heartRate = hr?.heartRate
         val zone = GymDomainLogic.heartRateZone(heartRate)
         val multiplier = when {
@@ -404,6 +417,7 @@ class GymSessionEngine private constructor(
                 title = "NEW PR",
                 detail = latest.removePrefix("New ").uppercase(),
                 scoreDelta = 75,
+                elapsedSeconds = activeSeconds,
             )
         }
         if (current.combo >= 4 && current.combo > previous.combo) {
@@ -412,6 +426,7 @@ class GymSessionEngine private constructor(
                 title = "PERFECT ZONE",
                 detail = "x${current.combo}",
                 scoreDelta = 50,
+                elapsedSeconds = activeSeconds,
             )
         }
         if (current.repetitions > previous.repetitions) {
@@ -420,7 +435,20 @@ class GymSessionEngine private constructor(
                 title = "${current.repetitions} REP STREAK",
                 detail = current.displayName,
                 scoreDelta = 40,
+                elapsedSeconds = activeSeconds,
             )
+        }
+        if ((previous.heartRate ?: 0) < current.targetHeartRate && (current.heartRate ?: 0) >= current.targetHeartRate) {
+            return GymScoreEvent(System.currentTimeMillis(), "TARGET HEART RATE", "${current.heartRate} BPM", 30, activeSeconds)
+        }
+        if (previous.calories / 50 < current.calories / 50 && current.calories >= 50) {
+            return GymScoreEvent(System.currentTimeMillis(), "CALORIE MILESTONE", "${current.calories} calories", 25, activeSeconds)
+        }
+        if ((previous.powerWatts ?: 0) < 200 && (current.powerWatts ?: 0) >= 200) {
+            return GymScoreEvent(System.currentTimeMillis(), "POWER TARGET", "${current.powerWatts} W", 35, activeSeconds)
+        }
+        if ((previous.cadenceRpm ?: 0) < 90 && (current.cadenceRpm ?: 0) >= 90) {
+            return GymScoreEvent(System.currentTimeMillis(), "CADENCE TARGET", "${current.cadenceRpm} RPM", 25, activeSeconds)
         }
         if (challenge != null && activeSeconds == challenge.durationSeconds) {
             return GymScoreEvent(
@@ -515,7 +543,7 @@ class GymSessionEngine private constructor(
         fun get(
             context: Context,
             repository: GymRepository,
-            adapterRegistry: GymAdapterRegistry = GymAdapterRegistry.createDefault(),
+            adapterRegistry: GymAdapterRegistry = GymAdapterRegistry.createDefault(GymHealthConnectGateway(context)),
         ): GymSessionEngine = instance ?: synchronized(this) {
             instance ?: GymSessionEngine(repository, adapterRegistry).also { instance = it }
         }

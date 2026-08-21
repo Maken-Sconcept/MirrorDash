@@ -547,6 +547,14 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { photoramaShuffle = value }
     }
 
+    fun setPhotoramaReplayLongVideoSegments(value: Boolean) = viewModelScope.launch {
+        settingsRepository.update { photoramaReplayLongVideoSegments = value }
+    }
+
+    fun setPhotoramaVideosMuted(value: Boolean) = viewModelScope.launch {
+        settingsRepository.update { photoramaVideosMuted = value }
+    }
+
     fun setPhotoramaScheduleEnabled(enabled: Boolean) = viewModelScope.launch {
         settingsRepository.update { photoramaScheduleEnabled = enabled }
     }
@@ -906,10 +914,18 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { iptvPlayerBackend = backend.storageKey }
     }
 
+    fun setIptvShowRecordingStatusPill(show: Boolean) = viewModelScope.launch {
+        settingsRepository.update { iptvShowRecordingStatusPill = show }
+    }
+
     // --- Launcher ------------------------------------------------------------------------------
 
     fun setDisplayOrientationMode(mode: DisplayOrientationMode) = viewModelScope.launch {
         settingsRepository.update { displayOrientationMode = mode.storageKey() }
+    }
+
+    fun setPageSwipeRequireTwoFingers(requireTwoFingers: Boolean) = viewModelScope.launch {
+        settingsRepository.update { pageSwipeRequireTwoFingers = requireTwoFingers }
     }
 
     // --- Brightness ------------------------------------------------------------------------------
@@ -1022,6 +1038,20 @@ class SettingsViewModel(application: Application, private val settingsRepository
             setNasPasswordDraft(cfg.password)
             testNasConnection(cfg.server, cfg.shareName.trimStart('\\', '/'), cfg.username, "", true)
             applied += "NAS"
+        }
+
+        config.weather?.let { cfg ->
+            settingsRepository.update {
+                weatherLocationQuery = cfg.locationQuery
+                // Only a placeholder when explicit coordinates are given - resolveLocation()
+                // overwrites this with the real geocoded label anyway when they're absent.
+                weatherLocationLabel = cfg.locationQuery
+                weatherLatitude = cfg.latitude.orEmpty()
+                weatherLongitude = cfg.longitude.orEmpty()
+                weatherUseFahrenheit = cfg.useFahrenheit
+                weatherEnabled = true
+            }
+            applied += "Weather"
         }
 
         settingsRepository.update { provisioningAppliedOnce = true }

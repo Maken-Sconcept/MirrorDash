@@ -60,6 +60,12 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // java.time (WeatherRepository's LocalDate/LocalDateTime/DateTimeFormatter, and
+        // GymHealthConnectGateway's Instant/ZoneId/Duration) is only natively present on API 26+.
+        // This unit's minSdk 25 hardware (the Reflect mirror) doesn't have it at all, so every
+        // call threw NoClassDefFoundError there - desugaring backports it via bytecode rewriting
+        // instead of requiring those call sites to avoid java.time.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     tasks.withType<KotlinCompile> {
@@ -112,6 +118,7 @@ dependencies {
     // Photorama's local-storage source - browsing a user-picked SAF folder tree (see
     // LocalPhotoRepository), the same abstraction the system folder picker itself returns.
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.health.connect:connect-client:1.1.0")
 
     // IPTV tab's player - HLS/TS live streams off a Stalker/Ministra portal (see the iptv
     // package). Not used by AirPlay, which decodes its own H.264/H.265 mirror stream natively.
@@ -146,4 +153,6 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
 }

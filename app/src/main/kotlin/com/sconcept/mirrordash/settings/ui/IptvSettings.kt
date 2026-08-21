@@ -73,300 +73,318 @@ fun IptvSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) 
 
     Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "Portal address") {
-        Text(
-            "The Stalker/Ministra portal URL your provider gave you, e.g. http://provider.example:8080/c/ " +
-                "or a full .../portal.php address.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        BufferedTextField(
-            persistedValue = settings.iptvPortalUrl,
-            onValueChange = viewModel::setIptvPortalUrl,
-            placeholder = { Text("http://") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+    GroupedSettingsContent(
+        subsections = listOf(
+            SettingsSubsection(title = "Connection", subtitle = "Portal address, MAC address, and account status") {
+                SettingGroup(title = "Portal address") {
+                    Text(
+                        "The Stalker/Ministra portal URL your provider gave you, e.g. http://provider.example:8080/c/ " +
+                            "or a full .../portal.php address.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    BufferedTextField(
+                        persistedValue = settings.iptvPortalUrl,
+                        onValueChange = viewModel::setIptvPortalUrl,
+                        placeholder = { Text("http://") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "MAC address") {
-        Text(
-            "Identifies this device to the portal in place of a username/password - most providers " +
-                "need this exact value registered on their side before the portal will authorize it.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            BufferedTextField(
-                persistedValue = settings.iptvMacAddress,
-                onValueChange = { viewModel.setIptvMacAddress(IptvMac.normalize(it)) },
-                placeholder = { Text("00:1A:79:XX:XX:XX") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(12.dp))
-            TextButton(onClick = viewModel::regenerateIptvMac) {
-                Text("Generate", color = MDTheme.colors.accent)
-            }
-        }
-        if (settings.iptvMacAddress.isNotBlank() && !IptvMac.isValid(settings.iptvMacAddress)) {
-            Spacer(Modifier.height(6.dp))
-            Text("Expected format: 00:1A:79:XX:XX:XX", style = MDTheme.type.caption, color = MDTheme.colors.danger)
-        }
-    }
+                SettingGroup(title = "MAC address") {
+                    Text(
+                        "Identifies this device to the portal in place of a username/password - most providers " +
+                            "need this exact value registered on their side before the portal will authorize it.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        BufferedTextField(
+                            persistedValue = settings.iptvMacAddress,
+                            onValueChange = { viewModel.setIptvMacAddress(IptvMac.normalize(it)) },
+                            placeholder = { Text("00:1A:79:XX:XX:XX") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        TextButton(onClick = viewModel::regenerateIptvMac) {
+                            Text("Generate", color = MDTheme.colors.accent)
+                        }
+                    }
+                    if (settings.iptvMacAddress.isNotBlank() && !IptvMac.isValid(settings.iptvMacAddress)) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Expected format: 00:1A:79:XX:XX:XX", style = MDTheme.type.caption, color = MDTheme.colors.danger)
+                    }
+                }
 
-    if (settings.iptvPortalUrl.isNotBlank() && IptvMac.isValid(settings.iptvMacAddress)) {
-        Spacer(Modifier.height(28.dp))
-        IptvAccountCard(portalUrl = settings.iptvPortalUrl, macAddress = settings.iptvMacAddress)
-    }
+                if (settings.iptvPortalUrl.isNotBlank() && IptvMac.isValid(settings.iptvMacAddress)) {
+                    Spacer(Modifier.height(28.dp))
+                    IptvAccountCard(portalUrl = settings.iptvPortalUrl, macAddress = settings.iptvMacAddress)
+                }
+            },
+            SettingsSubsection(title = "Playback", subtitle = "Player engine and connection sleep timeout") {
+                SettingGroup(title = "Player") {
+                    Text(
+                        "Which engine plays live TV and Movies/Series. If the selected one can't play a " +
+                            "given stream, MirrorDash automatically tries the other two before showing an " +
+                            "error - this only picks which one to start with (also changeable per-stream from " +
+                            "the player controls themselves). VLC and IjkPlayer both tolerate unusual/malformed " +
+                            "streams ExoPlayer sometimes rejects outright. IjkPlayer is a community-maintained " +
+                            "fork of a project with no official support left - the most capable fallback of " +
+                            "the three, but also the least maintained.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    val currentBackend = PlayerBackend.fromStorageKey(settings.iptvPlayerBackend)
+                    PlayerBackend.entries.forEach { backend ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        ) {
+                            RadioButton(
+                                selected = currentBackend == backend,
+                                onClick = { viewModel.setIptvPlayerBackend(backend) },
+                                colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
+                            )
+                            Text(backend.displayName, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+                        }
+                    }
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "Player") {
-        Text(
-            "Which engine plays live TV and Movies/Series. If the selected one can't play a " +
-                "given stream, MirrorDash automatically tries the other two before showing an " +
-                "error - this only picks which one to start with (also changeable per-stream from " +
-                "the player controls themselves). VLC and IjkPlayer both tolerate unusual/malformed " +
-                "streams ExoPlayer sometimes rejects outright. IjkPlayer is a community-maintained " +
-                "fork of a project with no official support left - the most capable fallback of " +
-                "the three, but also the least maintained.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        val currentBackend = PlayerBackend.fromStorageKey(settings.iptvPlayerBackend)
-        PlayerBackend.entries.forEach { backend ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) {
-                RadioButton(
-                    selected = currentBackend == backend,
-                    onClick = { viewModel.setIptvPlayerBackend(backend) },
-                    colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
-                )
-                Text(backend.displayName, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
-            }
-        }
-    }
+                SettingGroup(title = "Sleep timeout") {
+                    Text(
+                        "How long the tab keeps its connection paused-but-warm after you swipe away before " +
+                            "dropping it completely and freeing its memory. Coming back after that reconnects " +
+                            "from scratch.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("${settings.iptvSleepTimeoutSeconds}s", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+                    Slider(
+                        value = settings.iptvSleepTimeoutSeconds.toFloat(),
+                        onValueChange = { viewModel.setIptvSleepTimeoutSeconds(it.toInt()) },
+                        valueRange = 10f..600f,
+                        colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+                    )
+                }
+            },
+            SettingsSubsection(title = "Parental Control", subtitle = "PIN-gate whatever the portal flags as adult content") {
+                SettingGroup(title = "Parental control") {
+                    Text(
+                        "Gates whatever this portal itself flags as adult content - the portal never checks " +
+                            "any PIN on its own, so this is enforced entirely here, in the app.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    val currentMode = ParentalControlMode.fromStorageKey(settings.parentalControlMode)
+                    listOf(
+                        ParentalControlMode.DISABLED to "Disabled (open)",
+                        ParentalControlMode.ONCE_PER_SESSION to "Ask once per session",
+                        ParentalControlMode.EVERY_REJOIN to "Ask every time the tab is left and rejoined",
+                    ).forEach { (mode, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        ) {
+                            RadioButton(
+                                selected = currentMode == mode,
+                                onClick = { viewModel.setParentalControlMode(mode) },
+                                colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
+                            )
+                            Text(label, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text("PIN", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        BufferedTextField(
+                            persistedValue = settings.parentalControlPin,
+                            onValueChange = viewModel::setParentalControlPin,
+                            placeholder = { Text(DEFAULT_PARENTAL_CONTROL_PIN) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        TextButton(onClick = viewModel::resetParentalControlPin) {
+                            Text("Reset to default", color = MDTheme.colors.accent)
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Up to $MAX_PARENTAL_CONTROL_PIN_LENGTH digits, default $DEFAULT_PARENTAL_CONTROL_PIN.",
+                        style = MDTheme.type.caption,
+                        color = MDTheme.colors.textTertiary,
+                    )
+                }
+            },
+            SettingsSubsection(title = "Recording & Storage", subtitle = "Recording connection, destination, and storage limits") {
+                SettingGroup(title = "Recording status") {
+                    SettingRow(
+                        title = "Show recording status on every tab",
+                        subtitle = "A top-right progress pill remains visible while recording or downloading. Tap it to open Download Manager.",
+                    ) {
+                        Switch(
+                            checked = settings.iptvShowRecordingStatusPill,
+                            onCheckedChange = viewModel::setIptvShowRecordingStatusPill,
+                            colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                        )
+                    }
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "Sleep timeout") {
-        Text(
-            "How long the tab keeps its connection paused-but-warm after you swipe away before " +
-                "dropping it completely and freeing its memory. Coming back after that reconnects " +
-                "from scratch.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text("${settings.iptvSleepTimeoutSeconds}s", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
-        Slider(
-            value = settings.iptvSleepTimeoutSeconds.toFloat(),
-            onValueChange = { viewModel.setIptvSleepTimeoutSeconds(it.toInt()) },
-            valueRange = 10f..600f,
-            colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
-        )
-    }
+                SettingGroup(title = "Recording connection") {
+                    Text(
+                        "This portal allows one active connection at a time - so recording a different " +
+                            "channel than what's playing needs a connection of its own, or it briefly takes " +
+                            "over and interrupts live viewing. If your subscription includes a second MAC " +
+                            "(most providers issue extra ones on the same portal for exactly this), add it " +
+                            "here. Leave blank to share the one connection instead.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        BufferedTextField(
+                            persistedValue = settings.iptvRecordingMacAddress,
+                            onValueChange = { viewModel.setIptvRecordingMacAddress(IptvMac.normalize(it)) },
+                            placeholder = { Text("Same connection as live viewing") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        TextButton(onClick = viewModel::regenerateIptvRecordingMac) {
+                            Text("Generate", color = MDTheme.colors.accent)
+                        }
+                    }
+                    if (settings.iptvRecordingMacAddress.isNotBlank() && !IptvMac.isValid(settings.iptvRecordingMacAddress)) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Expected format: 00:1A:79:XX:XX:XX", style = MDTheme.type.caption, color = MDTheme.colors.danger)
+                    }
+                    if (settings.iptvRecordingMacAddress.isNotBlank()) {
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "Recording portal (optional)",
+                            style = MDTheme.type.settingSubtitle,
+                            color = MDTheme.colors.textSecondary,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        BufferedTextField(
+                            persistedValue = settings.iptvRecordingPortalUrl,
+                            onValueChange = viewModel::setIptvRecordingPortalUrl,
+                            placeholder = { Text("Same portal as live viewing") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "Parental control") {
-        Text(
-            "Gates whatever this portal itself flags as adult content - the portal never checks " +
-                "any PIN on its own, so this is enforced entirely here, in the app.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        val currentMode = ParentalControlMode.fromStorageKey(settings.parentalControlMode)
-        listOf(
-            ParentalControlMode.DISABLED to "Disabled (open)",
-            ParentalControlMode.ONCE_PER_SESSION to "Ask once per session",
-            ParentalControlMode.EVERY_REJOIN to "Ask every time the tab is left and rejoined",
-        ).forEach { (mode, label) ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) {
-                RadioButton(
-                    selected = currentMode == mode,
-                    onClick = { viewModel.setParentalControlMode(mode) },
-                    colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
-                )
-                Text(label, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
-            }
-        }
-        Spacer(Modifier.height(14.dp))
-        Text("PIN", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            BufferedTextField(
-                persistedValue = settings.parentalControlPin,
-                onValueChange = viewModel::setParentalControlPin,
-                placeholder = { Text(DEFAULT_PARENTAL_CONTROL_PIN) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(12.dp))
-            TextButton(onClick = viewModel::resetParentalControlPin) {
-                Text("Reset to default", color = MDTheme.colors.accent)
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Up to $MAX_PARENTAL_CONTROL_PIN_LENGTH digits, default $DEFAULT_PARENTAL_CONTROL_PIN.",
-            style = MDTheme.type.caption,
-            color = MDTheme.colors.textTertiary,
-        )
-    }
+                SettingGroup(title = "Recording destination") {
+                    Text(
+                        "Both are always available as a fallback for each other - this only picks which is " +
+                            "tried first. Recording is a raw copy of the stream, not a screen capture, so it " +
+                            "keeps going even backgrounded or muted.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    val currentMode = RecordingDestinationMode.fromStorageKey(settings.iptvRecordingDestination)
+                    listOf(
+                        RecordingDestinationMode.SMB_PRIMARY to "NAS first (recommended)",
+                        RecordingDestinationMode.LOCAL_PRIMARY to "Local storage first",
+                    ).forEach { (mode, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        ) {
+                            RadioButton(
+                                selected = currentMode == mode,
+                                onClick = { viewModel.setIptvRecordingDestination(mode) },
+                                colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
+                            )
+                            Text(label, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
+                        }
+                    }
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "Recording connection") {
-        Text(
-            "This portal allows one active connection at a time - so recording a different " +
-                "channel than what's playing needs a connection of its own, or it briefly takes " +
-                "over and interrupts live viewing. If your subscription includes a second MAC " +
-                "(most providers issue extra ones on the same portal for exactly this), add it " +
-                "here. Leave blank to share the one connection instead.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            BufferedTextField(
-                persistedValue = settings.iptvRecordingMacAddress,
-                onValueChange = { viewModel.setIptvRecordingMacAddress(IptvMac.normalize(it)) },
-                placeholder = { Text("Same connection as live viewing") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(12.dp))
-            TextButton(onClick = viewModel::regenerateIptvRecordingMac) {
-                Text("Generate", color = MDTheme.colors.accent)
-            }
-        }
-        if (settings.iptvRecordingMacAddress.isNotBlank() && !IptvMac.isValid(settings.iptvRecordingMacAddress)) {
-            Spacer(Modifier.height(6.dp))
-            Text("Expected format: 00:1A:79:XX:XX:XX", style = MDTheme.type.caption, color = MDTheme.colors.danger)
-        }
-        if (settings.iptvRecordingMacAddress.isNotBlank()) {
-            Spacer(Modifier.height(14.dp))
-            Text(
-                "Recording portal (optional)",
-                style = MDTheme.type.settingSubtitle,
-                color = MDTheme.colors.textSecondary,
-            )
-            Spacer(Modifier.height(6.dp))
-            BufferedTextField(
-                persistedValue = settings.iptvRecordingPortalUrl,
-                onValueChange = viewModel::setIptvRecordingPortalUrl,
-                placeholder = { Text("Same portal as live viewing") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
+                SettingGroup(title = "NAS recordings folder") {
+                    Text(
+                        "Subfolder on the same NAS connection configured under Photorama - recordings don't " +
+                            "need a second, separate connection.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    BufferedTextField(
+                        persistedValue = settings.iptvRecordingSmbFolder,
+                        onValueChange = viewModel::setIptvRecordingSmbFolder,
+                        placeholder = { Text("MirrorDash Recordings") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "Recording destination") {
-        Text(
-            "Both are always available as a fallback for each other - this only picks which is " +
-                "tried first. Recording is a raw copy of the stream, not a screen capture, so it " +
-                "keeps going even backgrounded or muted.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        val currentMode = RecordingDestinationMode.fromStorageKey(settings.iptvRecordingDestination)
-        listOf(
-            RecordingDestinationMode.SMB_PRIMARY to "NAS first (recommended)",
-            RecordingDestinationMode.LOCAL_PRIMARY to "Local storage first",
-        ).forEach { (mode, label) ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            ) {
-                RadioButton(
-                    selected = currentMode == mode,
-                    onClick = { viewModel.setIptvRecordingDestination(mode) },
-                    colors = RadioButtonDefaults.colors(selectedColor = MDTheme.colors.accent),
-                )
-                Text(label, style = MDTheme.type.body, color = MDTheme.colors.textPrimary)
-            }
-        }
-    }
+                SettingGroup(title = "Download folder") {
+                    Text(
+                        "Where movies/series downloaded from the Movies and Series tabs are saved. Leave " +
+                            "blank to use the same folder as recordings above.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    BufferedTextField(
+                        persistedValue = settings.iptvDownloadFolderName,
+                        onValueChange = viewModel::setIptvDownloadFolderName,
+                        placeholder = { Text("Same as recordings") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
-    Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-    SettingGroup(title = "NAS recordings folder") {
-        Text(
-            "Subfolder on the same NAS connection configured under Photorama - recordings don't " +
-                "need a second, separate connection.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        BufferedTextField(
-            persistedValue = settings.iptvRecordingSmbFolder,
-            onValueChange = viewModel::setIptvRecordingSmbFolder,
-            placeholder = { Text("MirrorDash Recordings") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Download folder") {
-        Text(
-            "Where movies/series downloaded from the Movies and Series tabs are saved. Leave " +
-                "blank to use the same folder as recordings above.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(10.dp))
-        BufferedTextField(
-            persistedValue = settings.iptvDownloadFolderName,
-            onValueChange = viewModel::setIptvDownloadFolderName,
-            placeholder = { Text("Same as recordings") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-
-    Spacer(Modifier.height(28.dp))
-
-    SettingGroup(title = "Local storage cap") {
-        Text(
-            "Oldest local recordings are deleted first once this is exceeded - local storage on " +
-                "this hardware is limited, so this is meant as a fallback buffer, not the main " +
-                "destination.",
-            style = MDTheme.type.settingSubtitle,
-            color = MDTheme.colors.textSecondary,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text("${settings.iptvRecordingLocalCapMb} MB", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
-        Slider(
-            value = settings.iptvRecordingLocalCapMb.toFloat(),
-            onValueChange = { viewModel.setIptvRecordingLocalCapMb(it.toInt()) },
-            valueRange = 100f..2000f,
-            colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
-        )
-    }
+                SettingGroup(title = "Local storage cap") {
+                    Text(
+                        "Oldest local recordings are deleted first once this is exceeded - local storage on " +
+                            "this hardware is limited, so this is meant as a fallback buffer, not the main " +
+                            "destination.",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("${settings.iptvRecordingLocalCapMb} MB", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+                    Slider(
+                        value = settings.iptvRecordingLocalCapMb.toFloat(),
+                        onValueChange = { viewModel.setIptvRecordingLocalCapMb(it.toInt()) },
+                        valueRange = 100f..2000f,
+                        colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+                    )
+                }
+            },
+        ),
+    )
 
     Spacer(Modifier.height(16.dp))
 

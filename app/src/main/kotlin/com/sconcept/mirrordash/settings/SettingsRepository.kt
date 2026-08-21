@@ -97,6 +97,18 @@ const val DEFAULT_NIGHT_CLOCK_ANCHOR_Y = 0.42f
 const val DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_X = 0.5f
 const val DEFAULT_NIGHT_CLOCK_WEATHER_ANCHOR_Y = 0.58f
 
+/** Out-of-the-box weather location - without this, [weatherLatitude]/[weatherLongitude] default
+ * to blank, so [com.sconcept.mirrordash.weather.WeatherViewModel] never has anything to fetch and
+ * "isConfigured" stays false forever (no weather glyph/temperature anywhere on the Clock page)
+ * until someone manually types a city into Settings. Pre-resolved coordinates (not just the query
+ * string) so the very first refresh can fetch weather directly, with no geocoding round-trip - and
+ * therefore no dependency on the geocoding API being reachable - before anything shows up.
+ * Overridable per-unit via the provisioning config file's `weather` block. */
+const val DEFAULT_WEATHER_LOCATION_QUERY = "Montreal"
+const val DEFAULT_WEATHER_LOCATION_LABEL = "Montreal, Quebec, Canada"
+const val DEFAULT_WEATHER_LATITUDE = "45.5019"
+const val DEFAULT_WEATHER_LONGITUDE = "-73.5674"
+
 private fun normalizeWeatherWidgets(widgets: List<WeatherWidget>): List<WeatherWidget> {
     if (widgets.size <= 1) return widgets
     val allSameAnchor = widgets.map { it.anchorX to it.anchorY }.distinct().size == 1
@@ -141,10 +153,10 @@ data class MirrorDashSettings(
 
     // Weather
     val weatherEnabled: Boolean = true,
-    val weatherLocationQuery: String = "",
-    val weatherLocationLabel: String = "",
-    val weatherLatitude: String = "",
-    val weatherLongitude: String = "",
+    val weatherLocationQuery: String = DEFAULT_WEATHER_LOCATION_QUERY,
+    val weatherLocationLabel: String = DEFAULT_WEATHER_LOCATION_LABEL,
+    val weatherLatitude: String = DEFAULT_WEATHER_LATITUDE,
+    val weatherLongitude: String = DEFAULT_WEATHER_LONGITUDE,
     val weatherUseFahrenheit: Boolean = false,
 
     // NAS connection
@@ -169,6 +181,8 @@ data class MirrorDashSettings(
     val photoramaPlayLivePhotos: Boolean = true,
     val photoramaIntervalSeconds: Int = 60,
     val photoramaShuffle: Boolean = true,
+    val photoramaReplayLongVideoSegments: Boolean = true,
+    val photoramaVideosMuted: Boolean = true,
     val photoramaCacheSizeMb: Int = 250,
     // Optional refinement on top of photoramaEnabled - off means "always on when enabled" (the
     // original behavior), on gates it to a daily start/end window (see PhotoramaSchedule).
@@ -282,6 +296,7 @@ data class MirrorDashSettings(
     // Grid vs list, remembered independently per content type - see IptvViewModel.setViewMode.
     val iptvMoviesViewMode: String = VodViewMode.GRID.storageKey,
     val iptvSeriesViewMode: String = VodViewMode.GRID.storageKey,
+    val iptvShowRecordingStatusPill: Boolean = true,
     val iptvScheduledRecordings: List<ScheduledRecording> = emptyList(),
     // Newest first, capped at IPTV_RECORDING_HISTORY_LIMIT entries - see IptvRecordingEngine's
     // finally block, the one place this ever gets appended to.
@@ -292,6 +307,7 @@ data class MirrorDashSettings(
     val launcherHiddenApps: Set<String> = emptySet(),
     val lastVisitedPageIndex: Int = 0,
     val displayOrientationMode: String = "AUTO",
+    val pageSwipeRequireTwoFingers: Boolean = true,
 
     // Brightness
     val brightnessLevel255: Int = 255,
@@ -496,6 +512,8 @@ class SettingsRepository(context: Context) {
             photoramaPlayLivePhotos = this[Keys.PHOTORAMA_PLAY_LIVE_PHOTOS] ?: defaults.photoramaPlayLivePhotos,
             photoramaIntervalSeconds = this[Keys.PHOTORAMA_INTERVAL_SECONDS] ?: defaults.photoramaIntervalSeconds,
             photoramaShuffle = this[Keys.PHOTORAMA_SHUFFLE] ?: defaults.photoramaShuffle,
+            photoramaReplayLongVideoSegments = this[Keys.PHOTORAMA_REPLAY_LONG_VIDEO_SEGMENTS] ?: defaults.photoramaReplayLongVideoSegments,
+            photoramaVideosMuted = this[Keys.PHOTORAMA_VIDEOS_MUTED] ?: defaults.photoramaVideosMuted,
             photoramaCacheSizeMb = this[Keys.PHOTORAMA_CACHE_SIZE_MB] ?: defaults.photoramaCacheSizeMb,
             photoramaScheduleEnabled = this[Keys.PHOTORAMA_SCHEDULE_ENABLED] ?: defaults.photoramaScheduleEnabled,
             photoramaScheduleStartMinutes = this[Keys.PHOTORAMA_SCHEDULE_START_MINUTES] ?: defaults.photoramaScheduleStartMinutes,
@@ -571,12 +589,14 @@ class SettingsRepository(context: Context) {
             iptvDownloadFolderName = this[Keys.IPTV_DOWNLOAD_FOLDER_NAME] ?: defaults.iptvDownloadFolderName,
             iptvMoviesViewMode = this[Keys.IPTV_MOVIES_VIEW_MODE] ?: defaults.iptvMoviesViewMode,
             iptvSeriesViewMode = this[Keys.IPTV_SERIES_VIEW_MODE] ?: defaults.iptvSeriesViewMode,
+            iptvShowRecordingStatusPill = this[Keys.IPTV_SHOW_RECORDING_STATUS_PILL] ?: defaults.iptvShowRecordingStatusPill,
             iptvScheduledRecordings = scheduledRecordings,
             iptvRecordingHistory = recordingHistory,
             launcherFavoriteApps = favorites,
             launcherHiddenApps = this[Keys.LAUNCHER_HIDDEN_APPS] ?: defaults.launcherHiddenApps,
             lastVisitedPageIndex = this[Keys.LAST_VISITED_PAGE_INDEX] ?: defaults.lastVisitedPageIndex,
             displayOrientationMode = this[Keys.DISPLAY_ORIENTATION_MODE] ?: defaults.displayOrientationMode,
+            pageSwipeRequireTwoFingers = this[Keys.PAGE_SWIPE_REQUIRE_TWO_FINGERS] ?: defaults.pageSwipeRequireTwoFingers,
             brightnessLevel255 = this[Keys.BRIGHTNESS_LEVEL_255] ?: defaults.brightnessLevel255,
             brightnessExtraDimPercent = this[Keys.BRIGHTNESS_EXTRA_DIM_PERCENT] ?: defaults.brightnessExtraDimPercent,
             brightnessDimTarget = this[Keys.BRIGHTNESS_DIM_TARGET] ?: defaults.brightnessDimTarget,
@@ -633,6 +653,8 @@ class SettingsRepository(context: Context) {
         val PHOTORAMA_PLAY_LIVE_PHOTOS = booleanPreferencesKey("photorama_play_live_photos")
         val PHOTORAMA_INTERVAL_SECONDS = intPreferencesKey("photorama_interval_seconds")
         val PHOTORAMA_SHUFFLE = booleanPreferencesKey("photorama_shuffle")
+        val PHOTORAMA_REPLAY_LONG_VIDEO_SEGMENTS = booleanPreferencesKey("photorama_replay_long_video_segments")
+        val PHOTORAMA_VIDEOS_MUTED = booleanPreferencesKey("photorama_videos_muted")
         val PHOTORAMA_CACHE_SIZE_MB = intPreferencesKey("photorama_cache_size_mb")
         val PHOTORAMA_SCHEDULE_ENABLED = booleanPreferencesKey("photorama_schedule_enabled")
         val PHOTORAMA_SCHEDULE_START_MINUTES = intPreferencesKey("photorama_schedule_start_minutes")
@@ -710,6 +732,7 @@ class SettingsRepository(context: Context) {
         val IPTV_DOWNLOAD_FOLDER_NAME = stringPreferencesKey("iptv_download_folder_name")
         val IPTV_MOVIES_VIEW_MODE = stringPreferencesKey("iptv_movies_view_mode")
         val IPTV_SERIES_VIEW_MODE = stringPreferencesKey("iptv_series_view_mode")
+        val IPTV_SHOW_RECORDING_STATUS_PILL = booleanPreferencesKey("iptv_show_recording_status_pill")
         val IPTV_SCHEDULED_RECORDINGS = stringPreferencesKey("iptv_scheduled_recordings_json")
         val IPTV_RECORDING_HISTORY = stringPreferencesKey("iptv_recording_history_json")
 
@@ -719,6 +742,7 @@ class SettingsRepository(context: Context) {
         val LAUNCHER_HIDDEN_APPS = stringSetPreferencesKey("launcher_hidden_apps")
         val LAST_VISITED_PAGE_INDEX = intPreferencesKey("last_visited_page_index")
         val DISPLAY_ORIENTATION_MODE = stringPreferencesKey("display_orientation_mode")
+        val PAGE_SWIPE_REQUIRE_TWO_FINGERS = booleanPreferencesKey("page_swipe_require_two_fingers")
 
         val BRIGHTNESS_LEVEL_255 = intPreferencesKey("brightness_level_255")
         val BRIGHTNESS_EXTRA_DIM_PERCENT = intPreferencesKey("brightness_extra_dim_percent")
@@ -771,6 +795,8 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var photoramaPlayLivePhotos: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_PLAY_LIVE_PHOTOS, prefs, defaults.photoramaPlayLivePhotos)
     var photoramaIntervalSeconds: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_INTERVAL_SECONDS, prefs, defaults.photoramaIntervalSeconds)
     var photoramaShuffle: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SHUFFLE, prefs, defaults.photoramaShuffle)
+    var photoramaReplayLongVideoSegments: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_REPLAY_LONG_VIDEO_SEGMENTS, prefs, defaults.photoramaReplayLongVideoSegments)
+    var photoramaVideosMuted: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_VIDEOS_MUTED, prefs, defaults.photoramaVideosMuted)
     var photoramaCacheSizeMb: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_CACHE_SIZE_MB, prefs, defaults.photoramaCacheSizeMb)
     var photoramaScheduleEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SCHEDULE_ENABLED, prefs, defaults.photoramaScheduleEnabled)
     var photoramaScheduleStartMinutes: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SCHEDULE_START_MINUTES, prefs, defaults.photoramaScheduleStartMinutes)
@@ -841,10 +867,16 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var iptvDownloadFolderName: String by PrefDelegate(SettingsRepository.Keys.IPTV_DOWNLOAD_FOLDER_NAME, prefs, defaults.iptvDownloadFolderName)
     var iptvMoviesViewMode: String by PrefDelegate(SettingsRepository.Keys.IPTV_MOVIES_VIEW_MODE, prefs, defaults.iptvMoviesViewMode)
     var iptvSeriesViewMode: String by PrefDelegate(SettingsRepository.Keys.IPTV_SERIES_VIEW_MODE, prefs, defaults.iptvSeriesViewMode)
+    var iptvShowRecordingStatusPill: Boolean by PrefDelegate(SettingsRepository.Keys.IPTV_SHOW_RECORDING_STATUS_PILL, prefs, defaults.iptvShowRecordingStatusPill)
 
     var launcherHiddenApps: Set<String> by PrefDelegate(SettingsRepository.Keys.LAUNCHER_HIDDEN_APPS, prefs, defaults.launcherHiddenApps)
     var lastVisitedPageIndex: Int by PrefDelegate(SettingsRepository.Keys.LAST_VISITED_PAGE_INDEX, prefs, defaults.lastVisitedPageIndex)
     var displayOrientationMode: String by PrefDelegate(SettingsRepository.Keys.DISPLAY_ORIENTATION_MODE, prefs, defaults.displayOrientationMode)
+    var pageSwipeRequireTwoFingers: Boolean by PrefDelegate(
+        SettingsRepository.Keys.PAGE_SWIPE_REQUIRE_TWO_FINGERS,
+        prefs,
+        defaults.pageSwipeRequireTwoFingers,
+    )
 
     var brightnessLevel255: Int by PrefDelegate(SettingsRepository.Keys.BRIGHTNESS_LEVEL_255, prefs, defaults.brightnessLevel255)
     var brightnessExtraDimPercent: Int by PrefDelegate(SettingsRepository.Keys.BRIGHTNESS_EXTRA_DIM_PERCENT, prefs, defaults.brightnessExtraDimPercent)

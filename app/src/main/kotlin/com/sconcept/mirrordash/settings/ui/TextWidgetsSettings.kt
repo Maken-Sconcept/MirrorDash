@@ -149,7 +149,7 @@ private fun TextWidgetEditor(
         Slider(
             value = widget.fontSizeSp.toFloat(),
             onValueChange = { value -> onChange { it.copy(fontSizeSp = value.toInt()) } },
-            valueRange = 12f..160f,
+            valueRange = 12f..800f,
             colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
         )
     }

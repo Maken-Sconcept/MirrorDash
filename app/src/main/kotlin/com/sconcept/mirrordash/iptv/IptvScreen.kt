@@ -216,6 +216,78 @@ fun IptvScreen(viewModel: IptvViewModel, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Global, cross-tab visibility for whatever [IptvRecordingEngine] is doing right now (brief:
+ * "the download manager should keep working even if the tab is changed"). The recording/download
+ * itself already survives a tab switch - it runs on the engine's own app-scoped coroutine plus a
+ * foreground service (see [IptvRecordingEngine]'s doc comment), independent of whether this or
+ * any other screen is even composed. What didn't survive was any way to *see* that from outside
+ * the IPTV tab: the only feedback lived in [RecordButton]'s collapsed pill and the
+ * [DownloadManagerPanel], both reachable only from inside a fullscreen player that isn't even
+ * showing while browsing Movies/Series. Called from [com.sconcept.mirrordash.launcher.MirrorDashActivity]'s
+ * root, alongside its other always-present overlays (walkie-talkie's PTT button) - same shape:
+ * reads its own engine from [AppContainer] rather than threading it through every page's params,
+ * renders nothing when there's nothing active, and the caller decides which pages to hide it on.
+ * Tapping it calls [IptvRecordingEngine.requestOpenDownloadManager] - the same signal a "download
+ * complete" notification tap already sends, which both jumps to the IPTV tab and opens the panel,
+ * so this needs no navigation wiring of its own.
+ */
+@Composable
+fun IptvDownloadStatusPill(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val recordingEngine = remember { AppContainer.get(context).iptvRecordingEngine }
+    val state by recordingEngine.uiState.collectAsState()
+    val active = state.activeRecording ?: return
+
+    val fraction = active.totalBytes?.let { (active.bytesWritten.toFloat() / it).coerceIn(0f, 1f) }
+    val label = if (active.trigger == RecordingTrigger.DOWNLOAD) "Downloading" else "Recording"
+
+    Box(modifier = modifier.fillMaxSize()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 16.dp, end = 16.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color.Black.copy(alpha = 0.72f))
+                .clickable { recordingEngine.requestOpenDownloadManager() }
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Box(modifier = Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                if (fraction != null) {
+                    CircularProgressIndicator(
+                        progress = { fraction },
+                        color = MDTheme.colors.accent,
+                        trackColor = Color.White.copy(alpha = 0.25f),
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    CircularProgressIndicator(color = MDTheme.colors.accent, strokeWidth = 2.dp, modifier = Modifier.fillMaxSize())
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.width(130.dp)) {
+                Text(
+                    if (fraction != null) "$label · ${(fraction * 100).toInt()}%" else label,
+                    style = MDTheme.type.caption,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    active.channelName,
+                    style = MDTheme.type.caption,
+                    color = Color.White.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
 /** Classic-TV-style "you're typing a channel number" badge - see
  * [IptvViewModel.enterChannelDigit]. Purely a remote-control affordance; nothing on screen writes
  * to [IptvUiState.channelNumberDraft] via touch. */
@@ -304,6 +376,14 @@ private fun LiveTvContent(
                         color = MDTheme.colors.accent,
                         modifier = Modifier.align(Alignment.Center).size(28.dp),
                     )
+                }
+                Row(
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PlayerBackendButton(current = uiState.playerBackend, onSelect = viewModel::setPlayerBackend)
+                    VolumeButton(volume = uiState.volume, onVolumeChange = viewModel::setVolume, onToggleMute = viewModel::toggleMute)
                 }
             }
             guide(Modifier.fillMaxWidth().weight(1f - GUIDE_PREVIEW_HEIGHT_FRACTION), true)

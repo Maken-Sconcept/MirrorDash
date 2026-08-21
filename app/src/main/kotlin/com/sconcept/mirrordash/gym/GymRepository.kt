@@ -11,8 +11,14 @@ class GymRepository(private val settingsRepository: SettingsRepository) {
         GymStoredState(
             featureSettings = settings.gymFeatureSettings,
             profiles = settings.gymProfiles.ifEmpty { defaultGymProfiles() },
-            devicePreferences = settings.gymDevicePreferences.ifEmpty { defaultGymDevicePreferences() },
+            devicePreferences = settings.gymDevicePreferences
+                .ifEmpty { defaultGymDevicePreferences() }
+                .let { preferences ->
+                    if (preferences.any { it.adapterId == GymBuiltInAdapterIds.SAMSUNG_HEALTH_CONNECT }) preferences
+                    else preferences + defaultGymDevicePreferences().first { it.adapterId == GymBuiltInAdapterIds.SAMSUNG_HEALTH_CONNECT }
+                },
             sessionHistory = settings.gymSessionHistory,
+            displayOrientationMode = settings.displayOrientationMode,
         )
     }
 
@@ -50,7 +56,9 @@ class GymRepository(private val settingsRepository: SettingsRepository) {
                 val weekCount = qualifying.count { GymProgression.weekKey(it.endedAtEpochMs) == week }
                 val firstToday = qualifying.count { it.endedAtEpochMs / 86_400_000L == record.endedAtEpochMs / 86_400_000L } == 1
                 val reachedGoal = weekCount == existing.progression.weeklyWorkoutTarget
-                val xp = GymProgression.workoutXp(record, firstToday, reachedGoal) + player.xpEarned
+                val baseXp = GymProgression.workoutXp(record, firstToday, reachedGoal) + player.xpEarned
+                val multiplier = activeAchievementCompletionMultiplier(existing, record, gymSessionHistory)
+                val xp = baseXp * multiplier
                 val totalWorkouts = existing.totalWorkouts + if (GymProgression.isQualifying(record)) 1 else 0
                 val minutes = existing.progression.lifetimeMinutes + record.activeSeconds / 60
                 val progress = existing.progression.copy(
