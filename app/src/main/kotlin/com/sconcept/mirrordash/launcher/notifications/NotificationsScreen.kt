@@ -32,9 +32,11 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.DoNotDisturbOn
 import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -57,6 +59,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sconcept.mirrordash.brightness.BrightnessMath
 import com.sconcept.mirrordash.ui.theme.MDTheme
+import com.sconcept.mirrordash.walkietalkie.WalkieTalkieDeviceBar
+import com.sconcept.mirrordash.walkietalkie.WalkieTalkieUiState
+import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -80,6 +85,12 @@ fun NotificationsScreen(
     onClose: () -> Unit,
     brightnessLevel255: Int,
     onBrightnessChange: (Int) -> Unit,
+    walkieState: WalkieTalkieUiState = WalkieTalkieUiState(),
+    homeShortcutIps: Set<String> = emptySet(),
+    onHomeShortcutChange: (WalkieTalkiePeer, Boolean) -> Unit = { _, _ -> },
+    onTalkStart: (WalkieTalkiePeer) -> Unit = {},
+    onTalkEnd: () -> Unit = {},
+    onRefreshWalkieTalkieDevices: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val timeText by rememberClockTicker()
@@ -134,6 +145,46 @@ fun NotificationsScreen(
         VolumeSliderRow()
 
         Spacer(Modifier.height(24.dp))
+
+        if (walkieState.enabled || walkieState.peers.isNotEmpty()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Rooms & devices", style = MDTheme.type.sectionTitle, color = MDTheme.colors.textPrimary)
+                IconButton(
+                    onClick = onRefreshWalkieTalkieDevices,
+                    enabled = walkieState.enabled,
+                ) {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = "Refresh available devices",
+                        tint = if (walkieState.enabled) MDTheme.colors.accent else MDTheme.colors.textTertiary,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            WalkieTalkieDeviceBar(
+                peers = walkieState.peers,
+                discoveredIps = walkieState.discoveredPeers.map { it.ip }.toSet(),
+                shortcutIps = homeShortcutIps,
+                activeIncomingIp = walkieState.activeIncomingPeerIp,
+                activeTransmitIp = walkieState.activeTransmitTarget,
+                talkEnabled = walkieState.enabled && walkieState.hasMicPermission,
+                onShortcutChange = onHomeShortcutChange,
+                onTalkStart = onTalkStart,
+                onTalkEnd = onTalkEnd,
+            )
+            if (walkieState.peers.isEmpty()) {
+                Text(
+                    "No saved rooms yet. Refresh scans for nearby devices.",
+                    style = MDTheme.type.settingSubtitle,
+                    color = MDTheme.colors.textTertiary,
+                )
+            }
+            Spacer(Modifier.height(24.dp))
+        }
 
         Row(
             verticalAlignment = Alignment.CenterVertically,

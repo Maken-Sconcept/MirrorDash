@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiFind
 import androidx.compose.material3.Button
@@ -106,7 +107,21 @@ fun WalkieTalkieSettingsContent(uiState: SettingsUiState, viewModel: SettingsVie
     GroupedSettingsContent(
         subsections = listOf(
             SettingsSubsection(title = "Devices", subtitle = "Nearby scanning and saved devices you can talk to") {
-                SettingGroup(title = "Nearby devices") {
+                SettingGroup(
+                    title = "Nearby devices",
+                    trailing = {
+                        IconButton(
+                            onClick = viewModel::refreshWalkieTalkieDevices,
+                            enabled = settings.walkieTalkieEnabled,
+                        ) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = "Refresh available devices",
+                                tint = if (settings.walkieTalkieEnabled) MDTheme.colors.accent else MDTheme.colors.textTertiary,
+                            )
+                        }
+                    },
+                ) {
                     val alreadyAddedIps = remember(settings.walkieTalkiePeers) { settings.walkieTalkiePeers.map { it.ip }.toSet() }
                     val nearby = uiState.nearbyWalkieTalkiePeers.filter { it.ip !in alreadyAddedIps }
 
@@ -129,6 +144,31 @@ fun WalkieTalkieSettingsContent(uiState: SettingsUiState, viewModel: SettingsVie
                             }
                         }
                     }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                SettingGroup(title = "Right-side room icons") {
+                    Text(
+                        "${settings.walkieTalkieRoomShortcutIconSizePx}px",
+                        style = MDTheme.type.settingSubtitle,
+                        color = MDTheme.colors.textSecondary,
+                    )
+                    Slider(
+                        value = settings.walkieTalkieRoomShortcutIconSizePx.toFloat(),
+                        onValueChange = { viewModel.setWalkieTalkieRoomShortcutIconSizePx(it.toInt()) },
+                        valueRange = 8f..200f,
+                        steps = 191,
+                        colors = SliderDefaults.colors(
+                            thumbColor = MDTheme.colors.accent,
+                            activeTrackColor = MDTheme.colors.accent,
+                        ),
+                    )
+                    Text(
+                        "Sets the selected room icon diameter on the right edge of the home screen.",
+                        style = MDTheme.type.caption,
+                        color = MDTheme.colors.textTertiary,
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -219,7 +259,7 @@ fun WalkieTalkieSettingsContent(uiState: SettingsUiState, viewModel: SettingsVie
                     }
                 }
             },
-            SettingsSubsection(title = "Floating button", subtitle = "Default route and on/off for the overlay talk button") {
+            SettingsSubsection(title = "Screen room controls", subtitle = "Room buttons and optional broadcast control") {
                 SettingGroup(title = "Floating button route") {
                     Text(
                         "The floating push-to-talk button outside Settings still follows one default route.",
@@ -251,6 +291,19 @@ fun WalkieTalkieSettingsContent(uiState: SettingsUiState, viewModel: SettingsVie
                 }
 
                 Spacer(Modifier.height(28.dp))
+
+                SettingRow(
+                    title = "Show Talk to all",
+                    subtitle = "Add an ALL button below your selected room initials on the right edge of the screen",
+                ) {
+                    Switch(
+                        checked = settings.walkieTalkieShowTalkToAllButton,
+                        onCheckedChange = viewModel::setWalkieTalkieShowTalkToAllButton,
+                        colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
 
                 SettingRow(
                     title = "Floating button",

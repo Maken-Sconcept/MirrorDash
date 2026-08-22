@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    xmlns:tools="http://schemas.android.com/tools"
+    android:installLocation="auto">
 
     <!-- Reflect mirror hardware runs (or may run) API 25, below androidx.health.connect:connect-client's
          declared minSdk 26. Safe to force here: the client library is bundled app-side rather than an

@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -39,12 +40,17 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sconcept.mirrordash.ui.theme.MDTheme
+import com.sconcept.mirrordash.weather.FbgoWeatherIcons
+import com.sconcept.mirrordash.weather.WEATHER_ICON_STYLE_ANIMATED
+import com.sconcept.mirrordash.weather.WEATHER_ICON_STYLE_FBGO
 import com.sconcept.mirrordash.weather.WeatherDayForecast
 import com.sconcept.mirrordash.weather.WeatherHourForecast
 import com.sconcept.mirrordash.weather.WeatherUiState
@@ -53,22 +59,23 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 @Composable
-internal fun WeatherWidgetSurface(widget: WeatherWidget, weather: WeatherUiState, textColor: Color) {
+internal fun WeatherWidgetSurface(widget: WeatherWidget, weather: WeatherUiState, textColor: Color, iconStyle: String) {
     if (widget.mode == WEATHER_WIDGET_MODE_FORECAST_CARD) {
-        ForecastWeatherCard(widget = widget, weather = weather, textColor = textColor)
+        ForecastWeatherCard(widget = widget, weather = weather, textColor = textColor, iconStyle = iconStyle)
     } else {
-        WeatherLineWidget(widget = widget, weather = weather, textColor = textColor)
+        WeatherLineWidget(widget = widget, weather = weather, textColor = textColor, iconStyle = iconStyle)
     }
 }
 
 @Composable
-private fun WeatherLineWidget(widget: WeatherWidget, weather: WeatherUiState, textColor: Color) {
+private fun WeatherLineWidget(widget: WeatherWidget, weather: WeatherUiState, textColor: Color, iconStyle: String) {
     val scale = widget.scalePercent / 100f
     Row(verticalAlignment = Alignment.CenterVertically) {
         AnimatedWeatherIcon(
             weatherCode = weather.snapshot?.weatherCode ?: 0,
             isDay = weather.snapshot?.isDay ?: true,
             size = (32f * scale).dp,
+            iconStyle = iconStyle,
         )
         Spacer(Modifier.width((10f * scale).dp))
         Text(
@@ -88,7 +95,7 @@ private fun WeatherLineWidget(widget: WeatherWidget, weather: WeatherUiState, te
 }
 
 @Composable
-private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, textColor: Color) {
+private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, textColor: Color, iconStyle: String) {
     val snapshot = weather.snapshot
     val scale = widget.scalePercent / 100f
     val headerTitle = remember(snapshot?.weatherCode, snapshot?.isDay, weather.condition) {
@@ -167,16 +174,19 @@ private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, 
                     widget = widget,
                     scale = scale,
                     textColor = textColor,
+                    iconStyle = iconStyle,
                 )
                 widget.forecastMode == WEATHER_WIDGET_FORECAST_DAILY -> DailyForecastGrid(
                     items = snapshot.forecast.take(widget.itemCount.coerceAtLeast(1)),
                     scale = scale,
                     textColor = textColor,
+                    iconStyle = iconStyle,
                 )
                 else -> HourlyForecastGrid(
                     items = snapshot.hourlyForecast.take(widget.itemCount.coerceAtLeast(1)),
                     scale = scale,
                     textColor = textColor,
+                    iconStyle = iconStyle,
                 )
             }
 
@@ -193,7 +203,7 @@ private fun ForecastWeatherCard(widget: WeatherWidget, weather: WeatherUiState, 
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PlaceholderForecastSummary(widget: WeatherWidget, scale: Float, textColor: Color) {
+private fun PlaceholderForecastSummary(widget: WeatherWidget, scale: Float, textColor: Color, iconStyle: String) {
     val items = widget.itemCount.coerceAtLeast(1).coerceAtMost(if (widget.forecastMode == WEATHER_WIDGET_FORECAST_DAILY) 5 else 6)
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy((10f * scale).dp),
@@ -216,7 +226,7 @@ private fun PlaceholderForecastSummary(widget: WeatherWidget, scale: Float, text
                     color = textColor.copy(alpha = 0.7f),
                     textAlign = TextAlign.Center,
                 )
-                AnimatedWeatherIcon(weatherCode = 3, isDay = true, size = (26f * scale).dp)
+                AnimatedWeatherIcon(weatherCode = 3, isDay = true, size = (26f * scale).dp, iconStyle = iconStyle)
                 Text(
                     text = "--",
                     style = MDTheme.type.caption.copy(fontSize = (12f * scale).sp),
@@ -230,7 +240,7 @@ private fun PlaceholderForecastSummary(widget: WeatherWidget, scale: Float, text
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun HourlyForecastGrid(items: List<WeatherHourForecast>, scale: Float, textColor: Color) {
+private fun HourlyForecastGrid(items: List<WeatherHourForecast>, scale: Float, textColor: Color, iconStyle: String) {
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy((10f * scale).dp),
         verticalArrangement = Arrangement.spacedBy((10f * scale).dp),
@@ -244,6 +254,7 @@ private fun HourlyForecastGrid(items: List<WeatherHourForecast>, scale: Float, t
                 isDay = item.isDay,
                 scale = scale,
                 textColor = textColor,
+                iconStyle = iconStyle,
             )
         }
     }
@@ -251,7 +262,7 @@ private fun HourlyForecastGrid(items: List<WeatherHourForecast>, scale: Float, t
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DailyForecastGrid(items: List<WeatherDayForecast>, scale: Float, textColor: Color) {
+private fun DailyForecastGrid(items: List<WeatherDayForecast>, scale: Float, textColor: Color, iconStyle: String) {
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy((10f * scale).dp),
         verticalArrangement = Arrangement.spacedBy((10f * scale).dp),
@@ -265,6 +276,7 @@ private fun DailyForecastGrid(items: List<WeatherDayForecast>, scale: Float, tex
                 isDay = true,
                 scale = scale,
                 textColor = textColor,
+                iconStyle = iconStyle,
             )
         }
     }
@@ -278,6 +290,7 @@ private fun ForecastChip(
     isDay: Boolean,
     scale: Float,
     textColor: Color,
+    iconStyle: String,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -298,6 +311,7 @@ private fun ForecastChip(
             weatherCode = weatherCode,
             isDay = isDay,
             size = (28f * scale).dp,
+            iconStyle = iconStyle,
         )
         Text(
             text = bottomLabel,
@@ -309,7 +323,18 @@ private fun ForecastChip(
 }
 
 @Composable
-internal fun AnimatedWeatherIcon(weatherCode: Int, isDay: Boolean, size: Dp) {
+internal fun AnimatedWeatherIcon(weatherCode: Int, isDay: Boolean, size: Dp, iconStyle: String = WEATHER_ICON_STYLE_ANIMATED) {
+    if (iconStyle == WEATHER_ICON_STYLE_FBGO) {
+        val drawableRes = remember(weatherCode, isDay) { FbgoWeatherIcons.drawableRes(weatherCode, isDay) }
+        Image(
+            painter = painterResource(drawableRes),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(size),
+        )
+        return
+    }
+
     val transition = rememberInfiniteTransition(label = "weatherIcon")
     val drift by transition.animateFloat(
         initialValue = -1f,

@@ -137,8 +137,13 @@ fun ClockScreen(
     modifier: Modifier = Modifier,
     photoramaState: PhotoramaUiState = PhotoramaUiState(),
     onPhotoramaVideoMuted: () -> Unit = {},
+    onPhotoramaImageCountAnchorChange: (OverlayAnchor) -> Unit = {},
+    onPhotoramaImageCountRotationChange: (degrees: Float) -> Unit = {},
+    onPhotoramaImageCountSizeChange: (sp: Int) -> Unit = {},
+    onPhotoramaImageCountRemove: () -> Unit = {},
     airPlayStatus: AirPlayUiState? = null,
     onTextWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
+    onIconWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
     calendar: CalendarAgendaUiState = CalendarAgendaUiState(),
     onCalendarWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
     onTasksWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit = { _, _ -> },
@@ -151,6 +156,7 @@ fun ClockScreen(
     onClockRemove: () -> Unit = {},
     onWeatherWidgetRemove: (id: String) -> Unit = {},
     onTextWidgetRemove: (id: String) -> Unit = {},
+    onIconWidgetRemove: (id: String) -> Unit = {},
     onCalendarWidgetRemove: (id: String) -> Unit = {},
     onTasksWidgetRemove: (id: String) -> Unit = {},
     onStocksWidgetRemove: (id: String) -> Unit = {},
@@ -158,6 +164,7 @@ fun ClockScreen(
     onClockRotationChange: (degrees: Float) -> Unit = {},
     onWeatherWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
     onTextWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
+    onIconWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
     onCalendarWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
     onTasksWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
     onStocksWidgetRotationChange: (id: String, degrees: Float) -> Unit = { _, _ -> },
@@ -165,13 +172,16 @@ fun ClockScreen(
     onClockFontSizeChange: (sp: Int) -> Unit = {},
     onWeatherWidgetSizeChange: (id: String, scalePercent: Int) -> Unit = { _, _ -> },
     onTextWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
+    onIconWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
     onCalendarWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
     onTasksWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
     onStocksWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
     onNewsWidgetSizeChange: (id: String, sp: Int) -> Unit = { _, _ -> },
 ) {
     val typography = remember(appearance.fontSizeSp) { mirrorDashTypography(appearance.fontSizeSp) }
-    val clockData by rememberClockRenderData(weather = weather, showWeather = appearance.showWidgets)
+    // Clock styles own their embedded weather info-line. It depends on the weather source, not
+    // on the optional overlay-widget layer; a weather widget is an additional display only.
+    val clockData by rememberClockRenderData(weather = weather, showWeather = appearance.weatherEnabled)
     val insetPx = with(androidx.compose.ui.platform.LocalDensity.current) { EDGE_INSET.toPx() }
 
     // While AirPlay is actively sending video, the Clock page itself becomes the mirrored
@@ -194,8 +204,13 @@ fun ClockScreen(
                 onWeatherWidgetAnchorChange = onWeatherWidgetAnchorChange,
                 photoramaState = photoramaState,
                 onPhotoramaVideoMuted = onPhotoramaVideoMuted,
+                onPhotoramaImageCountAnchorChange = onPhotoramaImageCountAnchorChange,
+                onPhotoramaImageCountRotationChange = onPhotoramaImageCountRotationChange,
+                onPhotoramaImageCountSizeChange = onPhotoramaImageCountSizeChange,
+                onPhotoramaImageCountRemove = onPhotoramaImageCountRemove,
                 airPlayStatus = airPlayStatus,
                 onTextWidgetAnchorChange = onTextWidgetAnchorChange,
+                onIconWidgetAnchorChange = onIconWidgetAnchorChange,
                 calendar = calendar,
                 onCalendarWidgetAnchorChange = onCalendarWidgetAnchorChange,
                 onTasksWidgetAnchorChange = onTasksWidgetAnchorChange,
@@ -211,6 +226,7 @@ fun ClockScreen(
                 onClockRemove = onClockRemove,
                 onWeatherWidgetRemove = onWeatherWidgetRemove,
                 onTextWidgetRemove = onTextWidgetRemove,
+                onIconWidgetRemove = onIconWidgetRemove,
                 onCalendarWidgetRemove = onCalendarWidgetRemove,
                 onTasksWidgetRemove = onTasksWidgetRemove,
                 onStocksWidgetRemove = onStocksWidgetRemove,
@@ -218,6 +234,7 @@ fun ClockScreen(
                 onClockRotationChange = onClockRotationChange,
                 onWeatherWidgetRotationChange = onWeatherWidgetRotationChange,
                 onTextWidgetRotationChange = onTextWidgetRotationChange,
+                onIconWidgetRotationChange = onIconWidgetRotationChange,
                 onCalendarWidgetRotationChange = onCalendarWidgetRotationChange,
                 onTasksWidgetRotationChange = onTasksWidgetRotationChange,
                 onStocksWidgetRotationChange = onStocksWidgetRotationChange,
@@ -225,6 +242,7 @@ fun ClockScreen(
                 onClockFontSizeChange = onClockFontSizeChange,
                 onWeatherWidgetSizeChange = onWeatherWidgetSizeChange,
                 onTextWidgetSizeChange = onTextWidgetSizeChange,
+                onIconWidgetSizeChange = onIconWidgetSizeChange,
                 onCalendarWidgetSizeChange = onCalendarWidgetSizeChange,
                 onTasksWidgetSizeChange = onTasksWidgetSizeChange,
                 onStocksWidgetSizeChange = onStocksWidgetSizeChange,
@@ -243,8 +261,13 @@ private fun ClockContent(
     onWeatherWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     photoramaState: PhotoramaUiState,
     onPhotoramaVideoMuted: () -> Unit,
+    onPhotoramaImageCountAnchorChange: (OverlayAnchor) -> Unit,
+    onPhotoramaImageCountRotationChange: (degrees: Float) -> Unit,
+    onPhotoramaImageCountSizeChange: (sp: Int) -> Unit,
+    onPhotoramaImageCountRemove: () -> Unit,
     airPlayStatus: AirPlayUiState?,
     onTextWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
+    onIconWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     calendar: CalendarAgendaUiState,
     onCalendarWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
     onTasksWidgetAnchorChange: (id: String, anchor: OverlayAnchor) -> Unit,
@@ -260,6 +283,7 @@ private fun ClockContent(
     onClockRemove: () -> Unit,
     onWeatherWidgetRemove: (id: String) -> Unit,
     onTextWidgetRemove: (id: String) -> Unit,
+    onIconWidgetRemove: (id: String) -> Unit,
     onCalendarWidgetRemove: (id: String) -> Unit,
     onTasksWidgetRemove: (id: String) -> Unit,
     onStocksWidgetRemove: (id: String) -> Unit,
@@ -267,6 +291,7 @@ private fun ClockContent(
     onClockRotationChange: (degrees: Float) -> Unit,
     onWeatherWidgetRotationChange: (id: String, degrees: Float) -> Unit,
     onTextWidgetRotationChange: (id: String, degrees: Float) -> Unit,
+    onIconWidgetRotationChange: (id: String, degrees: Float) -> Unit,
     onCalendarWidgetRotationChange: (id: String, degrees: Float) -> Unit,
     onTasksWidgetRotationChange: (id: String, degrees: Float) -> Unit,
     onStocksWidgetRotationChange: (id: String, degrees: Float) -> Unit,
@@ -274,6 +299,7 @@ private fun ClockContent(
     onClockFontSizeChange: (sp: Int) -> Unit,
     onWeatherWidgetSizeChange: (id: String, scalePercent: Int) -> Unit,
     onTextWidgetSizeChange: (id: String, sp: Int) -> Unit,
+    onIconWidgetSizeChange: (id: String, sp: Int) -> Unit,
     onCalendarWidgetSizeChange: (id: String, sp: Int) -> Unit,
     onTasksWidgetSizeChange: (id: String, sp: Int) -> Unit,
     onStocksWidgetSizeChange: (id: String, sp: Int) -> Unit,
@@ -290,6 +316,36 @@ private fun ClockContent(
 
         val parentWidthPx = constraints.maxWidth
         val parentHeightPx = constraints.maxHeight
+
+        // Single-instance like the clock digits (see ClockAppearance.showPhotoramaImageCount's
+        // doc comment) rather than list-backed like the widgets below - its own switch lives in
+        // Photorama settings, not the Widgets list. Gated on totalCount > 0, not just the switch,
+        // so it never flashes "0 / 0" while Photorama is still indexing or isn't the active
+        // background at all (PhotoramaUiState resets both to 0 whenever it isn't).
+        if (appearance.showPhotoramaImageCount && photoramaState.totalCount > 0) {
+            DraggableAnchor(
+                anchor = appearance.photoramaImageCountAnchor,
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                onAnchorChange = onPhotoramaImageCountAnchorChange,
+                onRemove = onPhotoramaImageCountRemove,
+                rotationDegrees = appearance.photoramaImageCountRotationDegrees,
+                onRotationChange = onPhotoramaImageCountRotationChange,
+                resizeValue = appearance.photoramaImageCountFontSizeSp.toFloat(),
+                resizeRange = SMALL_WIDGET_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { onPhotoramaImageCountSizeChange(it.roundToInt()) },
+            ) {
+                PhotoramaImageCountBadge(
+                    currentIndex = photoramaState.currentIndex,
+                    totalCount = photoramaState.totalCount,
+                    fontSizeSp = appearance.photoramaImageCountFontSizeSp,
+                    color = appearance.photoramaImageCountColor,
+                    fontFamily = rememberClockFontFamily(appearance.photoramaImageCountFontId, appearance.downloadedClockFonts),
+                )
+            }
+        }
 
         if (appearance.showTime) {
             DraggableAnchor(
@@ -317,20 +373,22 @@ private fun ClockContent(
         }
 
         if (appearance.showWidgets) {
-            WidgetOverlayLayer(
-                widgets = appearance.weatherWidgets,
-                parentWidthPx = parentWidthPx,
-                parentHeightPx = parentHeightPx,
-                insetPx = insetPx,
-                contentDimAlpha = contentDimAlpha,
-                onAnchorChange = onWeatherWidgetAnchorChange,
-                onRemove = onWeatherWidgetRemove,
-                onRotationChange = onWeatherWidgetRotationChange,
-                resizeValue = { it.scalePercent.toFloat() },
-                resizeRange = WEATHER_WIDGET_SCALE_RANGE,
-                resizeLabel = { "${it.roundToInt()}%" },
-                onResizeChange = { id, value -> onWeatherWidgetSizeChange(id, value.roundToInt()) },
-            ) { widget -> WeatherWidgetSurface(widget = widget, weather = weather, textColor = appearance.textColor) }
+            if (appearance.weatherEnabled) {
+                WidgetOverlayLayer(
+                    widgets = appearance.weatherWidgets,
+                    parentWidthPx = parentWidthPx,
+                    parentHeightPx = parentHeightPx,
+                    insetPx = insetPx,
+                    contentDimAlpha = contentDimAlpha,
+                    onAnchorChange = onWeatherWidgetAnchorChange,
+                    onRemove = onWeatherWidgetRemove,
+                    onRotationChange = onWeatherWidgetRotationChange,
+                    resizeValue = { it.scalePercent.toFloat() },
+                    resizeRange = WEATHER_WIDGET_SCALE_RANGE,
+                    resizeLabel = { "${it.roundToInt()}%" },
+                    onResizeChange = { id, value -> onWeatherWidgetSizeChange(id, value.roundToInt()) },
+                ) { widget -> WeatherWidgetSurface(widget = widget, weather = weather, textColor = appearance.textColor, iconStyle = appearance.weatherIconStyle) }
+            }
 
             WidgetOverlayLayer(
                 widgets = appearance.textWidgets,
@@ -346,6 +404,21 @@ private fun ClockContent(
                 resizeLabel = { "${it.roundToInt()}sp" },
                 onResizeChange = { id, value -> onTextWidgetSizeChange(id, value.roundToInt()) },
             ) { widget -> AnimatedWidgetText(widget) }
+
+            WidgetOverlayLayer(
+                widgets = appearance.iconWidgets,
+                parentWidthPx = parentWidthPx,
+                parentHeightPx = parentHeightPx,
+                insetPx = insetPx,
+                contentDimAlpha = contentDimAlpha,
+                onAnchorChange = onIconWidgetAnchorChange,
+                onRemove = onIconWidgetRemove,
+                onRotationChange = onIconWidgetRotationChange,
+                resizeValue = { it.sizeSp.toFloat() },
+                resizeRange = SMALL_WIDGET_FONT_SIZE_RANGE,
+                resizeLabel = { "${it.roundToInt()}sp" },
+                onResizeChange = { id, value -> onIconWidgetSizeChange(id, value.roundToInt()) },
+            ) { widget -> IconWidgetSurface(widget) }
 
             WidgetOverlayLayer(
                 widgets = appearance.calendarWidgets,
@@ -733,6 +806,24 @@ private fun PhotoramaBackdrop(state: PhotoramaUiState, onVideoMuted: () -> Unit)
     }
 }
 
+/** The "N / total" overlay itself - a small pill so the count stays legible over an arbitrary
+ * photo the way [CalendarAgendaWidgetSurface]'s card does, rather than bare text that could
+ * vanish against a bright background. */
+@Composable
+private fun PhotoramaImageCountBadge(currentIndex: Int, totalCount: Int, fontSizeSp: Int, color: Color, fontFamily: FontFamily) {
+    val shape = RoundedCornerShape(999.dp)
+    Text(
+        "$currentIndex / $totalCount",
+        color = color,
+        fontSize = fontSizeSp.sp,
+        fontFamily = fontFamily,
+        modifier = Modifier
+            .clip(shape)
+            .background(Color.Black.copy(alpha = 0.4f))
+            .padding(horizontal = (fontSizeSp * 0.5f).dp, vertical = (fontSizeSp * 0.22f).dp),
+    )
+}
+
 @Composable
 private fun PhotoramaMediaBackdrop(media: PhotoramaMedia, onVideoMuted: () -> Unit) {
     when (media.type) {
@@ -762,15 +853,23 @@ private fun PhotoramaVideoBackdrop(
     val context = androidx.compose.ui.platform.LocalContext.current
     val uri = remember(source) { if (source is File) source.toUri() else source as Uri }
     var isMuted by remember(source, segment) { mutableStateOf(initiallyMuted) }
-    val player = remember(uri) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(uri))
-            repeatMode = if (segment == null) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            playWhenReady = true
-            prepare()
-        }
+    // One ExoPlayer for as long as Photorama keeps showing video, not one per clip - rebuilding a
+    // player on every video-to-video advance (Photorama can do this every few seconds) attaches
+    // and detaches PlayerView's SurfaceView from scratch each time, which was exhausting the
+    // surface's dequeued-buffer queue on some devices after enough transitions and freezing the
+    // whole Clock page (seen as "BufferQueueProducer: attempting to exceed the max dequeued
+    // buffer count" in logcat, not a crash - the surface just stops being able to draw new
+    // frames). Swapping the media item on a long-lived player instead is ExoPlayer's own
+    // recommended pattern for playlist-style continuous playback.
+    val player = remember { ExoPlayer.Builder(context).build() }
+    DisposableEffect(player) { onDispose { player.release() } }
+    LaunchedEffect(player, uri) {
+        player.setMediaItem(MediaItem.fromUri(uri))
+        player.prepare()
     }
-    LaunchedEffect(player, segment) {
+    LaunchedEffect(player, uri, segment) {
+        player.repeatMode = if (segment == null) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        player.playWhenReady = true
         if (segment != null) {
             player.seekTo(segment.startMs)
             player.play()
@@ -781,7 +880,6 @@ private fun PhotoramaVideoBackdrop(
     LaunchedEffect(player, isMuted) {
         player.volume = if (isMuted) 0f else 1f
     }
-    DisposableEffect(player) { onDispose { player.release() } }
     Box(Modifier.fillMaxSize()) {
         AndroidView(
             factory = { PlayerView(it).apply { useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; this.player = player } },

@@ -5,6 +5,7 @@ import android.util.Log
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.key
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.DistanceRecord
@@ -53,6 +54,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -230,7 +232,7 @@ fun GymScreen(
                 onCycleAssignment = viewModel::cycleDeviceAssignment,
                 onSelectChallenge = viewModel::selectChallenge,
                 onOpenAchievements = { achievementsVisible = true },
-                onOpenGymSettings = { gymSettingsVisible = true },
+                onOpenGymSettings = { gymSettingsVisible = true; viewModel.refreshWorkoutLibraryStatus() },
             )
         }
 
@@ -265,8 +267,14 @@ fun GymScreen(
         AnimatedVisibility(visible = gymSettingsVisible && uiState.activeSession == null, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
             GymSettingsSheet(
                 challengesEnabled = uiState.featureSettings.challengesEnabled,
+                workoutLibrarySource = uiState.featureSettings.workoutLibrarySource,
+                workoutLibraryStatus = uiState.workoutLibraryStatus,
+                workoutSyncStatus = uiState.workoutSyncStatus,
                 orientationMode = uiState.displayOrientationMode,
                 onSetChallengesEnabled = viewModel::setChallengesEnabled,
+                onSetWorkoutLibrarySource = viewModel::setWorkoutLibrarySource,
+                onRefreshWorkoutLibrary = viewModel::refreshWorkoutLibraryStatus,
+                onSyncWorkoutLibrary = viewModel::syncWorkoutLibraryNow,
                 onDismiss = { gymSettingsVisible = false },
             )
         }
@@ -290,6 +298,10 @@ fun GymScreen(
                 SummarySheet(summary = summary, onDismiss = viewModel::dismissSummary)
             }
         }
+        WorkoutSyncOverlay(
+            status = uiState.workoutSyncStatus,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 18.dp, end = 22.dp),
+        )
     }
 }
 
@@ -688,6 +700,48 @@ private fun WorkoutLibraryHero(
                         selected = selectedFilter == filter,
                         onClick = { onSelectFilter(filter) },
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutSyncOverlay(status: GymWorkoutSyncStatus, modifier: Modifier = Modifier) {
+    AnimatedVisibility(visible = status != GymWorkoutSyncStatus.Idle, enter = fadeIn(), exit = fadeOut(), modifier = modifier) {
+        Surface(color = Color(0xEC101820), shape = RoundedCornerShape(14.dp)) {
+            Row(
+                modifier = Modifier.widthIn(max = 300.dp).padding(horizontal = 13.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                when (status) {
+                    GymWorkoutSyncStatus.Indexing -> CircularProgressIndicator(color = Color(0xFF7DE6FF), strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                    is GymWorkoutSyncStatus.Syncing -> CircularProgressIndicator(color = Color(0xFF7DE6FF), strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                    is GymWorkoutSyncStatus.Complete -> Text("✓", color = Color(0xFF80E7B5), style = MDTheme.type.settingTitle)
+                    is GymWorkoutSyncStatus.Failed -> Text("!", color = Color(0xFFFF9B7B), style = MDTheme.type.settingTitle)
+                    GymWorkoutSyncStatus.Idle -> Unit
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    when (status) {
+                        GymWorkoutSyncStatus.Indexing -> {
+                            Text("SYNCING WORKOUTS", color = Color.White, style = MDTheme.type.caption)
+                            Text("Checking the NAS library…", color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+                        }
+                        is GymWorkoutSyncStatus.Syncing -> {
+                            Text("SYNCING ${status.currentFile} OF ${status.totalFiles}", color = Color.White, style = MDTheme.type.caption)
+                            Text(status.currentFileName, color = MDTheme.colors.textSecondary, style = MDTheme.type.caption, maxLines = 1)
+                        }
+                        is GymWorkoutSyncStatus.Complete -> {
+                            Text("SYNC COMPLETE", color = Color(0xFF80E7B5), style = MDTheme.type.caption)
+                            Text("${status.copiedFiles} of ${status.totalFiles} files copied", color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+                        }
+                        is GymWorkoutSyncStatus.Failed -> {
+                            Text("SYNC PAUSED", color = Color(0xFFFF9B7B), style = MDTheme.type.caption)
+                            Text(status.message, color = MDTheme.colors.textSecondary, style = MDTheme.type.caption, maxLines = 2)
+                        }
+                        GymWorkoutSyncStatus.Idle -> Unit
+                    }
                 }
             }
         }
@@ -1224,7 +1278,18 @@ private fun GymOverflowMenu(onOpenAchievements: () -> Unit, onOpenSettings: () -
 }
 
 @Composable
-private fun GymSettingsSheet(challengesEnabled: Boolean, orientationMode: String, onSetChallengesEnabled: (Boolean) -> Unit, onDismiss: () -> Unit) {
+private fun GymSettingsSheet(
+    challengesEnabled: Boolean,
+    workoutLibrarySource: GymWorkoutLibrarySource,
+    workoutLibraryStatus: GymWorkoutLibraryStatus,
+    workoutSyncStatus: GymWorkoutSyncStatus,
+    orientationMode: String,
+    onSetChallengesEnabled: (Boolean) -> Unit,
+    onSetWorkoutLibrarySource: (GymWorkoutLibrarySource) -> Unit,
+    onRefreshWorkoutLibrary: () -> Unit,
+    onSyncWorkoutLibrary: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     Surface(color = Color(0xF50A1016), modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1247,6 +1312,44 @@ private fun GymSettingsSheet(challengesEnabled: Boolean, orientationMode: String
                 Text("Display follows MirrorDash: ${DisplayOrientationMode.fromStorageKey(orientationMode).name.replace('_', ' ')}. Change orientation in Launcher settings.", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
             }
         }
+                Text("WORKOUT LIBRARY", color = MDTheme.colors.textTertiary, style = MDTheme.type.caption)
+                Surface(color = Color(0x0DFFFFFF), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Workout source", color = Color.White, style = MDTheme.type.settingTitle)
+                        Text("Memory card is offline-first. The Gym syncs Entertainment/Workouts in the background and streams any missing video from the NAS.", color = MDTheme.colors.textSecondary, style = MDTheme.type.settingSubtitle)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GymWorkoutLibrarySource.entries.forEach { source ->
+                                val selected = source == workoutLibrarySource
+                                TextButton(onClick = { onSetWorkoutLibrarySource(source) }) {
+                                    Text(
+                                        if (source == GymWorkoutLibrarySource.MEMORY_CARD) "Memory card" else "NAS only",
+                                        color = if (selected) Color(0xFF7DE6FF) else MDTheme.colors.textSecondary,
+                                    )
+                                }
+                            }
+                        }
+                        val syncInProgress = workoutSyncStatus is GymWorkoutSyncStatus.Indexing || workoutSyncStatus is GymWorkoutSyncStatus.Syncing
+                        when {
+                            workoutLibraryStatus.isLoading -> Text("Checking card and NAS library...", color = MDTheme.colors.textSecondary, style = MDTheme.type.caption)
+                            workoutLibraryStatus.message != null -> Text(workoutLibraryStatus.message, color = Color(0xFFFF9B7B), style = MDTheme.type.caption)
+                            else -> Text(
+                                "Memory card: ${workoutLibraryStatus.cardVideoCount} videos  •  NAS: ${workoutLibraryStatus.nasVideoCount}  •  Remaining: ${workoutLibraryStatus.remainingVideoCount}",
+                                color = MDTheme.colors.textSecondary,
+                                style = MDTheme.type.caption,
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            TextButton(onClick = onRefreshWorkoutLibrary, enabled = !workoutLibraryStatus.isLoading && !syncInProgress) { Text("Refresh") }
+                            Button(
+                                onClick = onSyncWorkoutLibrary,
+                                enabled = workoutLibrarySource == GymWorkoutLibrarySource.MEMORY_CARD && workoutLibraryStatus.isAvailable && !workoutLibraryStatus.isLoading && !syncInProgress,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7DE6FF), contentColor = Color(0xFF071218)),
+                            ) {
+                                Text(if (syncInProgress) "Syncing..." else if (workoutLibraryStatus.remainingVideoCount > 0) "Sync remaining" else "Verify sync")
+                            }
+                        }
+                    }
+                }
     }
     }
 }
@@ -3723,11 +3826,21 @@ private fun FreeRideHud(
             Spacer(Modifier.height(12.dp))
             Surface(color = Color(0xFF101A22), shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).fillMaxWidth()) {
                 if (videoUri != null) {
-                    AndroidView(
-                        factory = { context -> VideoView(context).apply { setVideoURI(Uri.parse(videoUri)); setOnPreparedListener { it.isLooping = true; start() } } },
-                        update = { view -> if (!view.isPlaying) view.start() },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    // Keyed on the URI itself - AndroidView's own factory only ever runs once per
+                    // call site, so without this, picking a second video via "CHANGE VIDEO"
+                    // silently kept playing the first one (no update callback ever pointed the
+                    // VideoView at the new URI). key() forces a clean teardown/recreate instead,
+                    // same as IPTV's own player surface does on a deliberate content swap (see
+                    // PlayerSurface's key(playerEpoch) in IptvScreen.kt) - safe here since a video
+                    // pick is a rare, explicit tap, not the kind of automatic per-second churn that
+                    // caused Photorama's ExoPlayer rebuild issue.
+                    key(videoUri) {
+                        AndroidView(
+                            factory = { context -> VideoView(context).apply { setVideoURI(Uri.parse(videoUri)); setOnPreparedListener { it.isLooping = true; start() } } },
+                            update = { view -> if (!view.isPlaying) view.start() },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {

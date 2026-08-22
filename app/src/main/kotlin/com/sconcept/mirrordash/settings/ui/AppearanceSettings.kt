@@ -204,7 +204,7 @@ fun AppearanceSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewM
                         )
                     }
                     Spacer(Modifier.height(12.dp))
-                    SettingRow(title = "Show widgets", subtitle = "Weather and any custom text widgets") {
+                    SettingRow(title = "Show widgets", subtitle = "Optional widgets, such as text and weather cards") {
                         Switch(
                             checked = settings.clockShowWidgets,
                             onCheckedChange = viewModel::setClockShowWidgets,
@@ -553,6 +553,77 @@ private fun PhotoramaSlideshowSettings(settings: MirrorDashSettings, viewModel: 
                 onCheckedChange = viewModel::setPhotoramaReplayLongVideoSegments,
                 colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
             )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        SettingRow(
+            title = "Match device orientation",
+            subtitle = "Only show landscape photos in landscape mode, portrait photos in portrait mode",
+        ) {
+            Switch(
+                checked = settings.photoramaMatchOrientation,
+                onCheckedChange = viewModel::setPhotoramaMatchOrientation,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        SettingRow(
+            title = "Video only",
+            subtitle = "Skip still photos and only play videos",
+        ) {
+            Switch(
+                checked = settings.photoramaVideoOnly,
+                onCheckedChange = viewModel::setPhotoramaVideoOnly,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        SettingRow(
+            title = "Show image count",
+            subtitle = "Overlay \"N / total\" on screen - drag it into place and resize it on the Clock page",
+        ) {
+            Switch(
+                checked = settings.photoramaShowImageCount,
+                onCheckedChange = viewModel::setPhotoramaShowImageCount,
+                colors = SwitchDefaults.colors(checkedTrackColor = MDTheme.colors.accent),
+            )
+        }
+
+        if (settings.photoramaShowImageCount) {
+            Spacer(Modifier.height(16.dp))
+
+            Text("${settings.photoramaImageCountFontSizeSp}sp", style = MDTheme.type.settingSubtitle, color = MDTheme.colors.textSecondary)
+            Slider(
+                value = settings.photoramaImageCountFontSizeSp.toFloat(),
+                onValueChange = { viewModel.setPhotoramaImageCountFontSize(it.toInt()) },
+                valueRange = 12f..800f,
+                colors = SliderDefaults.colors(thumbColor = MDTheme.colors.accent, activeTrackColor = MDTheme.colors.accent),
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            SettingGroup(title = "Font") {
+                WidgetFontPicker(
+                    selectedFontId = settings.photoramaImageCountFontId,
+                    downloadedFonts = settings.downloadedClockFonts,
+                    onSelect = viewModel::setPhotoramaImageCountFont,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            SettingGroup(title = "Color") {
+                ColorSwatchRow(
+                    colors = ClockColorPresets,
+                    selected = Color(settings.photoramaImageCountColorArgb),
+                    onSelect = viewModel::setPhotoramaImageCountColor,
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -993,9 +1064,16 @@ private fun BrowserRow(name: String, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun SettingGroup(title: String, content: @Composable () -> Unit) {
+internal fun SettingGroup(
+    title: String,
+    trailing: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
     Column {
-        Text(title, style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text(title, style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary, modifier = Modifier.weight(1f))
+            trailing?.invoke()
+        }
         Spacer(Modifier.height(10.dp))
         content()
     }

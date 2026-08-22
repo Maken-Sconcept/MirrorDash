@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sconcept.mirrordash.ui.theme.MDTheme
+import com.sconcept.mirrordash.weather.WEATHER_ICON_STYLE_ANIMATED
 import com.sconcept.mirrordash.weather.WeatherUiState
 import com.sconcept.mirrordash.weather.weatherConditionLabel
 import java.text.SimpleDateFormat
@@ -51,6 +52,7 @@ fun NightClockScreen(
     onClockAnchorChange: (OverlayAnchor) -> Unit,
     onWeatherAnchorChange: (OverlayAnchor) -> Unit,
     modifier: Modifier = Modifier,
+    weatherIconStyle: String = WEATHER_ICON_STYLE_ANIMATED,
 ) {
     val timeText by rememberNightClockTicker()
     val textAlpha = 1f - (textDimPercent.coerceIn(0, 100) / 100f)
@@ -85,7 +87,7 @@ fun NightClockScreen(
                 onAnchorChange = onWeatherAnchorChange,
             ) {
                 Box(Modifier.alpha(textAlpha)) {
-                    NightWeatherLine(weather)
+                    NightWeatherLine(weather, weatherIconStyle)
                 }
             }
         }
@@ -96,13 +98,14 @@ fun NightClockScreen(
  * matching a Nest Hub's ambient-mode weather line rather than [WeatherWidgetSurface]'s bigger,
  * card-style options which would be too bright/busy for this tab's whole reason for existing. */
 @Composable
-private fun NightWeatherLine(weather: WeatherUiState) {
+private fun NightWeatherLine(weather: WeatherUiState, weatherIconStyle: String) {
     val snapshot = weather.snapshot
     Row(verticalAlignment = Alignment.CenterVertically) {
         AnimatedWeatherIcon(
             weatherCode = snapshot?.weatherCode ?: 0,
             isDay = snapshot?.isDay ?: true,
             size = 26.dp,
+            iconStyle = weatherIconStyle,
         )
         Spacer(Modifier.width(8.dp))
         val temp = weather.temperature

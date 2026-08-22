@@ -11,8 +11,10 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.sconcept.mirrordash.clock.CalendarWidget
 import com.sconcept.mirrordash.clock.CLOCK_FONT_GOOGLE_PREFIX
+import com.sconcept.mirrordash.clock.CLOCK_FONT_SYSTEM_DEFAULT
 import com.sconcept.mirrordash.clock.CLOCK_STYLE_BIG_SMALL
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.IconWidget
 import com.sconcept.mirrordash.clock.DownloadedClockFont
 import com.sconcept.mirrordash.clock.NewsWidget
 import com.sconcept.mirrordash.clock.StocksWidget
@@ -39,6 +41,7 @@ import com.sconcept.mirrordash.security.SessionCredentialHolder
 import com.sconcept.mirrordash.ui.theme.DEFAULT_CLOCK_FONT_SIZE_SP
 import com.sconcept.mirrordash.walkietalkie.DEFAULT_WALKIE_TALKIE_CHIME
 import com.sconcept.mirrordash.walkietalkie.model.WalkieTalkiePeer
+import com.sconcept.mirrordash.weather.WEATHER_ICON_STYLE_ANIMATED
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -144,8 +147,10 @@ data class MirrorDashSettings(
     val weatherAnchorX: Float = DEFAULT_WEATHER_ANCHOR_X,
     val weatherAnchorY: Float = DEFAULT_WEATHER_ANCHOR_Y,
     val weatherWidgets: List<WeatherWidget> = emptyList(),
+    val weatherIconStyle: String = WEATHER_ICON_STYLE_ANIMATED,
     val downloadedClockFonts: List<DownloadedClockFont> = emptyList(),
     val customTextWidgets: List<CustomTextWidget> = emptyList(),
+    val iconWidgets: List<IconWidget> = emptyList(),
     val calendarWidgets: List<CalendarWidget> = emptyList(),
     val tasksWidgets: List<TasksWidget> = emptyList(),
     val stocksWidgets: List<StocksWidget> = emptyList(),
@@ -182,6 +187,26 @@ data class MirrorDashSettings(
     val photoramaIntervalSeconds: Int = 60,
     val photoramaShuffle: Boolean = true,
     val photoramaReplayLongVideoSegments: Boolean = true,
+    // When on, a photo/video is only shown while the device's current orientation matches its
+    // own (landscape media in landscape mode, portrait media in portrait mode) - see
+    // PhotoramaViewModel.orientationMatchesDevice. Default true so the slideshow never shows a
+    // sideways-cropped photo out of the box.
+    val photoramaMatchOrientation: Boolean = true,
+    // When on, the slideshow only indexes video files, skipping still images entirely. Default
+    // off so existing photo libraries keep behaving the way they always have.
+    val photoramaVideoOnly: Boolean = false,
+    // A draggable/resizable "N / total" overlay, positioned and sized the same way every other
+    // Clock-page widget is (see AnchoredWidget) - but single-instance like the clock digits
+    // themselves rather than list-backed, and its on/off switch lives in Photorama settings
+    // instead of the Widgets list, since it only ever makes sense while Photorama is the
+    // background (see ClockScreen's showPhotoramaImageCount gating).
+    val photoramaShowImageCount: Boolean = false,
+    val photoramaImageCountFontSizeSp: Int = 24,
+    val photoramaImageCountFontId: String = CLOCK_FONT_SYSTEM_DEFAULT,
+    val photoramaImageCountColorArgb: Int = 0xFFF5F3EF.toInt(),
+    val photoramaImageCountAnchorX: Float = 0.5f,
+    val photoramaImageCountAnchorY: Float = 0.94f,
+    val photoramaImageCountRotationDegrees: Float = 0f,
     val photoramaVideosMuted: Boolean = true,
     val photoramaCacheSizeMb: Int = 250,
     // Optional refinement on top of photoramaEnabled - off means "always on when enabled" (the
@@ -198,6 +223,13 @@ data class MirrorDashSettings(
     // Walkie-Talkie
     val walkieTalkieEnabled: Boolean = false,
     val walkieTalkiePeers: List<WalkieTalkiePeer> = emptyList(),
+    /** Peer IPs shown as shortcuts on the Clock home surface. They never affect peer discovery
+     * or walkie-talkie eligibility. The peer registry currently owns IP identity. */
+    val walkieTalkieHomeShortcutIps: Set<String> = emptySet(),
+    /** Optional broadcast control alongside the selected-room buttons. Off by default so the
+     * room stack replaces the former always-visible all-devices mic. */
+    val walkieTalkieShowTalkToAllButton: Boolean = false,
+    val walkieTalkieRoomShortcutIconSizePx: Int = 88,
     val walkieTalkieTarget: String = WALKIE_TALKIE_TARGET_ALL,
     val walkieTalkiePort: Int = DEFAULT_WALKIE_TALKIE_PORT,
     val walkieTalkieMicBoostPercent: Int = 100,
@@ -443,6 +475,9 @@ class SettingsRepository(context: Context) {
         val textWidgets = textWidgetsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<CustomTextWidget>>(raw) }.getOrDefault(emptyList())
         } ?: emptyList()
+        val iconWidgets = this[Keys.ICON_WIDGETS]
+            ?.let { raw -> runCatching { json.decodeFromString<List<IconWidget>>(raw) }.getOrDefault(emptyList()) }
+            ?: emptyList()
         val downloadedClockFontsRaw = this[Keys.DOWNLOADED_CLOCK_FONTS]
         val downloadedClockFonts = downloadedClockFontsRaw?.let { raw ->
             runCatching { json.decodeFromString<List<DownloadedClockFont>>(raw) }.getOrDefault(emptyList())
@@ -487,8 +522,10 @@ class SettingsRepository(context: Context) {
             weatherAnchorX = this[Keys.WEATHER_ANCHOR_X] ?: defaults.weatherAnchorX,
             weatherAnchorY = this[Keys.WEATHER_ANCHOR_Y] ?: defaults.weatherAnchorY,
             weatherWidgets = normalizeWeatherWidgets(weatherWidgets),
+            weatherIconStyle = this[Keys.WEATHER_ICON_STYLE] ?: defaults.weatherIconStyle,
             downloadedClockFonts = downloadedClockFonts,
             customTextWidgets = textWidgets,
+            iconWidgets = iconWidgets,
             calendarWidgets = calendarWidgets,
             tasksWidgets = tasksWidgets,
             stocksWidgets = stocksWidgets,
@@ -513,6 +550,15 @@ class SettingsRepository(context: Context) {
             photoramaIntervalSeconds = this[Keys.PHOTORAMA_INTERVAL_SECONDS] ?: defaults.photoramaIntervalSeconds,
             photoramaShuffle = this[Keys.PHOTORAMA_SHUFFLE] ?: defaults.photoramaShuffle,
             photoramaReplayLongVideoSegments = this[Keys.PHOTORAMA_REPLAY_LONG_VIDEO_SEGMENTS] ?: defaults.photoramaReplayLongVideoSegments,
+            photoramaMatchOrientation = this[Keys.PHOTORAMA_MATCH_ORIENTATION] ?: defaults.photoramaMatchOrientation,
+            photoramaVideoOnly = this[Keys.PHOTORAMA_VIDEO_ONLY] ?: defaults.photoramaVideoOnly,
+            photoramaShowImageCount = this[Keys.PHOTORAMA_SHOW_IMAGE_COUNT] ?: defaults.photoramaShowImageCount,
+            photoramaImageCountFontSizeSp = this[Keys.PHOTORAMA_IMAGE_COUNT_FONT_SIZE_SP] ?: defaults.photoramaImageCountFontSizeSp,
+            photoramaImageCountFontId = this[Keys.PHOTORAMA_IMAGE_COUNT_FONT_ID] ?: defaults.photoramaImageCountFontId,
+            photoramaImageCountColorArgb = this[Keys.PHOTORAMA_IMAGE_COUNT_COLOR] ?: defaults.photoramaImageCountColorArgb,
+            photoramaImageCountAnchorX = this[Keys.PHOTORAMA_IMAGE_COUNT_ANCHOR_X] ?: defaults.photoramaImageCountAnchorX,
+            photoramaImageCountAnchorY = this[Keys.PHOTORAMA_IMAGE_COUNT_ANCHOR_Y] ?: defaults.photoramaImageCountAnchorY,
+            photoramaImageCountRotationDegrees = this[Keys.PHOTORAMA_IMAGE_COUNT_ROTATION_DEGREES] ?: defaults.photoramaImageCountRotationDegrees,
             photoramaVideosMuted = this[Keys.PHOTORAMA_VIDEOS_MUTED] ?: defaults.photoramaVideosMuted,
             photoramaCacheSizeMb = this[Keys.PHOTORAMA_CACHE_SIZE_MB] ?: defaults.photoramaCacheSizeMb,
             photoramaScheduleEnabled = this[Keys.PHOTORAMA_SCHEDULE_ENABLED] ?: defaults.photoramaScheduleEnabled,
@@ -522,6 +568,10 @@ class SettingsRepository(context: Context) {
             clockShowWidgets = this[Keys.CLOCK_SHOW_WIDGETS] ?: defaults.clockShowWidgets,
             walkieTalkieEnabled = this[Keys.WALKIE_TALKIE_ENABLED] ?: defaults.walkieTalkieEnabled,
             walkieTalkiePeers = peers,
+            walkieTalkieHomeShortcutIps = this[Keys.WALKIE_TALKIE_HOME_SHORTCUT_IPS] ?: defaults.walkieTalkieHomeShortcutIps,
+            walkieTalkieShowTalkToAllButton = this[Keys.WALKIE_TALKIE_SHOW_TALK_TO_ALL_BUTTON] ?: defaults.walkieTalkieShowTalkToAllButton,
+            walkieTalkieRoomShortcutIconSizePx = (this[Keys.WALKIE_TALKIE_ROOM_SHORTCUT_ICON_SIZE_PX]
+                ?: defaults.walkieTalkieRoomShortcutIconSizePx).coerceIn(8, 200),
             walkieTalkieTarget = this[Keys.WALKIE_TALKIE_TARGET] ?: defaults.walkieTalkieTarget,
             walkieTalkiePort = this[Keys.WALKIE_TALKIE_PORT] ?: defaults.walkieTalkiePort,
             walkieTalkieMicBoostPercent = this[Keys.WALKIE_TALKIE_MIC_BOOST] ?: defaults.walkieTalkieMicBoostPercent,
@@ -626,6 +676,7 @@ class SettingsRepository(context: Context) {
         val WEATHER_ANCHOR_X = floatPreferencesKey("weather_anchor_x")
         val WEATHER_ANCHOR_Y = floatPreferencesKey("weather_anchor_y")
         val WEATHER_WIDGETS = stringPreferencesKey("weather_widgets_json")
+        val WEATHER_ICON_STYLE = stringPreferencesKey("weather_icon_style")
         val CALENDAR_WIDGETS = stringPreferencesKey("calendar_widgets_json")
         val TASKS_WIDGETS = stringPreferencesKey("tasks_widgets_json")
         val STOCKS_WIDGETS = stringPreferencesKey("stocks_widgets_json")
@@ -654,6 +705,15 @@ class SettingsRepository(context: Context) {
         val PHOTORAMA_INTERVAL_SECONDS = intPreferencesKey("photorama_interval_seconds")
         val PHOTORAMA_SHUFFLE = booleanPreferencesKey("photorama_shuffle")
         val PHOTORAMA_REPLAY_LONG_VIDEO_SEGMENTS = booleanPreferencesKey("photorama_replay_long_video_segments")
+        val PHOTORAMA_MATCH_ORIENTATION = booleanPreferencesKey("photorama_match_orientation")
+        val PHOTORAMA_VIDEO_ONLY = booleanPreferencesKey("photorama_video_only")
+        val PHOTORAMA_SHOW_IMAGE_COUNT = booleanPreferencesKey("photorama_show_image_count")
+        val PHOTORAMA_IMAGE_COUNT_FONT_SIZE_SP = intPreferencesKey("photorama_image_count_font_size_sp")
+        val PHOTORAMA_IMAGE_COUNT_FONT_ID = stringPreferencesKey("photorama_image_count_font_id")
+        val PHOTORAMA_IMAGE_COUNT_COLOR = intPreferencesKey("photorama_image_count_color")
+        val PHOTORAMA_IMAGE_COUNT_ANCHOR_X = floatPreferencesKey("photorama_image_count_anchor_x")
+        val PHOTORAMA_IMAGE_COUNT_ANCHOR_Y = floatPreferencesKey("photorama_image_count_anchor_y")
+        val PHOTORAMA_IMAGE_COUNT_ROTATION_DEGREES = floatPreferencesKey("photorama_image_count_rotation_degrees")
         val PHOTORAMA_VIDEOS_MUTED = booleanPreferencesKey("photorama_videos_muted")
         val PHOTORAMA_CACHE_SIZE_MB = intPreferencesKey("photorama_cache_size_mb")
         val PHOTORAMA_SCHEDULE_ENABLED = booleanPreferencesKey("photorama_schedule_enabled")
@@ -665,6 +725,9 @@ class SettingsRepository(context: Context) {
 
         val WALKIE_TALKIE_ENABLED = booleanPreferencesKey("walkie_talkie_enabled")
         val WALKIE_TALKIE_PEERS = stringPreferencesKey("walkie_talkie_peers_json")
+        val WALKIE_TALKIE_HOME_SHORTCUT_IPS = stringSetPreferencesKey("walkie_talkie_home_shortcut_ips")
+        val WALKIE_TALKIE_SHOW_TALK_TO_ALL_BUTTON = booleanPreferencesKey("walkie_talkie_show_talk_to_all_button")
+        val WALKIE_TALKIE_ROOM_SHORTCUT_ICON_SIZE_PX = intPreferencesKey("walkie_talkie_room_shortcut_icon_size_px")
         val WALKIE_TALKIE_TARGET = stringPreferencesKey("walkie_talkie_target")
         val WALKIE_TALKIE_PORT = intPreferencesKey("walkie_talkie_port")
         val WALKIE_TALKIE_MIC_BOOST = intPreferencesKey("walkie_talkie_mic_boost_percent")
@@ -737,6 +800,7 @@ class SettingsRepository(context: Context) {
         val IPTV_RECORDING_HISTORY = stringPreferencesKey("iptv_recording_history_json")
 
         val CUSTOM_TEXT_WIDGETS = stringPreferencesKey("custom_text_widgets_json")
+        val ICON_WIDGETS = stringPreferencesKey("icon_widgets_json")
 
         val LAUNCHER_FAVORITE_APPS = stringPreferencesKey("launcher_favorite_apps_json")
         val LAUNCHER_HIDDEN_APPS = stringSetPreferencesKey("launcher_hidden_apps")
@@ -779,6 +843,7 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var clockRotationDegrees: Float by PrefDelegate(SettingsRepository.Keys.CLOCK_ROTATION_DEGREES, prefs, defaults.clockRotationDegrees)
     var weatherAnchorX: Float by PrefDelegate(SettingsRepository.Keys.WEATHER_ANCHOR_X, prefs, defaults.weatherAnchorX)
     var weatherAnchorY: Float by PrefDelegate(SettingsRepository.Keys.WEATHER_ANCHOR_Y, prefs, defaults.weatherAnchorY)
+    var weatherIconStyle: String by PrefDelegate(SettingsRepository.Keys.WEATHER_ICON_STYLE, prefs, defaults.weatherIconStyle)
 
     var weatherEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.WEATHER_ENABLED, prefs, defaults.weatherEnabled)
     var weatherLocationQuery: String by PrefDelegate(SettingsRepository.Keys.WEATHER_LOCATION_QUERY, prefs, defaults.weatherLocationQuery)
@@ -796,6 +861,15 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var photoramaIntervalSeconds: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_INTERVAL_SECONDS, prefs, defaults.photoramaIntervalSeconds)
     var photoramaShuffle: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SHUFFLE, prefs, defaults.photoramaShuffle)
     var photoramaReplayLongVideoSegments: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_REPLAY_LONG_VIDEO_SEGMENTS, prefs, defaults.photoramaReplayLongVideoSegments)
+    var photoramaMatchOrientation: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_MATCH_ORIENTATION, prefs, defaults.photoramaMatchOrientation)
+    var photoramaVideoOnly: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_VIDEO_ONLY, prefs, defaults.photoramaVideoOnly)
+    var photoramaShowImageCount: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SHOW_IMAGE_COUNT, prefs, defaults.photoramaShowImageCount)
+    var photoramaImageCountFontSizeSp: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_IMAGE_COUNT_FONT_SIZE_SP, prefs, defaults.photoramaImageCountFontSizeSp)
+    var photoramaImageCountFontId: String by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_IMAGE_COUNT_FONT_ID, prefs, defaults.photoramaImageCountFontId)
+    var photoramaImageCountColorArgb: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_IMAGE_COUNT_COLOR, prefs, defaults.photoramaImageCountColorArgb)
+    var photoramaImageCountAnchorX: Float by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_IMAGE_COUNT_ANCHOR_X, prefs, defaults.photoramaImageCountAnchorX)
+    var photoramaImageCountAnchorY: Float by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_IMAGE_COUNT_ANCHOR_Y, prefs, defaults.photoramaImageCountAnchorY)
+    var photoramaImageCountRotationDegrees: Float by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_IMAGE_COUNT_ROTATION_DEGREES, prefs, defaults.photoramaImageCountRotationDegrees)
     var photoramaVideosMuted: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_VIDEOS_MUTED, prefs, defaults.photoramaVideosMuted)
     var photoramaCacheSizeMb: Int by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_CACHE_SIZE_MB, prefs, defaults.photoramaCacheSizeMb)
     var photoramaScheduleEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.PHOTORAMA_SCHEDULE_ENABLED, prefs, defaults.photoramaScheduleEnabled)
@@ -806,6 +880,21 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
     var clockShowWidgets: Boolean by PrefDelegate(SettingsRepository.Keys.CLOCK_SHOW_WIDGETS, prefs, defaults.clockShowWidgets)
 
     var walkieTalkieEnabled: Boolean by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_ENABLED, prefs, defaults.walkieTalkieEnabled)
+    var walkieTalkieHomeShortcutIps: Set<String> by PrefDelegate(
+        SettingsRepository.Keys.WALKIE_TALKIE_HOME_SHORTCUT_IPS,
+        prefs,
+        defaults.walkieTalkieHomeShortcutIps,
+    )
+    var walkieTalkieShowTalkToAllButton: Boolean by PrefDelegate(
+        SettingsRepository.Keys.WALKIE_TALKIE_SHOW_TALK_TO_ALL_BUTTON,
+        prefs,
+        defaults.walkieTalkieShowTalkToAllButton,
+    )
+    var walkieTalkieRoomShortcutIconSizePx: Int by PrefDelegate(
+        SettingsRepository.Keys.WALKIE_TALKIE_ROOM_SHORTCUT_ICON_SIZE_PX,
+        prefs,
+        defaults.walkieTalkieRoomShortcutIconSizePx,
+    )
     var walkieTalkieTarget: String by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_TARGET, prefs, defaults.walkieTalkieTarget)
     var walkieTalkiePort: Int by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_PORT, prefs, defaults.walkieTalkiePort)
     var walkieTalkieMicBoostPercent: Int by PrefDelegate(SettingsRepository.Keys.WALKIE_TALKIE_MIC_BOOST, prefs, defaults.walkieTalkieMicBoostPercent)
@@ -920,6 +1009,14 @@ class MirrorDashSettingsEditor internal constructor(private val prefs: androidx.
             .orEmpty()
         set(value) {
             prefs[SettingsRepository.Keys.CUSTOM_TEXT_WIDGETS] = json.encodeToString(value)
+        }
+
+    var iconWidgets: List<IconWidget>
+        get() = prefs[SettingsRepository.Keys.ICON_WIDGETS]
+            ?.let { runCatching { json.decodeFromString<List<IconWidget>>(it) }.getOrNull() }
+            .orEmpty()
+        set(value) {
+            prefs[SettingsRepository.Keys.ICON_WIDGETS] = json.encodeToString(value)
         }
 
     var downloadedClockFonts: List<DownloadedClockFont>

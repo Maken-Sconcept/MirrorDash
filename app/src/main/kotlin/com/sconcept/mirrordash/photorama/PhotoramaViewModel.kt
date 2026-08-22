@@ -37,6 +37,11 @@ data class PhotoramaUiState(
     // A cached File for NAS or a directly readable content:// Uri for local storage.
     val currentMedia: PhotoramaMedia? = null,
     val hasNoPhotos: Boolean = false,
+    // 1-based position of currentMedia within the indexed library (post shuffle/filter) and the
+    // library's total size - drives the optional "N / total" overlay (see ClockScreen's
+    // showPhotoramaImageCount). Both 0 until the first photo has actually resolved.
+    val currentIndex: Int = 0,
+    val totalCount: Int = 0,
 )
 
 data class PhotoramaMedia(
@@ -100,6 +105,13 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
     companion object {
         private const val INDEX_REFRESH_INTERVAL_MS = 15 * 60 * 1000L
         private const val MAX_VIDEO_VIEWED_FRACTION = 0.60
+        // Video-only mode has no still photos to fall back on between videos, and every switch to
+        // a genuinely different video file means tearing down the old ExoPlayer and buffering a
+        // new one from scratch (a real, unavoidable black-screen gap) - re-seeking within the
+        // *same* already-playing video (see PhotoramaVideoBackdrop's `remember(uri)`) is free by
+        // comparison. Allowing each video to be replayed further before moving on cuts down on how
+        // often that expensive switch happens.
+        private const val MAX_VIDEO_VIEWED_FRACTION_VIDEO_ONLY = 0.85
         private const val MAX_RECONNECT_BACKOFF_SECONDS = 300L
         private const val MAX_RECONNECT_ATTEMPT_SHIFT = 5
 
@@ -158,7 +170,13 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                     videoViewedRanges.clear()
                     videoDurationsMs.clear()
                     reconnectAttempt = 0
-                    _uiState.value = _uiState.value.copy(isConfigured = true, currentMedia = null, hasNoPhotos = false)
+                    _uiState.value = _uiState.value.copy(
+                        isConfigured = true,
+                        currentMedia = null,
+                        hasNoPhotos = false,
+                        currentIndex = 0,
+                        totalCount = 0,
+                    )
                     refreshIndex()
                 }
         }
@@ -183,18 +201,28 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
         }
         when (result) {
             is SmbResult.Success -> onIndexed(
-                selectLivePhotoMedia(result.value, settings.photoramaPlayLivePhotos),
+                selectLivePhotoMedia(result.value, settings.photoramaPlayLivePhotos)
+                    .let { media -> if (settings.photoramaVideoOnly) media.filter { it.mediaType == PhotoramaMediaType.VIDEO } else media },
                 settings.photoramaShuffle,
                 settings.photoramaIntervalSeconds,
                 settings.photoramaReplayLongVideoSegments,
+                settings.photoramaMatchOrientation,
+                settings.photoramaVideoOnly,
                 share,
                 settings.photoramaCacheSizeMb,
             )
-            is SmbResult.Failure -> onIndexFailed(result.state, settings.photoramaIntervalSeconds, share, settings.photoramaCacheSizeMb)
+            is SmbResult.Failure -> onIndexFailed(
+                result.state,
+                settings.photoramaIntervalSeconds,
+                settings.photoramaMatchOrientation,
+                settings.photoramaVideoOnly,
+                share,
+                settings.photoramaCacheSizeMb,
+            )
         }
     }
 
-    private suspend fun onIndexed(newPhotos: List<LanPhoto>, shuffle: Boolean, intervalSeconds: Int, replayLongVideoSegments: Boolean, share: SmbShare, cacheSizeMb: Int) {
+    private suspend fun onIndexed(newPhotos: List<LanPhoto>, shuffle: Boolean, intervalSeconds: Int, replayLongVideoSegments: Boolean, matchOrientation: Boolean, videoOnly: Boolean, share: SmbShare, cacheSizeMb: Int) {
         reconnectAttempt = 0
         lastIndexedAtMs = System.currentTimeMillis()
         _uiState.value = _uiState.value.copy(connectionState = SmbConnectionState.CONNECTED)
@@ -203,7 +231,7 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             photos = emptyList()
             order = emptyList()
             currentPhotoUrl = null
-            _uiState.value = _uiState.value.copy(hasNoPhotos = true, currentMedia = null)
+            _uiState.value = _uiState.value.copy(hasNoPhotos = true, currentMedia = null, currentIndex = 0, totalCount = 0)
             scheduleReconnect(intervalSeconds, share, cacheSizeMb)
             return
         }
@@ -216,16 +244,16 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
             position = order.indexOf(currentIndex).coerceAtLeast(0)
         } else {
             if (position !in order.indices) position = 0
-            showCurrent(share, cacheSizeMb, intervalSeconds, replayLongVideoSegments)
+            showCurrent(share, cacheSizeMb, intervalSeconds, replayLongVideoSegments, matchOrientation, videoOnly)
         }
         runAdvanceLoop(intervalSeconds, share, cacheSizeMb)
     }
 
-    private suspend fun onIndexFailed(state: SmbConnectionState, intervalSeconds: Int, share: SmbShare, cacheSizeMb: Int) {
+    private suspend fun onIndexFailed(state: SmbConnectionState, intervalSeconds: Int, matchOrientation: Boolean, videoOnly: Boolean, share: SmbShare, cacheSizeMb: Int) {
         _uiState.value = _uiState.value.copy(connectionState = state)
         if (photos.isNotEmpty()) {
             if (position !in order.indices) position = 0
-            showCurrent(share, cacheSizeMb, intervalSeconds, false)
+            showCurrent(share, cacheSizeMb, intervalSeconds, false, matchOrientation, videoOnly)
             runAdvanceLoop(intervalSeconds, share, cacheSizeMb, singleShot = true)
         }
         scheduleReconnect(intervalSeconds, share, cacheSizeMb)
@@ -256,47 +284,153 @@ class PhotoramaViewModel(application: Application, private val settingsRepositor
                 position = -1
             }
             position = (position + 1) % order.size
-            showCurrent(share, cacheSizeMb, settings.photoramaIntervalSeconds, settings.photoramaReplayLongVideoSegments)
+            showCurrent(share, cacheSizeMb, settings.photoramaIntervalSeconds, settings.photoramaReplayLongVideoSegments, settings.photoramaMatchOrientation, settings.photoramaVideoOnly)
         } while (!singleShot)
     }
 
-    private suspend fun showCurrent(share: SmbShare, cacheSizeMb: Int, intervalSeconds: Int, replayLongVideoSegments: Boolean) {
+    private suspend fun showCurrent(share: SmbShare, cacheSizeMb: Int, intervalSeconds: Int, replayLongVideoSegments: Boolean, matchOrientation: Boolean, videoOnly: Boolean) {
+        if (order.isEmpty()) return
+        val (photo, ready) = resolveDisplayable(share, cacheSizeMb, matchOrientation) ?: return
         val photoIndex = order.getOrNull(position) ?: return
-        val photo = photos.getOrNull(photoIndex) ?: return
         currentPhotoUrl = photo.url
 
+        val videoSegment = if (photo.mediaType == PhotoramaMediaType.VIDEO && replayLongVideoSegments) {
+            chooseVideoSegment(photo.url, ready, intervalSeconds)
+        } else {
+            null
+        }
+        val maxViewedFraction = if (videoOnly) MAX_VIDEO_VIEWED_FRACTION_VIDEO_ONLY else MAX_VIDEO_VIEWED_FRACTION
+        if (videoSegment != null && videoViewedFraction(photo.url) < maxViewedFraction) {
+            // Video entries may recur during the current loop, unlike stills. Each recurrence
+            // receives a newly chosen time range, and stops being appended at 60% coverage.
+            order = order + photoIndex
+        }
+        _uiState.value = _uiState.value.copy(
+            currentMedia = PhotoramaMedia(
+                source = ready,
+                type = photo.mediaType,
+                videoSegment = videoSegment,
+                videoMuted = settingsRepository.settings.first().photoramaVideosMuted,
+            ),
+            hasNoPhotos = false,
+            currentIndex = photoIndex + 1,
+            totalCount = photos.size,
+        )
+        preloadNext(share, cacheSizeMb)
+    }
+
+    /** Resolves [position]'s order entry to a readable file/Uri, advancing past (up to one full
+     * lap of) entries whose orientation doesn't match the device's current one when
+     * [matchOrientation] is on - leaving [position] on whichever entry it settles on. Falls back
+     * to the first entry that resolved at all, orientation mismatch or not, so a library that is
+     * entirely one orientation still slideshows instead of showing nothing. */
+    private suspend fun resolveDisplayable(share: SmbShare, cacheSizeMb: Int, matchOrientation: Boolean): Pair<LanPhoto, Any>? {
+        var fallback: Pair<LanPhoto, Any>? = null
+        var fallbackPosition = -1
+        val attempts = order.size
+        for (attempt in 0 until attempts) {
+            val photoIndex = order.getOrNull(position)
+            val photo = photoIndex?.let { photos.getOrNull(it) }
+            val ready = photo?.let { resolveMedia(it, share, cacheSizeMb) }
+            if (photo != null && ready != null) {
+                if (fallback == null) {
+                    fallback = photo to ready
+                    fallbackPosition = position
+                }
+                if (!matchOrientation || orientationMatchesDevice(ready, photo.mediaType) != false) {
+                    return photo to ready
+                }
+            }
+            if (attempt < attempts - 1) position = (position + 1) % order.size
+        }
+        if (fallbackPosition >= 0) position = fallbackPosition
+        return fallback
+    }
+
+    private suspend fun resolveMedia(photo: LanPhoto, share: SmbShare, cacheSizeMb: Int): Any? =
         // A local-source photo's url is its own content:// Uri - already directly readable,
         // nothing to fetch or cache. Only the NAS source's smb:// urls go through the disk cache.
-        val ready: Any? = if (isLocalPhotoUrl(photo.url)) {
+        if (isLocalPhotoUrl(photo.url)) {
             Uri.parse(photo.url)
         } else {
             cacheManager.getCachedFile(photo) ?: withContext(Dispatchers.IO) {
                 cacheManager.ensureCached(photo, share, cacheSizeMb * 1024L * 1024L)
             }
         }
-        if (ready != null) {
-            val videoSegment = if (photo.mediaType == PhotoramaMediaType.VIDEO && replayLongVideoSegments) {
-                chooseVideoSegment(photo.url, ready, intervalSeconds)
-            } else {
-                null
-            }
-            if (videoSegment != null && videoViewedFraction(photo.url) < MAX_VIDEO_VIEWED_FRACTION) {
-                // Video entries may recur during the current loop, unlike stills. Each recurrence
-                // receives a newly chosen time range, and stops being appended at 60% coverage.
-                order = order + photoIndex
-            }
-            _uiState.value = _uiState.value.copy(
-                currentMedia = PhotoramaMedia(
-                    source = ready,
-                    type = photo.mediaType,
-                    videoSegment = videoSegment,
-                    videoMuted = settingsRepository.settings.first().photoramaVideosMuted,
-                ),
-                hasNoPhotos = false,
-            )
-        }
-        preloadNext(share, cacheSizeMb)
+
+    /** Null means "couldn't be determined" (device orientation unavailable, or the file's
+     * dimensions couldn't be read) - callers treat that as a pass-through match rather than
+     * filtering it out, so a read failure never hides a photo outright. */
+    private fun orientationMatchesDevice(source: Any, mediaType: PhotoramaMediaType): Boolean? {
+        val deviceIsLandscape = isDeviceLandscape() ?: return null
+        val mediaIsLandscape = when (mediaType) {
+            PhotoramaMediaType.IMAGE -> imageIsLandscape(source)
+            PhotoramaMediaType.VIDEO -> videoIsLandscape(source)
+        } ?: return null
+        return mediaIsLandscape == deviceIsLandscape
     }
+
+    private fun isDeviceLandscape(): Boolean? =
+        when (getApplication<Application>().resources.configuration.orientation) {
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE -> true
+            android.content.res.Configuration.ORIENTATION_PORTRAIT -> false
+            else -> null
+        }
+
+    private fun imageIsLandscape(source: Any): Boolean? = runCatching {
+        val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        when (source) {
+            is File -> android.graphics.BitmapFactory.decodeFile(source.absolutePath, options)
+            is Uri -> getApplication<Application>().contentResolver.openInputStream(source)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, options)
+            }
+            else -> return null
+        }
+        var width = options.outWidth
+        var height = options.outHeight
+        if (width <= 0 || height <= 0) return null
+        if (imageExifRotationDegrees(source) % 180 == 90) {
+            val swap = width
+            width = height
+            height = swap
+        }
+        width >= height
+    }.getOrNull()
+
+    private fun imageExifRotationDegrees(source: Any): Int = runCatching {
+        val exif = when (source) {
+            is File -> androidx.exifinterface.media.ExifInterface(source.absolutePath)
+            is Uri -> getApplication<Application>().contentResolver.openInputStream(source)?.use {
+                androidx.exifinterface.media.ExifInterface(it)
+            }
+            else -> null
+        } ?: return 0
+        when (exif.getAttributeInt(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION, androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL)) {
+            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90
+            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180
+            androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270
+            else -> 0
+        }
+    }.getOrDefault(0)
+
+    private fun videoIsLandscape(source: Any): Boolean? = runCatching {
+        MediaMetadataRetriever().use { retriever ->
+            when (source) {
+                is File -> retriever.setDataSource(source.absolutePath)
+                is Uri -> retriever.setDataSource(getApplication<Application>(), source)
+                else -> return null
+            }
+            var width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: return null
+            var height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: return null
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (rotation % 180 == 90) {
+                val swap = width
+                width = height
+                height = swap
+            }
+            width >= height
+        }
+    }.getOrNull()
 
     private fun preloadNext(share: SmbShare, cacheSizeMb: Int) {
         if (order.size <= 1) return

@@ -101,12 +101,19 @@ private fun WidgetsSettingsContent(uiState: SettingsUiState, viewModel: Settings
                     WeatherSourceSettingsContent(uiState, viewModel)
                 }
                 Spacer(Modifier.height(28.dp))
+                SettingGroup(title = "Weather icon style") {
+                    WeatherIconStyleSettingsContent(uiState, viewModel)
+                }
+                Spacer(Modifier.height(28.dp))
                 SettingGroup(title = "Weather widgets") {
                     WeatherWidgetsSettingsContent(uiState, viewModel)
                 }
             },
             SettingsSubsection(title = "Text widgets", subtitle = "Custom captions you place anywhere on the Clock") {
                 TextWidgetsSettingsContent(uiState = uiState, viewModel = viewModel, showDragHint = false)
+            },
+            SettingsSubsection(title = "Icon widgets", subtitle = "Weather, moon, wind, and meteorology icons you place anywhere on the Clock") {
+                IconWidgetsSettingsContent(uiState, viewModel)
             },
             SettingsSubsection(title = "Calendar widgets", subtitle = "Upcoming events pulled from this device's calendars") {
                 CalendarWidgetsSettingsContent(uiState, viewModel, onRequestCalendarAccess)

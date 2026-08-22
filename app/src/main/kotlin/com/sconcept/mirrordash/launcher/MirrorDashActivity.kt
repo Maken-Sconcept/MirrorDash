@@ -72,12 +72,14 @@ import com.sconcept.mirrordash.launcher.onboarding.OnboardingOverlay
 import com.sconcept.mirrordash.news.NewsFeedViewModel
 import com.sconcept.mirrordash.photorama.PhotoramaViewModel
 import com.sconcept.mirrordash.settings.BRIGHTNESS_DIM_TARGET_TEXT_ONLY
+import com.sconcept.mirrordash.settings.WALKIE_TALKIE_TARGET_ALL
 import com.sconcept.mirrordash.settings.ui.SettingsScreen
 import com.sconcept.mirrordash.settings.SettingsViewModel
 import com.sconcept.mirrordash.stocks.StocksViewModel
 import com.sconcept.mirrordash.ui.theme.MDTheme
 import com.sconcept.mirrordash.ui.theme.MirrorDashTheme
 import com.sconcept.mirrordash.walkietalkie.PttButton
+import com.sconcept.mirrordash.walkietalkie.WalkieTalkieRoomShortcutStack
 import com.sconcept.mirrordash.weather.WeatherViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -400,6 +402,8 @@ private fun MirrorDashRoot(
     val initialPageIndex by launcherViewModel.initialPageIndex.collectAsStateWithLifecycle()
     val clockAppearance by clockViewModel.appearance.collectAsStateWithLifecycle()
     val settingsUiState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+    val walkieEngine = remember { AppContainer.get(context).walkieTalkieEngine }
+    val walkieState by walkieEngine.uiState.collectAsStateWithLifecycle()
 
     if (!settingsUiState.settingsLoaded) return
 
@@ -554,6 +558,7 @@ private fun MirrorDashRoot(
                     weatherAnchor = OverlayAnchor(settingsUiState.settings.nightClockWeatherAnchorX, settingsUiState.settings.nightClockWeatherAnchorY),
                     onClockAnchorChange = clockViewModel::setNightClockAnchor,
                     onWeatherAnchorChange = clockViewModel::setNightClockWeatherAnchor,
+                    weatherIconStyle = settingsUiState.settings.weatherIconStyle,
                 )
             },
             appDrawerContent = { _, close ->
@@ -569,6 +574,8 @@ private fun MirrorDashRoot(
             },
             notificationsContent = { _, close ->
                 val context = LocalContext.current
+                val walkieEngine = remember { AppContainer.get(context).walkieTalkieEngine }
+                val walkieState by walkieEngine.uiState.collectAsStateWithLifecycle()
                 val notifications by NotificationRepository.notifications.collectAsStateWithLifecycle()
                 val accessState by NotificationRepository.accessState.collectAsStateWithLifecycle()
                 // The listener can reconnect after the panel is composed (or be temporarily
@@ -601,6 +608,12 @@ private fun MirrorDashRoot(
                     onClose = close,
                     brightnessLevel255 = settingsUiState.settings.brightnessLevel255,
                     onBrightnessChange = settingsViewModel::setBrightnessLevel,
+                    walkieState = walkieState,
+                    homeShortcutIps = settingsUiState.settings.walkieTalkieHomeShortcutIps,
+                    onHomeShortcutChange = { peer, enabled -> settingsViewModel.setWalkieTalkieHomeShortcut(peer.ip, enabled) },
+                    onTalkStart = { peer -> walkieEngine.pressToTalk(peer.ip) },
+                    onTalkEnd = walkieEngine::releaseToTalk,
+                    onRefreshWalkieTalkieDevices = walkieEngine::refreshDiscoveredPeers,
                 )
             },
         )
@@ -609,7 +622,11 @@ private fun MirrorDashRoot(
         // which Settings itself doesn't need, and its fixed bottom-right position can otherwise
         // sit directly over a settings row that happens to render in that same corner.
         if (orderedPages.getOrNull(currentPageIndex) != LauncherPage.Settings) {
-            InAppPttOverlay(context)
+            InAppRoomPttOverlay(
+                context = context,
+                selectedPeerIps = settingsUiState.settings.walkieTalkieHomeShortcutIps,
+                showTalkToAll = settingsUiState.settings.walkieTalkieShowTalkToAllButton,
+            )
         }
 
         if (settingsUiState.settings.iptvShowRecordingStatusPill) {
@@ -688,11 +705,16 @@ private fun LauncherPageContent(
                 onWeatherWidgetAnchorChange = clockViewModel::setWeatherWidgetAnchor,
                 photoramaState = photorama,
                 onPhotoramaVideoMuted = { settingsViewModel.setPhotoramaVideosMuted(true) },
+                onPhotoramaImageCountAnchorChange = clockViewModel::setPhotoramaImageCountAnchor,
+                onPhotoramaImageCountRotationChange = clockViewModel::setPhotoramaImageCountRotation,
+                onPhotoramaImageCountSizeChange = clockViewModel::setPhotoramaImageCountFontSize,
+                onPhotoramaImageCountRemove = clockViewModel::hidePhotoramaImageCount,
                 // Active mirroring must always be allowed to take over the Clock page; the
                 // separate "show clock widget" setting only controls the idle/status chip, not
                 // whether live video is visible at all.
                 airPlayStatus = airPlay,
                 onTextWidgetAnchorChange = clockViewModel::setTextWidgetAnchor,
+                onIconWidgetAnchorChange = clockViewModel::setIconWidgetAnchor,
                 calendar = calendar,
                 onCalendarWidgetAnchorChange = clockViewModel::setCalendarWidgetAnchor,
                 onTasksWidgetAnchorChange = clockViewModel::setTasksWidgetAnchor,
@@ -705,6 +727,7 @@ private fun LauncherPageContent(
                 onClockRemove = clockViewModel::hideClockTime,
                 onWeatherWidgetRemove = clockViewModel::removeWeatherWidget,
                 onTextWidgetRemove = clockViewModel::removeTextWidget,
+                onIconWidgetRemove = clockViewModel::removeIconWidget,
                 onCalendarWidgetRemove = clockViewModel::removeCalendarWidget,
                 onTasksWidgetRemove = clockViewModel::removeTasksWidget,
                 onStocksWidgetRemove = clockViewModel::removeStocksWidget,
@@ -712,6 +735,7 @@ private fun LauncherPageContent(
                 onClockRotationChange = clockViewModel::setClockRotation,
                 onWeatherWidgetRotationChange = clockViewModel::setWeatherWidgetRotation,
                 onTextWidgetRotationChange = clockViewModel::setTextWidgetRotation,
+                onIconWidgetRotationChange = clockViewModel::setIconWidgetRotation,
                 onCalendarWidgetRotationChange = clockViewModel::setCalendarWidgetRotation,
                 onTasksWidgetRotationChange = clockViewModel::setTasksWidgetRotation,
                 onStocksWidgetRotationChange = clockViewModel::setStocksWidgetRotation,
@@ -719,6 +743,7 @@ private fun LauncherPageContent(
                 onClockFontSizeChange = clockViewModel::setFontSize,
                 onWeatherWidgetSizeChange = clockViewModel::setWeatherWidgetScale,
                 onTextWidgetSizeChange = clockViewModel::setTextWidgetFontSize,
+                onIconWidgetSizeChange = clockViewModel::setIconWidgetSize,
                 onCalendarWidgetSizeChange = clockViewModel::setCalendarWidgetFontSize,
                 onTasksWidgetSizeChange = clockViewModel::setTasksWidgetFontSize,
                 onStocksWidgetSizeChange = clockViewModel::setStocksWidgetFontSize,
@@ -833,21 +858,31 @@ private fun LauncherPageContent(
 }
 
 @Composable
-private fun InAppPttOverlay(context: android.content.Context) {
+private fun InAppRoomPttOverlay(
+    context: android.content.Context,
+    selectedPeerIps: Set<String>,
+    showTalkToAll: Boolean,
+) {
     val engine = remember { AppContainer.get(context).walkieTalkieEngine }
     val state by engine.uiState.collectAsStateWithLifecycle()
-    if (!state.enabled) return
+    if (!state.enabled || (selectedPeerIps.isEmpty() && !showTalkToAll)) return
 
     Box(modifier = Modifier.fillMaxSize()) {
-        PttButton(
-            isTransmitting = state.isTransmitting,
-            isSpeaking = state.activeIncomingPeerName != null,
-            enabled = state.hasMicPermission,
-            onPressStart = engine::pressToTalk,
-            onPressEnd = engine::releaseToTalk,
+        WalkieTalkieRoomShortcutStack(
+            peers = state.peers.filter { it.ip in selectedPeerIps },
+            discoveredIps = state.discoveredPeers.map { it.ip }.toSet(),
+            activeIncomingIp = state.activeIncomingPeerIp,
+            activeTransmitIp = state.activeTransmitTarget,
+            talkEnabled = state.hasMicPermission,
+            showTalkToAll = showTalkToAll,
+            iconSizePx = state.roomShortcutIconSizePx,
+            isBroadcasting = state.activeTransmitTarget == WALKIE_TALKIE_TARGET_ALL,
+            onTalkStart = { peer -> engine.pressToTalk(peer.ip) },
+            onTalkEnd = engine::releaseToTalk,
+            onTalkToAllStart = { engine.pressToTalk(WALKIE_TALKIE_TARGET_ALL) },
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(bottom = 32.dp, end = 32.dp),
+                .align(Alignment.CenterEnd)
+                .padding(end = 28.dp),
         )
     }
 }

@@ -114,6 +114,9 @@ dependencies {
     implementation("eu.agno3.jcifs:jcifs-ng:2.1.10")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-gif:2.7.0")
+    // Reads EXIF orientation so Photorama's device-orientation matching judges a photo by its
+    // displayed aspect ratio, not its raw (possibly EXIF-rotated) pixel dimensions.
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // Photorama's local-storage source - browsing a user-picked SAF folder tree (see
     // LocalPhotoRepository), the same abstraction the system folder picker itself returns.

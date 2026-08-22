@@ -1,11 +1,16 @@
 package com.sconcept.mirrordash.settings.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -23,19 +28,68 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.sconcept.mirrordash.clock.AnimatedWeatherIcon
 import com.sconcept.mirrordash.launcher.gestures.LauncherIdleTracker
 import com.sconcept.mirrordash.settings.SettingsUiState
 import com.sconcept.mirrordash.settings.SettingsViewModel
 import com.sconcept.mirrordash.ui.theme.MDTheme
+import com.sconcept.mirrordash.weather.WeatherIconStyles
 
 @Composable
 fun WeatherSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     SettingGroup(title = "Weather source") {
         WeatherSourceSettingsContent(uiState, viewModel)
+    }
+}
+
+/** Picks which icon set the weather widgets, Night Clock line, and forecast cards draw from -
+ * MirrorDash's own procedural Canvas animation, or the flat-color FBgo set lifted from Meta
+ * Portal Go's ambient screen (see [com.sconcept.mirrordash.weather.FbgoWeatherIcons]). Reuses
+ * [AnimatedWeatherIcon] itself for the preview tiles so they never drift from what actually
+ * renders on the Clock page. */
+@Composable
+internal fun WeatherIconStyleSettingsContent(uiState: SettingsUiState, viewModel: SettingsViewModel) {
+    val settings = uiState.settings
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        WeatherIconStyles.ALL.forEach { styleId ->
+            WeatherIconStyleCard(
+                styleId = styleId,
+                selected = settings.weatherIconStyle == styleId,
+                onClick = { viewModel.setWeatherIconStyle(styleId) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun WeatherIconStyleCard(styleId: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val borderColor = if (selected) MDTheme.colors.accent else MDTheme.colors.divider
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(MDTheme.colors.surface)
+            .border(width = if (selected) 2.dp else 1.dp, color = borderColor, shape = RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+    ) {
+        AnimatedWeatherIcon(weatherCode = 0, isDay = true, size = 40.dp, iconStyle = styleId)
+        Spacer(Modifier.height(10.dp))
+        Text(WeatherIconStyles.label(styleId), style = MDTheme.type.settingTitle, color = MDTheme.colors.textPrimary)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            WeatherIconStyles.subtitle(styleId),
+            style = MDTheme.type.caption,
+            color = MDTheme.colors.textSecondary,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -46,7 +100,7 @@ internal fun WeatherSourceSettingsContent(uiState: SettingsUiState, viewModel: S
 
     SettingRow(
         title = "Show weather",
-        subtitle = "Allow weather widgets to render on the Clock page",
+        subtitle = "Allow weather in clock styles and optional weather widgets",
     ) {
         Switch(
             checked = settings.weatherEnabled,

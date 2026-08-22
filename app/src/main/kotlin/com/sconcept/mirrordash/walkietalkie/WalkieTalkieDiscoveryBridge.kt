@@ -130,6 +130,22 @@ class WalkieTalkieDiscoveryBridge private constructor(context: Context) {
         startRegistration()
     }
 
+    /** Restarts NSD browsing so a user can immediately request a fresh peer list. */
+    fun refreshDiscovery() {
+        if (!active) return
+        stopDiscovery()
+        synchronized(stateLock) {
+            peersByIp.clear()
+            serviceToIp.clear()
+        }
+        notifyListeners()
+        // NsdManager finishes stopping asynchronously; give it a short hand-off before starting
+        // the next browse session so the restart is accepted on older Android versions too.
+        mainHandler.postDelayed({
+            if (active) startDiscovery()
+        }, 250L)
+    }
+
     private fun startRegistration() {
         if (registrationListener != null) {
             return

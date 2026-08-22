@@ -138,6 +138,8 @@ data class GymProfile(
 @Serializable
 data class GymFeatureSettings(
     val challengesEnabled: Boolean = true,
+    /** The removable-card library is the normal, offline-first Gym source. */
+    val workoutLibrarySource: GymWorkoutLibrarySource = GymWorkoutLibrarySource.MEMORY_CARD,
     val soundsEnabled: Boolean = true,
     val countdownEnabled: Boolean = true,
     val showHeartRate: Boolean = true,
@@ -146,6 +148,36 @@ data class GymFeatureSettings(
     val mockDevicesEnabled: Boolean = true,
     val hudMode: GymHudMode = GymHudMode.EXPANDED,
 )
+
+@Serializable
+enum class GymWorkoutLibrarySource {
+    /** Use the card first; a missing item is streamed from the NAS and cached for playback. */
+    MEMORY_CARD,
+    /** Stream every item from the NAS. The card is not read or synchronized. */
+    NAS,
+}
+
+sealed interface GymWorkoutSyncStatus {
+    data object Idle : GymWorkoutSyncStatus
+    data object Indexing : GymWorkoutSyncStatus
+    data class Syncing(
+        val currentFileName: String,
+        val currentFile: Int,
+        val totalFiles: Int,
+    ) : GymWorkoutSyncStatus
+    data class Complete(val copiedFiles: Int, val totalFiles: Int) : GymWorkoutSyncStatus
+    data class Failed(val message: String) : GymWorkoutSyncStatus
+}
+
+data class GymWorkoutLibraryStatus(
+    val isLoading: Boolean = false,
+    val cardVideoCount: Int = 0,
+    val nasVideoCount: Int = 0,
+    val remainingVideoCount: Int = 0,
+    val message: String? = null,
+) {
+    val isAvailable: Boolean get() = message == null
+}
 
 @Serializable
 data class FitnessDevicePreference(
@@ -400,6 +432,8 @@ data class GymUiState(
     val favoriteExerciseIds: Set<String> = emptySet(),
     val workoutQueueIds: List<String> = emptyList(),
     val wearableHealth: GymWearableHealthSnapshot = GymWearableHealthSnapshot(),
+    val workoutSyncStatus: GymWorkoutSyncStatus = GymWorkoutSyncStatus.Idle,
+    val workoutLibraryStatus: GymWorkoutLibraryStatus = GymWorkoutLibraryStatus(),
 )
 
 fun defaultGymProfiles(): List<GymProfile> = listOf(

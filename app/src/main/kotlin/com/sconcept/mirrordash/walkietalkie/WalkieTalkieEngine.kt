@@ -52,6 +52,7 @@ data class WalkieTalkieUiState(
     val activeIncomingPeerName: String? = null,
     val activeTransmitTarget: String? = null,
     val overlayEnabled: Boolean = false,
+    val roomShortcutIconSizePx: Int = 88,
     val pttAnchorX: Float = 0.92f,
     val pttAnchorY: Float = 0.82f,
 )
@@ -134,6 +135,7 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
                     activeIncomingPeerName = activeIncomingName,
                     activeTransmitTarget = activeTransmitTarget,
                     overlayEnabled = settings.walkieTalkieOverlayEnabled,
+                    roomShortcutIconSizePx = settings.walkieTalkieRoomShortcutIconSizePx,
                     pttAnchorX = settings.walkieTalkiePttAnchorX,
                     pttAnchorY = settings.walkieTalkiePttAnchorY,
                 )
@@ -207,6 +209,10 @@ class WalkieTalkieEngine private constructor(context: Context, private val setti
         audio.stopTransmitting()
         _isTransmitting.value = false
         _activeTransmitTarget.value = null
+    }
+
+    fun refreshDiscoveredPeers() {
+        discovery.refreshDiscovery()
     }
 
     fun previewIncomingChime(toneKey: String) {

@@ -29,6 +29,8 @@ private data class GymUiExtraState(
     val selectedExerciseId: String? = null,
     val favoriteExerciseIds: Set<String> = emptySet(),
     val workoutQueueIds: List<String> = emptyList(),
+    val workoutSyncStatus: GymWorkoutSyncStatus = GymWorkoutSyncStatus.Idle,
+    val workoutLibraryStatus: GymWorkoutLibraryStatus = GymWorkoutLibraryStatus(),
 )
 
 class GymViewModel(
@@ -51,6 +53,28 @@ class GymViewModel(
                     Log.e("GymViewModel", "Workout library could not be loaded", error)
                     emptyList()
                 }
+        }
+        // Sync is intentionally independent from catalog loading: the Gym opens immediately and
+        // every video can still stream from the NAS until its card copy has arrived.
+        viewModelScope.launch {
+            when (val result = contentRepository.syncWorkoutLibraryToMemoryCard { status ->
+                extra.update { it.copy(workoutSyncStatus = status) }
+            }) {
+                is WorkoutLibrarySyncResult.Success -> {
+                    extra.update { it.copy(workoutSyncStatus = GymWorkoutSyncStatus.Complete(result.copiedFiles, result.totalFiles)) }
+                    Log.i("GymViewModel", "Workout card sync complete: ${result.copiedFiles}/${result.totalFiles} files copied")
+                    kotlinx.coroutines.delay(SYNC_COMPLETE_MESSAGE_MS)
+                    extra.update { state ->
+                        if (state.workoutSyncStatus is GymWorkoutSyncStatus.Complete) state.copy(workoutSyncStatus = GymWorkoutSyncStatus.Idle) else state
+                    }
+                }
+                is WorkoutLibrarySyncResult.Failed -> {
+                    extra.update { it.copy(workoutSyncStatus = GymWorkoutSyncStatus.Failed(result.message)) }
+                    Log.w("GymViewModel", "Workout card sync skipped: ${result.message}")
+                }
+                WorkoutLibrarySyncResult.NoMemoryCard -> Log.i("GymViewModel", "No removable card mounted; NAS playback remains available")
+                WorkoutLibrarySyncResult.Skipped -> Unit
+            }
         }
     }
 
@@ -112,6 +136,8 @@ class GymViewModel(
             favoriteExerciseIds = extraState.favoriteExerciseIds,
             workoutQueueIds = extraState.workoutQueueIds,
             wearableHealth = wearableHealth,
+            workoutSyncStatus = extraState.workoutSyncStatus,
+            workoutLibraryStatus = extraState.workoutLibraryStatus,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), GymUiState())
 
@@ -143,6 +169,35 @@ class GymViewModel(
 
     fun setChallengesEnabled(enabled: Boolean) {
         viewModelScope.launch { repository.updateFeatureSettings { it.copy(challengesEnabled = enabled) } }
+    }
+
+    fun setWorkoutLibrarySource(source: GymWorkoutLibrarySource) {
+        viewModelScope.launch { repository.updateFeatureSettings { it.copy(workoutLibrarySource = source) } }
+    }
+
+    fun refreshWorkoutLibraryStatus() {
+        viewModelScope.launch {
+            extra.update { it.copy(workoutLibraryStatus = it.workoutLibraryStatus.copy(isLoading = true, message = null)) }
+            extra.update { it.copy(workoutLibraryStatus = contentRepository.workoutLibraryStatus()) }
+        }
+    }
+
+    fun syncWorkoutLibraryNow() {
+        viewModelScope.launch {
+            when (val result = contentRepository.syncWorkoutLibraryToMemoryCard { status ->
+                extra.update { it.copy(workoutSyncStatus = status) }
+            }) {
+                is WorkoutLibrarySyncResult.Success -> extra.update {
+                    it.copy(
+                        workoutSyncStatus = GymWorkoutSyncStatus.Complete(result.copiedFiles, result.totalFiles),
+                        workoutLibraryStatus = contentRepository.workoutLibraryStatus(),
+                    )
+                }
+                is WorkoutLibrarySyncResult.Failed -> extra.update { it.copy(workoutSyncStatus = GymWorkoutSyncStatus.Failed(result.message)) }
+                WorkoutLibrarySyncResult.NoMemoryCard -> refreshWorkoutLibraryStatus()
+                WorkoutLibrarySyncResult.Skipped -> Unit
+            }
+        }
     }
 
     fun refreshWearableHealth() = healthConnectGateway.refreshHealthSummary(force = true)
@@ -380,6 +435,7 @@ class GymViewModel(
     }
 
     companion object {
+        private const val SYNC_COMPLETE_MESSAGE_MS = 3_500L
         fun factory(
             application: Application,
             repository: GymRepository,

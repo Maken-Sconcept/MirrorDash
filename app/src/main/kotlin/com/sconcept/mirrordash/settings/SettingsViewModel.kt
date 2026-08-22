@@ -16,6 +16,7 @@ import com.sconcept.mirrordash.clock.CLOCK_FONT_SYSTEM_DEFAULT
 import com.sconcept.mirrordash.clock.ClockFontLibrary
 import com.sconcept.mirrordash.clock.ClockFontRepository
 import com.sconcept.mirrordash.clock.CustomTextWidget
+import com.sconcept.mirrordash.clock.IconWidget
 import com.sconcept.mirrordash.clock.GoogleFontCatalogEntry
 import com.sconcept.mirrordash.clock.NewsWidget
 import com.sconcept.mirrordash.clock.StocksWidget
@@ -249,6 +250,22 @@ class SettingsViewModel(application: Application, private val settingsRepository
         }
     }
 
+    // --- Icon widgets ----------------------------------------------------------------------
+
+    fun addIconWidget() = viewModelScope.launch {
+        settingsRepository.update {
+            iconWidgets = iconWidgets + IconWidget(id = java.util.UUID.randomUUID().toString())
+        }
+    }
+
+    fun updateIconWidget(id: String, transform: (IconWidget) -> IconWidget) = viewModelScope.launch {
+        settingsRepository.update { iconWidgets = iconWidgets.map { if (it.id == id) transform(it) else it } }
+    }
+
+    fun removeIconWidget(id: String) = viewModelScope.launch {
+        settingsRepository.update { iconWidgets = iconWidgets.filterNot { it.id == id } }
+    }
+
     // --- Weather -----------------------------------------------------------------------------
 
     fun addWeatherWidget(mode: String = WEATHER_WIDGET_MODE_FORECAST_CARD) = viewModelScope.launch {
@@ -375,6 +392,10 @@ class SettingsViewModel(application: Application, private val settingsRepository
 
     fun setWeatherUnit(useFahrenheit: Boolean) = viewModelScope.launch {
         settingsRepository.update { weatherUseFahrenheit = useFahrenheit }
+    }
+
+    fun setWeatherIconStyle(id: String) = viewModelScope.launch {
+        settingsRepository.update { weatherIconStyle = id }
     }
 
     fun resolveAndSaveWeatherLocation(query: String) {
@@ -551,6 +572,30 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { photoramaReplayLongVideoSegments = value }
     }
 
+    fun setPhotoramaMatchOrientation(value: Boolean) = viewModelScope.launch {
+        settingsRepository.update { photoramaMatchOrientation = value }
+    }
+
+    fun setPhotoramaVideoOnly(value: Boolean) = viewModelScope.launch {
+        settingsRepository.update { photoramaVideoOnly = value }
+    }
+
+    fun setPhotoramaShowImageCount(value: Boolean) = viewModelScope.launch {
+        settingsRepository.update { photoramaShowImageCount = value }
+    }
+
+    fun setPhotoramaImageCountFontSize(sp: Int) = viewModelScope.launch {
+        settingsRepository.update { photoramaImageCountFontSizeSp = sp }
+    }
+
+    fun setPhotoramaImageCountFont(id: String) = viewModelScope.launch {
+        settingsRepository.update { photoramaImageCountFontId = id }
+    }
+
+    fun setPhotoramaImageCountColor(color: Color) = viewModelScope.launch {
+        settingsRepository.update { photoramaImageCountColorArgb = color.toArgb() }
+    }
+
     fun setPhotoramaVideosMuted(value: Boolean) = viewModelScope.launch {
         settingsRepository.update { photoramaVideosMuted = value }
     }
@@ -605,12 +650,35 @@ class SettingsViewModel(application: Application, private val settingsRepository
         settingsRepository.update { walkieTalkieAutoAddDiscovered = enabled }
     }
 
+    /** A home shortcut is only a presentation preference; it never changes the peer registry. */
+    fun setWalkieTalkieHomeShortcut(peerIp: String, enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update {
+            walkieTalkieHomeShortcutIps = if (enabled) {
+                walkieTalkieHomeShortcutIps + peerIp
+            } else {
+                walkieTalkieHomeShortcutIps - peerIp
+            }
+        }
+    }
+
+    fun setWalkieTalkieShowTalkToAllButton(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.update { walkieTalkieShowTalkToAllButton = enabled }
+    }
+
+    fun setWalkieTalkieRoomShortcutIconSizePx(sizePx: Int) = viewModelScope.launch {
+        settingsRepository.update { walkieTalkieRoomShortcutIconSizePx = sizePx.coerceIn(8, 200) }
+    }
+
     fun pressToTalk(target: String) {
         walkieTalkieEngine.pressToTalk(target)
     }
 
     fun releaseToTalk() {
         walkieTalkieEngine.releaseToTalk()
+    }
+
+    fun refreshWalkieTalkieDevices() {
+        walkieTalkieEngine.refreshDiscoveredPeers()
     }
 
     fun previewWalkieTalkieIncomingChime(chime: String) {
@@ -626,6 +694,7 @@ class SettingsViewModel(application: Application, private val settingsRepository
     fun removeWalkieTalkiePeer(peer: WalkieTalkiePeer) = viewModelScope.launch {
         settingsRepository.update {
             walkieTalkiePeers = walkieTalkiePeers.filterNot { it.ip == peer.ip }
+            walkieTalkieHomeShortcutIps = walkieTalkieHomeShortcutIps - peer.ip
             if (walkieTalkieTarget == peer.ip) {
                 walkieTalkieTarget = WALKIE_TALKIE_TARGET_ALL
             }

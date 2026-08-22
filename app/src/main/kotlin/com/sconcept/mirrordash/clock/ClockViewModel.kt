@@ -10,6 +10,7 @@ import com.sconcept.mirrordash.settings.CLOCK_BACKGROUND_MODE_PHOTORAMA
 import com.sconcept.mirrordash.settings.SettingsRepository
 import com.sconcept.mirrordash.settings.isPhotoramaScheduleActive
 import com.sconcept.mirrordash.ui.theme.DEFAULT_CLOCK_FONT_SIZE_SP
+import com.sconcept.mirrordash.weather.WEATHER_ICON_STYLE_ANIMATED
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -31,14 +32,24 @@ data class ClockAppearance(
     val clockAnchor: OverlayAnchor = OverlayAnchor(0.06f, 0.82f),
     val clockRotationDegrees: Float = 0f,
     val weatherWidgets: List<WeatherWidget> = emptyList(),
+    /** Weather is a shared data source for style info-lines and any added weather widgets. */
+    val weatherEnabled: Boolean = true,
+    val weatherIconStyle: String = WEATHER_ICON_STYLE_ANIMATED,
     val downloadedClockFonts: List<DownloadedClockFont> = emptyList(),
     val textWidgets: List<CustomTextWidget> = emptyList(),
+    val iconWidgets: List<IconWidget> = emptyList(),
     val calendarWidgets: List<CalendarWidget> = emptyList(),
     val tasksWidgets: List<TasksWidget> = emptyList(),
     val stocksWidgets: List<StocksWidget> = emptyList(),
     val newsWidgets: List<NewsWidget> = emptyList(),
     val showTime: Boolean = true,
     val showWidgets: Boolean = true,
+    val showPhotoramaImageCount: Boolean = false,
+    val photoramaImageCountFontSizeSp: Int = 24,
+    val photoramaImageCountFontId: String = CLOCK_FONT_SYSTEM_DEFAULT,
+    val photoramaImageCountColor: Color = Color(0xFFF5F3EF),
+    val photoramaImageCountAnchor: OverlayAnchor = OverlayAnchor(0.5f, 0.94f),
+    val photoramaImageCountRotationDegrees: Float = 0f,
 )
 
 /**
@@ -84,14 +95,23 @@ class ClockViewModel(
                 clockAnchor = OverlayAnchor(it.clockAnchorX, it.clockAnchorY),
                 clockRotationDegrees = it.clockRotationDegrees,
                 weatherWidgets = it.weatherWidgets,
+                weatherEnabled = it.weatherEnabled,
+                weatherIconStyle = it.weatherIconStyle,
                 downloadedClockFonts = it.downloadedClockFonts,
                 textWidgets = it.customTextWidgets,
+                iconWidgets = it.iconWidgets,
                 calendarWidgets = it.calendarWidgets,
                 tasksWidgets = taskWidgets,
                 stocksWidgets = it.stocksWidgets,
                 newsWidgets = it.newsWidgets,
                 showTime = it.clockShowTime,
                 showWidgets = it.clockShowWidgets,
+                showPhotoramaImageCount = it.photoramaShowImageCount,
+                photoramaImageCountFontSizeSp = it.photoramaImageCountFontSizeSp,
+                photoramaImageCountFontId = it.photoramaImageCountFontId,
+                photoramaImageCountColor = Color(it.photoramaImageCountColorArgb),
+                photoramaImageCountAnchor = OverlayAnchor(it.photoramaImageCountAnchorX, it.photoramaImageCountAnchorY),
+                photoramaImageCountRotationDegrees = it.photoramaImageCountRotationDegrees,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ClockAppearance())
@@ -193,6 +213,11 @@ class ClockViewModel(
         viewModelScope.launch { settingsRepository.update { customTextWidgets = current.filterNot { it.id == id } } }
     }
 
+    fun removeIconWidget(id: String) {
+        val current = appearance.value.iconWidgets
+        viewModelScope.launch { settingsRepository.update { iconWidgets = current.filterNot { it.id == id } } }
+    }
+
     fun removeCalendarWidget(id: String) {
         val current = appearance.value.calendarWidgets
         viewModelScope.launch { settingsRepository.update { calendarWidgets = current.filterNot { it.id == id } } }
@@ -221,6 +246,32 @@ class ClockViewModel(
      * Settings switch - there's no on-canvas affordance for an element that isn't there anymore. */
     fun hideClockTime() {
         viewModelScope.launch { settingsRepository.update { clockShowTime = false } }
+    }
+
+    /** Same "not list-backed" reasoning as [hideClockTime] - the image count overlay's own on/off
+     * switch lives in Photorama settings ([com.sconcept.mirrordash.settings.SettingsViewModel.setPhotoramaShowImageCount]),
+     * this just gives its on-canvas trash icon a way to reach the same flag. */
+    fun hidePhotoramaImageCount() {
+        viewModelScope.launch { settingsRepository.update { photoramaShowImageCount = false } }
+    }
+
+    fun setPhotoramaImageCountAnchor(anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        viewModelScope.launch {
+            settingsRepository.update {
+                photoramaImageCountAnchorX = clamped.x
+                photoramaImageCountAnchorY = clamped.y
+            }
+        }
+    }
+
+    fun setPhotoramaImageCountRotation(degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch { settingsRepository.update { photoramaImageCountRotationDegrees = normalized } }
+    }
+
+    fun setPhotoramaImageCountFontSize(sp: Int) {
+        viewModelScope.launch { settingsRepository.update { photoramaImageCountFontSizeSp = sp } }
     }
 
     /** Called while dragging a text widget on the Clock page itself - Settings owns everything
@@ -252,6 +303,26 @@ class ClockViewModel(
                 customTextWidgets = customTextWidgets.map { if (it.id == id) it.copy(fontSizeSp = sp) else it }
             }
         }
+    }
+
+    fun setIconWidgetAnchor(id: String, anchor: OverlayAnchor) {
+        val clamped = ClockLayoutHelper.clamp(anchor)
+        viewModelScope.launch { settingsRepository.update {
+            iconWidgets = iconWidgets.map { if (it.id == id) it.copy(anchorX = clamped.x, anchorY = clamped.y) else it }
+        } }
+    }
+
+    fun setIconWidgetRotation(id: String, degrees: Float) {
+        val normalized = normalizeRotationDegrees(degrees)
+        viewModelScope.launch { settingsRepository.update {
+            iconWidgets = iconWidgets.map { if (it.id == id) it.copy(rotationDegrees = normalized) else it }
+        } }
+    }
+
+    fun setIconWidgetSize(id: String, sp: Int) {
+        viewModelScope.launch { settingsRepository.update {
+            iconWidgets = iconWidgets.map { if (it.id == id) it.copy(sizeSp = sp) else it }
+        } }
     }
 
     fun setCalendarWidgetAnchor(id: String, anchor: OverlayAnchor) {
